@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildClaudeArgs, parseResult, runProcess } from '../src/claude.js';
+import { buildClaudeArgs, parseResult, runProcess, cleanEnv } from '../src/claude.js';
 import { cfg } from './helpers.js';
 
 test('buildClaudeArgs', () => {
@@ -19,4 +19,9 @@ test('runProcess с таймаутом', async () => {
   assert.equal(r.timedOut, true);
   const ok = await runProcess({ bin: 'echo', args: ['hi'], cwd: process.cwd(), env: process.env, timeoutMs: 5000 });
   assert.equal(ok.exitCode, 0); assert.equal(ok.stdout.trim(), 'hi');
+});
+test('cleanEnv убирает служебные переменные вложенной сессии', () => {
+  const out = cleanEnv({ PATH: '/x', HOME: '/h', CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 's', CLAUDE_CODE_PLUGIN_DIRS: '/p', ANTHROPIC_BASE_URL: 'https://proxy', CLAUDE_CONFIG_DIR: '/c' });
+  assert.deepEqual(out, { PATH: '/x', HOME: '/h', CLAUDE_CODE_PLUGIN_DIRS: '/p', CLAUDE_CONFIG_DIR: '/c' });
+  assert.equal(cleanEnv({ ANTHROPIC_BASE_URL: 'https://litellm' }).ANTHROPIC_BASE_URL, 'https://litellm');
 });

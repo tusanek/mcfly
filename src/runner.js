@@ -5,7 +5,7 @@ import { paths } from './state.js';
 import { loadConfig } from './config.js';
 import { loadEnv } from './env.js';
 import { matchSlot } from './window.js';
-import { buildClaudeArgs, runProcess, parseResult } from './claude.js';
+import { buildClaudeArgs, runProcess, parseResult, cleanEnv } from './claude.js';
 import { buildContext } from './context.js';
 import { buildLeadPrompt, MCFLY_ROOT } from './prompt.js';
 import { appendMetric } from './metrics.js';
@@ -69,7 +69,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const args = buildClaudeArgs({ prompt, cfg, pluginDir: MCFLY_ROOT });
     if (dryRun) { log(`[dry-run] ${cfg.run.claude_bin} ${args.slice(0, -1).join(' ')} "<промпт ${prompt.length} символов, сохранён в ${path.relative(projectDir, runDir)}/prompt.md>"`); return { status: 'dry-run', id, prompt }; }
     if (process.platform === 'darwin') { try { spawn('caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore', detached: true }).unref(); } catch {} }
-    const env = { ...process.env, MCFLY_RUN_ID: id, MCFLY_PROJECT_DIR: projectDir, PATH: `${path.join(MCFLY_ROOT, 'bin')}:${process.env.PATH || ''}` };
+    const env = { ...cleanEnv(process.env), MCFLY_RUN_ID: id, MCFLY_PROJECT_DIR: projectDir, PATH: `${path.join(MCFLY_ROOT, 'bin')}:${process.env.PATH || ''}` };
     const logStream = fs.createWriteStream(path.join(runDir, 'stdout.log'));
     const started = new Date();
     log(`Прогон ${id} (${mode}${slot ? ', слот ' + slot : ''}) запущен, лимит ${cfg.run.max_minutes} мин.`);
