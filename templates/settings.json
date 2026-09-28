@@ -1,0 +1,16 @@
+{
+  "enableAllProjectMcpServers": true,
+  "permissions": {
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(sudo *)",
+      "Bash(ssh *)",
+      "Bash(scp *)",
+      "Bash(launchctl *)",
+      "Read(./mcfly/.env)",
+      "Edit(./mcfly/config.yaml)",
+      "Edit(./mcfly/.env)"
+    ]
+  }
+}

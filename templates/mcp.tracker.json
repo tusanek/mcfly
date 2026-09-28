@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "yandex-tracker": {
+      "command": "yandex-tracker-mcp",
+      "args": [],
+      "env": { "TRACKER_TOKEN": "${TRACKER_TOKEN}", "TRACKER_ORG_ID": "${TRACKER_ORG_ID}" }
+    }
+  }
+}

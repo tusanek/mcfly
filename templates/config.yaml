@@ -1,0 +1,34 @@
+# Конфигурация mcfly для проекта {{PROJECT}}
+project: {{PROJECT}}
+
+schedule:
+  slots: ["00:00", "04:00"]     # ночные прогоны, локальное время Mac
+  tolerance_minutes: 30         # старт позже слота более чем на это время = прогон пропущен
+  summary_at: "08:00"           # утренняя сводка в Telegram
+
+run:
+  max_minutes: 180              # жёсткий лимит одного прогона
+  permission_mode: auto         # auto | dontAsk | acceptEdits | bypassPermissions | default | plan
+  model: ""                     # пусто = модель Claude Code по умолчанию
+  max_budget_usd: 0             # 0 = без ограничения (оценка стоимости; на подписке не списывается)
+  claude_bin: claude
+  lead_agent: "mcfly:lead"
+  extra_args: []
+
+escalation:
+  answer_deadline_hours: 24     # потом действует ответ по умолчанию
+  approval_deadline_hours: 24   # потом авто-одобрение изменения
+  categories:
+    spec:   { label: "Спецификация и критерии приёмки", auto_default: true }
+    deps:   { label: "Внешние зависимости и платные ресурсы", auto_default: true }
+    prod:   { label: "Прод-сервер, секреты, доступы", auto_default: false }
+    budget: { label: "Бюджет и расписание", auto_default: true }
+    stuck:  { label: "Два неудачных подхода подряд", auto_default: true }
+
+telegram:
+  chat_id: ""                   # заполняет команда: mcfly telegram pair
+  token_env: MCFLY_TELEGRAM_TOKEN
+
+limits:
+  max_changes_per_run: 2
+  max_tasks_per_change: 10
