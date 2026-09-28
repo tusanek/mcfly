@@ -42,7 +42,7 @@ export function cleanEnv(env) {
   return out;
 }
 
-const LIMIT_RE = /usage limit|rate limit|limit reached|too many requests|\b429\b|quota/i;
+const LIMIT_RE = /usage limit|session limit|weekly limit|rate limit|limit reached|hit your [^.]*limit|too many requests|\b429\b|quota/i;
 
 export function parseResult({ exitCode, stdout, stderr, timedOut }) {
   // stream-json: по объекту на строку, последний — событие result; json: один объект (возможно многострочный).

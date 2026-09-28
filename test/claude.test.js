@@ -12,6 +12,7 @@ test('parseResult: ok / error / quota / timeout', () => {
   assert.equal(ok.status, 'ok'); assert.equal(ok.costUsd, 1.5); assert.equal(ok.turns, 3); assert.equal(ok.sessionId, 's');
   assert.equal(parseResult({ exitCode: 1, stdout: '', stderr: 'boom', timedOut: false }).status, 'error');
   assert.equal(parseResult({ exitCode: 1, stdout: '{"result":"You have hit your usage limit","is_error":true}', stderr: '', timedOut: false }).status, 'quota');
+  assert.equal(parseResult({ exitCode: 1, stdout: '{"result":"You\'ve hit your session limit · resets 10pm (Europe/Moscow)","is_error":true}', stderr: '', timedOut: false }).status, 'quota');
   assert.equal(parseResult({ exitCode: null, stdout: '', stderr: '', timedOut: true }).status, 'timeout');
 });
 test('runProcess с таймаутом', async () => {
