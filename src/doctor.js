@@ -23,8 +23,8 @@ export function doctor({ projectDir, probe = false, log = console.log }) {
     let loggedIn = false; try { loggedIn = !!JSON.parse(r.stdout || '{}').loggedIn; } catch {}
     add(loggedIn, 'claude CLI авторизован для прогонов', 'войдите: claude (затем /login) или claude setup-token → CLAUDE_CODE_OAUTH_TOKEN в mcfly/.env');
     const tok = process.env.CLAUDE_CODE_OAUTH_TOKEN || '';
-    log(`  · CLAUDE_CODE_OAUTH_TOKEN: ${tok ? `задан, ${tok.length} символов, префикс ${tok.slice(0, 11)}…` : 'не задан (используется вход CLI из связки ключей)'}`);
-    log(`  · ANTHROPIC_BASE_URL в окружении: ${process.env.ANTHROPIC_BASE_URL ? 'есть (прогон его уберёт)' : 'нет'}; вложенная сессия Claude: ${process.env.CLAUDECODE === '1' ? 'да' : 'нет'}`);
+    add(true, `· CLAUDE_CODE_OAUTH_TOKEN: ${tok ? `задан, ${tok.length} символов, префикс ${tok.slice(0, 11)}…` : 'не задан (используется вход CLI из связки ключей)'}`);
+    add(true, `· ANTHROPIC_BASE_URL в окружении: ${process.env.ANTHROPIC_BASE_URL ? 'есть (прогон его уберёт)' : 'нет'}; вложенная сессия Claude: ${process.env.CLAUDECODE === '1' ? 'да' : 'нет'}`);
     if (probe) {
       const pr = spawnSync('claude', ['-p', '--output-format', 'json', '--plugin-dir', MCFLY_ROOT, '--agent', 'mcfly:lead', 'Проверка. Ответь одним словом: ок'], { env: cleanEnv(process.env), encoding: 'utf8', timeout: 180_000 });
       let res = null; try { res = JSON.parse(String(pr.stdout || '').trim().split('\n').pop() || '{}'); } catch {}
@@ -41,6 +41,6 @@ export function doctor({ projectDir, probe = false, log = console.log }) {
   }
   add(exists(path.join(projectDir, 'openspec', 'config.yaml')), 'openspec/ инициализирован', 'openspec init --tools claude');
   add(exists(path.join(projectDir, '.git')), 'git-репозиторий проекта', 'git init');
-  for (const c of checks) log(`${c.ok ? '✓' : '✗'} ${c.label}${c.ok || !c.hint ? '' : ' — ' + c.hint}`);
+  for (const c of checks) log(c.label.startsWith('·') ? `  ${c.label}` : `${c.ok ? '✓' : '✗'} ${c.label}${c.ok || !c.hint ? '' : ' — ' + c.hint}`);
   return checks;
 }
