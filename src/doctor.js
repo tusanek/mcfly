@@ -5,6 +5,7 @@ import { loadConfig } from './config.js';
 import { loadEnv } from './env.js';
 import { exists } from './util.js';
 import { MCFLY_ROOT } from './prompt.js';
+import { cleanEnv } from './claude.js';
 
 function ver(bin, args = ['--version']) { const r = spawnSync(bin, args, { encoding: 'utf8' }); return r.status === 0 ? String(r.stdout || r.stderr).trim().split('\n')[0] : null; }
 
@@ -17,6 +18,11 @@ export function doctor({ projectDir, log = console.log }) {
   try { cfg = loadConfig(p.config); add(true, 'конфигурация валидна'); } catch (e) { add(false, 'конфигурация валидна', e.message); }
   const node = ver('node', ['-v']); add(node, `node ${node || ''}`);
   const claude = ver('claude'); add(claude, `claude ${claude || ''}`, 'установите Claude Code CLI');
+  if (claude) {
+    const r = spawnSync('claude', ['auth', 'status'], { env: cleanEnv(process.env), encoding: 'utf8' });
+    let loggedIn = false; try { loggedIn = !!JSON.parse(r.stdout || '{}').loggedIn; } catch {}
+    add(loggedIn, 'claude CLI авторизован для прогонов', 'войдите: claude (затем /login) или claude setup-token → CLAUDE_CODE_OAUTH_TOKEN в mcfly/.env');
+  }
   const openspec = ver('openspec'); add(openspec, `openspec ${openspec || ''}`, 'npm install -g @fission-ai/openspec@latest');
   add(ver('git'), 'git');
   add(process.platform !== 'darwin' || exists('/usr/bin/caffeinate'), 'caffeinate (macOS)');
