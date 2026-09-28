@@ -13,3 +13,10 @@ test('loadEnv не перекрывает уже заданные перемен
   loadEnv(dir, env);
   assert.deepEqual(env, { T1: 'shell', T2: 'file' });
 });
+test('loadEnv: токен прогонов из файла перекрывает окружение', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-env-'));
+  fs.mkdirSync(path.join(dir, 'mcfly')); fs.writeFileSync(path.join(dir, 'mcfly', '.env'), 'CLAUDE_CODE_OAUTH_TOKEN=file\n');
+  const env = { CLAUDE_CODE_OAUTH_TOKEN: 'shell' };
+  loadEnv(dir, env);
+  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, 'file');
+});

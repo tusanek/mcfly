@@ -25,3 +25,7 @@ test('cleanEnv убирает служебные переменные вложе
   assert.deepEqual(out, { PATH: '/x', HOME: '/h', CLAUDE_CODE_PLUGIN_DIRS: '/p', CLAUDE_CODE_OAUTH_TOKEN: 't', CLAUDE_CONFIG_DIR: '/c' });
   assert.equal(cleanEnv({ ANTHROPIC_BASE_URL: 'https://litellm' }).ANTHROPIC_BASE_URL, 'https://litellm');
 });
+test('cleanEnv при собственном токене убирает ANTHROPIC_* даже вне вложенной сессии', () => {
+  const out = cleanEnv({ CLAUDE_CODE_OAUTH_TOKEN: 't', ANTHROPIC_BASE_URL: 'https://proxy', ANTHROPIC_API_KEY: 'k', PATH: '/x' });
+  assert.deepEqual(out, { CLAUDE_CODE_OAUTH_TOKEN: 't', PATH: '/x' });
+});

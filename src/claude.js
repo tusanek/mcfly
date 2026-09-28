@@ -30,11 +30,13 @@ export function runProcess({ bin, args, cwd, env, timeoutMs, onStdout, onStderr 
 const KEEP = new Set(['CLAUDE_CODE_PLUGIN_DIRS', 'CLAUDE_CODE_OAUTH_TOKEN']);
 export function cleanEnv(env) {
   const nested = env.CLAUDECODE === '1' || env.CLAUDE_CODE_CHILD_SESSION === '1';
+  const ownToken = !!env.CLAUDE_CODE_OAUTH_TOKEN;
   const out = {};
   for (const [k, v] of Object.entries(env)) {
     if (k === 'CLAUDECODE' || k === 'CLAUDE_PID' || k === 'CLAUDE_EFFORT' || k === 'CLAUDE_AGENT_SDK_VERSION' || k === 'CLAUDE_PREVIEW_CLASSIFIER_FLOOR') continue;
     if (k.startsWith('CLAUDE_CODE_') && !KEEP.has(k)) continue;
-    if (nested && k === 'ANTHROPIC_BASE_URL') continue;
+    // Внутри сессии Claude Code или при собственном токене прогонов — только стандартный эндпоинт и токен из .env.
+    if ((nested || ownToken) && (k === 'ANTHROPIC_BASE_URL' || k === 'ANTHROPIC_AUTH_TOKEN' || k === 'ANTHROPIC_API_KEY')) continue;
     out[k] = v;
   }
   return out;

@@ -14,9 +14,11 @@ export function parseDotenv(text) {
   }
   return out;
 }
-/** Загружает <project>/mcfly/.env в env, не перекрывая уже заданные значения. */
+/** Переменные, которые файл mcfly/.env перекрывает всегда: они задаются именно для прогонов команды. */
+export const OVERRIDE_KEYS = new Set(['CLAUDE_CODE_OAUTH_TOKEN']);
+/** Загружает <project>/mcfly/.env в env; заданные переменные окружения важнее файла, кроме OVERRIDE_KEYS. */
 export function loadEnv(projectDir, env = process.env) {
   const vars = parseDotenv(readText(path.join(projectDir, 'mcfly', '.env'), ''));
-  for (const [k, v] of Object.entries(vars)) if (env[k] === undefined) env[k] = v;
+  for (const [k, v] of Object.entries(vars)) if (env[k] === undefined || OVERRIDE_KEYS.has(k)) env[k] = v;
   return vars;
 }
