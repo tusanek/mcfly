@@ -10,7 +10,9 @@
       "Bash(launchctl *)",
       "Read(./mcfly/.env)",
       "Edit(./mcfly/config.yaml)",
-      "Edit(./mcfly/.env)"
+      "Edit(./mcfly/.env)",
+      "Write(./mcfly/config.yaml)",
+      "Write(./mcfly/.env)"
     ]
   }
 }
