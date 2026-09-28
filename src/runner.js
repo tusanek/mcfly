@@ -31,6 +31,21 @@ export function recordRun(p, record) {
   appendText(p.progress, `- ${fmtLocal(new Date(record.started_at))} прогон ${record.id} (${record.mode}${record.slot ? ', слот ' + record.slot : ''}): ${record.status}${turns}${cost}${record.note ? ' — ' + record.note : ''}\n`);
 }
 
+/** Коммитит служебные файлы прогона (журнал, метрики, каталог прогона), чтобы рабочее дерево оставалось чистым для следующего прогона. */
+export function commitRunState(projectDir, id, log = console.log) {
+  const inRepo = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: projectDir, encoding: 'utf8' });
+  if (inRepo.status !== 0) return false;
+  const candidates = ['mcfly/progress.md', 'mcfly/metrics.jsonl', 'mcfly/questions.yaml', 'mcfly/answers.md', ...['result.json', 'summary.md', 'prompt.md', 'validate.json', 'events.log'].map((f) => `mcfly/runs/${id}/${f}`)];
+  const existing = candidates.filter((f) => fs.existsSync(path.join(projectDir, f)));
+  if (!existing.length) return false;
+  spawnSync('git', ['add', '--', ...existing], { cwd: projectDir, encoding: 'utf8' });
+  const staged = spawnSync('git', ['diff', '--cached', '--quiet'], { cwd: projectDir });
+  if (staged.status === 0) return false;
+  const r = spawnSync('git', ['commit', '-q', '-m', `chore(mcfly): результат прогона ${id}`], { cwd: projectDir, encoding: 'utf8' });
+  if (r.status !== 0) log(`Не удалось закоммитить файлы прогона: ${String(r.stderr || r.stdout).trim().slice(0, 200)}`);
+  return r.status === 0;
+}
+
 export function runOpenspecValidate(projectDir) {
   const r = spawnSync('openspec', ['validate', '--all', '--strict', '--json'], { cwd: projectDir, encoding: 'utf8' });
   if (r.error) return { available: false, ok: null, output: String(r.error) };
@@ -91,6 +106,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
       note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', validate.available && validate.ok === false ? 'openspec validate: есть ошибки' : '', dirty ? `незакоммиченных файлов: ${dirty}` : ''].filter(Boolean).join('; '),
     };
     recordRun(p, record);
+    commitRunState(projectDir, id, log);
     log(`Прогон ${id} завершён: ${record.status} (${fmtLocal(new Date())}).`);
     return { status: record.status, id };
   } finally { releaseLock(p); }

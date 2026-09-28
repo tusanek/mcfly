@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import path from 'node:path';
-import { run, acquireLock, releaseLock } from '../src/runner.js';
+import { run, acquireLock, releaseLock, commitRunState, recordRun } from '../src/runner.js';
+import { spawnSync } from 'node:child_process';
 import { paths } from '../src/state.js';
 import { readMetrics } from '../src/metrics.js';
 import { bareProject } from './helpers.js';
@@ -24,4 +25,14 @@ test('dry-run внутри окна сохраняет промпт и не за
 test('лок не даёт второго прогона', () => {
   const p = paths(bareProject());
   assert.equal(acquireLock(p), true); assert.equal(acquireLock(p), false); releaseLock(p); assert.equal(acquireLock(p), true); releaseLock(p);
+});
+test('commitRunState коммитит служебные файлы прогона', () => {
+  const dir = bareProject(); const p = paths(dir);
+  spawnSync('git', ['init', '-q'], { cwd: dir }); spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: dir });
+  recordRun(p, { id: 'r1', mode: 'day', slot: null, started_at: new Date().toISOString(), ended_at: new Date().toISOString(), status: 'ok' });
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const prev = process.env; process.env = env;
+  try { assert.equal(commitRunState(dir, 'r1', () => {}), true); } finally { process.env = prev; }
+  assert.match(spawnSync('git', ['log', '--oneline', '-1'], { cwd: dir, encoding: 'utf8' }).stdout, /результат прогона r1/);
+  assert.equal(spawnSync('git', ['status', '--porcelain', 'mcfly/progress.md'], { cwd: dir, encoding: 'utf8' }).stdout.trim(), '');
 });

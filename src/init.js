@@ -48,7 +48,7 @@ export function init({ projectDir, name, withTracker = false, skipOpenspec = fal
   writeText(claudeMd, upsertSection(readText(claudeMd, ''), tpl('CLAUDE.snippet.md').replaceAll('{{PROJECT}}', project)));
   created.push('CLAUDE.md');
   if (withTracker) put(path.join(projectDir, '.mcp.json'), tpl('mcp.tracker.json'));
-  ensureGitignore(projectDir, ['mcfly/.env', 'mcfly/state.json', 'mcfly/.lock', 'mcfly/logs/', 'mcfly/runs/*/stdout.log']);
+  ensureGitignore(projectDir, ['mcfly/.env', 'mcfly/state.json', 'mcfly/.lock', 'mcfly/logs/', 'mcfly/runs/*/stdout.log', '.DS_Store']);
   let openspec = 'пропущено';
   if (!skipOpenspec) {
     const which = spawnSync('which', ['openspec'], { encoding: 'utf8' });
