@@ -19,7 +19,8 @@ test('dry-run внутри окна сохраняет промпт и не за
   const dir = bareProject(); const p = paths(dir);
   const r = await run({ projectDir: dir, mode: 'night', dryRun: true, now: new Date(2026, 8, 29, 0, 5), log: () => {} });
   assert.equal(r.status, 'dry-run');
-  assert.ok(fs.existsSync(path.join(p.runs, r.id, 'prompt.md')));
+  assert.ok(fs.existsSync(path.join(p.logs, `dry-run-${r.id}.prompt.md`)));
+  assert.equal(fs.existsSync(path.join(p.runs, r.id)), false, 'сухой прогон не создаёт каталог в runs');
   assert.equal(fs.existsSync(p.lock), false);
 });
 test('лок не даёт второго прогона', () => {

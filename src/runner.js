@@ -64,6 +64,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     slot = matchSlot(now, cfg.schedule.slots, cfg.schedule.tolerance_minutes);
     if (!slot) {
       recordRun(p, { id, mode, slot: null, started_at: now.toISOString(), ended_at: now.toISOString(), status: 'missed', note: `вне окна запуска (слоты ${cfg.schedule.slots.join(', ')} +${cfg.schedule.tolerance_minutes} мин): Mac был выключен или спал` });
+      commitRunState(projectDir, id, log);
       log(`Прогон ${id}: вне окна, записан как пропущенный.`);
       return { status: 'missed', id };
     }
@@ -79,10 +80,16 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     }
     const deadline = new Date(now.getTime() + cfg.run.max_minutes * 60_000);
     const prompt = buildLeadPrompt({ cfg, p, runId: id, mode, deadline, context: buildContext(p, cfg) });
+    const args = buildClaudeArgs({ prompt, cfg, pluginDir: MCFLY_ROOT });
+    if (dryRun) {
+      // Сухой прогон не оставляет следов в mcfly/runs: промпт кладём в logs (вне git).
+      const dryPath = path.join(p.logs, `dry-run-${id}.prompt.md`);
+      fs.writeFileSync(dryPath, prompt);
+      log(`[dry-run] ${cfg.run.claude_bin} ${args.slice(0, -1).join(' ')} "<промпт ${prompt.length} символов, сохранён в ${path.relative(projectDir, dryPath)}>"`);
+      return { status: 'dry-run', id, prompt, promptPath: dryPath };
+    }
     const runDir = ensureDir(path.join(p.runs, id));
     fs.writeFileSync(path.join(runDir, 'prompt.md'), prompt);
-    const args = buildClaudeArgs({ prompt, cfg, pluginDir: MCFLY_ROOT });
-    if (dryRun) { log(`[dry-run] ${cfg.run.claude_bin} ${args.slice(0, -1).join(' ')} "<промпт ${prompt.length} символов, сохранён в ${path.relative(projectDir, runDir)}/prompt.md>"`); return { status: 'dry-run', id, prompt }; }
     if (process.platform === 'darwin') { try { spawn('caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore', detached: true }).unref(); } catch {} }
     const env = { ...cleanEnv(process.env), MCFLY_RUN_ID: id, MCFLY_PROJECT_DIR: projectDir, PATH: `${path.join(MCFLY_ROOT, 'bin')}:${process.env.PATH || ''}` };
     const logStream = fs.createWriteStream(path.join(runDir, 'stdout.log'));

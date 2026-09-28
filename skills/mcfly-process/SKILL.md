@@ -13,7 +13,7 @@ description: Процесс ИИ-команды mcfly — цикл прогон�
 
 ## Артефакты
 - `openspec/specs` — правда о системе; `openspec/changes/<имя>` — единица работы (proposal, дельты specs, design, tasks).
-- `mcfly/progress.md` — журнал; `mcfly/questions.yaml` и `mcfly/answers.md` — вопросы человеку и ответы; `mcfly/runs/<id>/summary.md` — отчёты; `mcfly/metrics.jsonl` — метрики.
+- `mcfly/progress.md` — журнал; `mcfly/questions.yaml` и `mcfly/answers.md` — вопросы человеку и ответы; `mcfly/runs/<id>/summary.md` — отчёты; `mcfly/metrics.jsonl` — метрики (только через `mcfly metric add`, напрямую не редактировать).
 
 ## Ворота качества
 - Тесты: красный → зелёный для каждой задачи; полный набор зелёный перед слиянием.
