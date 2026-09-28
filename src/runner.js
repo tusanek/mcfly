@@ -5,7 +5,7 @@ import { paths } from './state.js';
 import { loadConfig } from './config.js';
 import { loadEnv } from './env.js';
 import { matchSlot } from './window.js';
-import { buildClaudeArgs, runProcess, parseResult, cleanEnv } from './claude.js';
+import { buildClaudeArgs, runProcess, parseResult, cleanEnv, summarizeEvent } from './claude.js';
 import { buildContext } from './context.js';
 import { buildLeadPrompt, MCFLY_ROOT } from './prompt.js';
 import { appendMetric } from './metrics.js';
@@ -71,10 +71,15 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     if (process.platform === 'darwin') { try { spawn('caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore', detached: true }).unref(); } catch {} }
     const env = { ...cleanEnv(process.env), MCFLY_RUN_ID: id, MCFLY_PROJECT_DIR: projectDir, PATH: `${path.join(MCFLY_ROOT, 'bin')}:${process.env.PATH || ''}` };
     const logStream = fs.createWriteStream(path.join(runDir, 'stdout.log'));
+    const eventsStream = fs.createWriteStream(path.join(runDir, 'events.log'));
+    let pending = '';
+    const onLine = (line) => { const s = summarizeEvent(line); if (s) eventsStream.write(`${fmtLocal(new Date())} ${s}\n`); };
+    const onStdout = (chunk) => { logStream.write(chunk); pending += chunk; const lines = pending.split('\n'); pending = lines.pop(); for (const l of lines) if (l.trim()) onLine(l); };
     const started = new Date();
     log(`Прогон ${id} (${mode}${slot ? ', слот ' + slot : ''}) запущен, лимит ${cfg.run.max_minutes} мин.`);
-    const result = await runProcess({ bin: cfg.run.claude_bin, args, cwd: projectDir, env, timeoutMs: cfg.run.max_minutes * 60_000, onStdout: (s) => logStream.write(s), onStderr: (s) => logStream.write(s) });
-    logStream.end();
+    const result = await runProcess({ bin: cfg.run.claude_bin, args, cwd: projectDir, env, timeoutMs: cfg.run.max_minutes * 60_000, onStdout, onStderr: (s) => logStream.write(s) });
+    if (pending.trim()) onLine(pending);
+    logStream.end(); eventsStream.end();
     const parsed = parseResult(result);
     const validate = runOpenspecValidate(projectDir);
     fs.writeFileSync(path.join(runDir, 'validate.json'), JSON.stringify(validate, null, 2));

@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildClaudeArgs, parseResult, runProcess, cleanEnv } from '../src/claude.js';
+import { buildClaudeArgs, parseResult, runProcess, cleanEnv, summarizeEvent } from '../src/claude.js';
 import { cfg } from './helpers.js';
 
 test('buildClaudeArgs', () => {
   const args = buildClaudeArgs({ prompt: 'p', cfg: { ...cfg, run: { ...cfg.run, model: 'opus', max_budget_usd: 5, extra_args: ['--verbose'] } }, pluginDir: '/x' });
-  assert.deepEqual(args, ['-p', '--output-format', 'json', '--permission-mode', 'auto', '--plugin-dir', '/x', '--agent', 'mcfly:lead', '--model', 'opus', '--max-budget-usd', '5', '--verbose', 'p']);
+  assert.deepEqual(args, ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'auto', '--plugin-dir', '/x', '--agent', 'mcfly:lead', '--model', 'opus', '--max-budget-usd', '5', '--verbose', 'p']);
 });
 test('parseResult: ok / error / quota / timeout', () => {
   const ok = parseResult({ exitCode: 0, stdout: 'мусор\n{"result":"готово","total_cost_usd":1.5,"num_turns":3,"session_id":"s","is_error":false}', stderr: '', timedOut: false });
@@ -28,4 +28,15 @@ test('cleanEnv убирает служебные переменные вложе
 test('cleanEnv при собственном токене убирает ANTHROPIC_* даже вне вложенной сессии', () => {
   const out = cleanEnv({ CLAUDE_CODE_OAUTH_TOKEN: 't', ANTHROPIC_BASE_URL: 'https://proxy', ANTHROPIC_API_KEY: 'k', PATH: '/x' });
   assert.deepEqual(out, { CLAUDE_CODE_OAUTH_TOKEN: 't', PATH: '/x' });
+});
+test('parseResult читает последний объект потока stream-json', () => {
+  const stdout = '{"type":"system","subtype":"init"}\n{"type":"assistant","message":{"content":[{"type":"text","text":"иду"}]}}\n{"type":"result","result":"готово","total_cost_usd":0.5,"num_turns":4,"session_id":"s1","is_error":false}\n';
+  const r = parseResult({ exitCode: 0, stdout, stderr: '', timedOut: false });
+  assert.equal(r.status, 'ok'); assert.equal(r.turns, 4); assert.equal(r.sessionId, 's1');
+});
+test('summarizeEvent даёт краткие строки для инструментов, текста и результата', () => {
+  assert.equal(summarizeEvent('{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"mvn -q test"}}]}}'), '→ Bash: mvn -q test');
+  assert.equal(summarizeEvent('{"type":"assistant","message":{"content":[{"type":"text","text":"Начинаю  задачу\\n1.1"}]}}'), '💬 Начинаю задачу 1.1');
+  assert.equal(summarizeEvent('{"type":"result","is_error":false,"num_turns":3,"total_cost_usd":1.2}'), '■ результат: ок, ходов 3, ~$1.2');
+  assert.equal(summarizeEvent('{"type":"system"}'), null); assert.equal(summarizeEvent('не json'), null);
 });
