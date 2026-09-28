@@ -53,7 +53,7 @@ mcfly/
   progress.md      журнал прогонов и заметки репортёра
   questions.yaml   вопросы человеку: категория, ответ по умолчанию, срок, статус
   answers.md       ответы и заметки человека (пополняется из Telegram)
-  runs/<id>/       prompt.md, stdout.log, result.json, validate.json, summary.md
+  runs/<id>/       prompt.md, stdout.log, events.log (живая лента действий), result.json, validate.json, summary.md
   metrics.jsonl    прогоны и события (задачи, эскалации, возвраты ревью)
   state.json       offset Telegram, время последней сводки
 ```
@@ -108,4 +108,4 @@ reject add-cache причина   отклонить
 
 ## Дорожная карта
 
-Watch-режим (команда `запусти` из Telegram запускает дневной прогон сама), перенос на сервер компании, Stop-hook цикл для длинных прогонов, проверка комплекта на втором проекте.
+Watch-режим (команда `запусти` из Telegram запускает дневной прогон сама); `mcfly status` с прогрессом задач по невлитым веткам `change/*`; проектный навык wrap-up как шаблон в `mcfly init`; перенос на сервер компании; Stop-hook цикл для длинных прогонов; проверка комплекта на втором проекте.

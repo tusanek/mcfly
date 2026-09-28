@@ -1,12 +1,20 @@
 {
   "name": "mcfly",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Комплект ИИ-команды разработки на Claude Code: роли, ночные прогоны, эскалации в Telegram, OpenSpec",
   "type": "module",
-  "bin": { "mcfly": "bin/mcfly" },
-  "engines": { "node": ">=20" },
-  "scripts": { "test": "node --test test/*.test.js" },
-  "dependencies": { "yaml": "^2.9.1" },
+  "bin": {
+    "mcfly": "bin/mcfly"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
+  },
   "license": "MIT",
   "author": "Александр Сыч"
 }
