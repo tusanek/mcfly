@@ -30,8 +30,8 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   status                                          состояние проекта
   question add --category <c> --text <t> [--default <d>] [--hours <n>]
   question list | question expire
-  approval request <изменение> [--category <c>]
-  approval set <изменение> approved|rejected [--note <t>]
+  approval request <изменение> [--category <c>] [--priority <n>]
+  approval set <изменение> approved|rejected [--note <t>] [--priority <n>]   (меньше = раньше; по умолчанию 100)
   approval list
   metric add --key <k> [--value <n>] [--change <имя>] | metric
   telegram pair                                   привязать чат (отправьте боту любое сообщение)
@@ -42,7 +42,7 @@ export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
     project: { type: 'string' }, mode: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
-    change: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, help: { type: 'boolean', short: 'h' } } });
+    change: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, priority: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
   const projectDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
   const p = paths(projectDir);
@@ -84,8 +84,8 @@ export async function main(argv) {
       if (sub === 'list') { for (const c of changes) log(`${c.name}: ${c.mcfly.approval || 'не запрошено'} (${c.mcfly.category || '-'})`); return 0; }
       const c = changes.find((x) => x.name === rest[0]);
       if (!c) { console.error(`Изменение не найдено: ${rest[0] || '(имя не указано)'}`); return 1; }
-      if (sub === 'request') { requestApproval(c, { category: values.category || 'spec', now }); appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_proposed', value: 1, change: c.name }); log(`Одобрение запрошено: ${c.name}. Человек увидит его в утренней сводке.`); return 0; }
-      if (sub === 'set') { const st = rest[1]; if (!['approved', 'rejected'].includes(st)) { console.error('Статус: approved | rejected'); return 1; } setApproval(c, st, 'human-cli', values.note || '', now); log(`${c.name}: ${st}`); return 0; }
+      if (sub === 'request') { requestApproval(c, { category: values.category || 'spec', priority: values.priority, now }); appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_proposed', value: 1, change: c.name }); log(`Одобрение запрошено: ${c.name}. Человек увидит его в утренней сводке.`); return 0; }
+      if (sub === 'set') { const st = rest[1]; if (!['approved', 'rejected'].includes(st)) { console.error('Статус: approved | rejected'); return 1; } setApproval(c, st, 'human-cli', values.note || '', now, { priority: values.priority }); log(`${c.name}: ${st}${values.priority ? ', приоритет ' + values.priority : ''}`); return 0; }
       break;
     }
     case 'metric': {

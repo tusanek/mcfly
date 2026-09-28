@@ -13,7 +13,7 @@ test('buildContext перечисляет изменения, вопросы, о
   requestApproval(a); setApproval(a, 'approved', 'human'); requestApproval(b);
   const data = loadQuestions(p); addQuestion(data, { category: 'deps', text: 'Брать yaml?', defaultAnswer: 'да' }, cfg); saveQuestions(p, data);
   const text = buildContext(p, cfg);
-  assert.match(text, /Одобренные изменения с открытыми задачами \(1\):\n- add-a: 1 сделано \/ 1 открыто/);
+  assert.match(text, /Одобренные изменения с открытыми задачами \(1\):\n- add-a \(приоритет 100\): 1 сделано \/ 1 открыто/);
   assert.match(text, /Ожидают одобрения \(1\):\n- add-b/);
   assert.match(text, /Q1 \[deps\] Брать yaml\? — по умолчанию: да/);
   assert.match(text, /Журнал/);

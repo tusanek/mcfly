@@ -12,7 +12,7 @@ export function buildContext(p, cfg, { progressLines = 15 } = {}) {
   const changes = listChanges(p.openspecChanges);
   const work = approvedWithWork(changes);
   L.push('', `Одобренные изменения с открытыми задачами (${work.length}):`);
-  for (const c of work) L.push(`- ${c.name}: ${c.tasksDone} сделано / ${c.tasksOpen} открыто`);
+  for (const c of work) L.push(`- ${c.name} (приоритет ${c.mcfly.priority ?? 100}): ${c.tasksDone} сделано / ${c.tasksOpen} открыто`);
   const pend = pendingApprovals(changes);
   L.push('', `Ожидают одобрения (${pend.length}):`);
   for (const c of pend) L.push(`- ${c.name} (запрошено ${c.mcfly.requested_at ? fmtShort(new Date(c.mcfly.requested_at)) : '?'})`);

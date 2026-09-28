@@ -32,3 +32,10 @@ test('request/set/expire', () => {
   assert.equal(changes[0].meta.schema, 'spec-driven');
   assert.equal(proposalExcerpt(changes[0]), 'Зачем: тест.');
 });
+test('приоритет задаёт порядок списка', () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'a-late'); addChange(dir, 'b-first');
+  const [a, b] = listChanges(p.openspecChanges);
+  setApproval(a, 'approved', 'h', '', new Date(), { priority: 5 }); setApproval(b, 'approved', 'h', '', new Date(), { priority: 1 });
+  assert.deepEqual(listChanges(p.openspecChanges).map((x) => x.name), ['b-first', 'a-late']);
+});
