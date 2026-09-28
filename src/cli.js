@@ -22,7 +22,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
 
 Команды:
   init [--name <проект>] [--with-tracker]        создать mcfly/ в проекте, настроить .claude и OpenSpec
-  doctor                                          проверить окружение
+  doctor [--probe]                                проверить окружение (--probe: реальный пробный запуск claude -p)
   run [--mode night|day] [--dry-run]              запустить прогон команды (night проверяет окно слота)
   summary [--send]                                собрать (и отправить в Telegram) утреннюю сводку
   answers                                         забрать ответы из Telegram
@@ -42,7 +42,7 @@ export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
     project: { type: 'string' }, mode: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
-    change: { type: 'string' }, quiet: { type: 'boolean' }, help: { type: 'boolean', short: 'h' } } });
+    change: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
   const projectDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
   const p = paths(projectDir);
@@ -50,7 +50,7 @@ export async function main(argv) {
   if (!cmd || values.help) { log(HELP); return 0; }
   if (cmd === 'init') { init({ projectDir, name: values.name, withTracker: !!values['with-tracker'], log }); return 0; }
   if (cmd === 'context') { if (!isMcflyProject(p)) return 0; loadEnv(projectDir); log(buildContext(p, loadConfig(p.config))); return 0; }
-  if (cmd === 'doctor') { doctor({ projectDir, log }); return 0; }
+  if (cmd === 'doctor') { doctor({ projectDir, probe: !!values.probe, log }); return 0; }
   if (!isMcflyProject(p)) { console.error(`Это не проект mcfly: нет ${p.config}. Выполните mcfly init.`); return 1; }
   loadEnv(projectDir);
   const cfg = loadConfig(p.config);

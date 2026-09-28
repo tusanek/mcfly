@@ -99,6 +99,7 @@ reject add-cache причина   отклонить
 - **Прогон со статусом quota**: достигнут лимит подписки; следующий прогон пройдёт по расписанию, либо запустите днём `mcfly run --mode day`.
 - **Пропущенные прогоны**: Mac спал; проверьте зарядку и `mcfly schedule status`.
 - **VPN**: прогоны не зависят от VPN, но задачи с внешними системами могут; проектируйте тесты через записанные ответы.
+- **401 OAuth access token is invalid при прогоне**: у отдельного CLI устарел токен подписки. Войдите заново в терминале (`claude`, затем `/login`) или получите долгоживущий токен `claude setup-token` и положите его в `mcfly/.env` как `CLAUDE_CODE_OAUTH_TOKEN`. Проверка: `mcfly doctor --probe`.
 - **Агент `mcfly:lead` не найден**: проверьте `claude plugin validate ~/mcfly` и значение `run.lead_agent` в `mcfly/config.yaml`.
 
 ## Дорожная карта
