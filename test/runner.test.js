@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import path from 'node:path';
-import { run, acquireLock, releaseLock, commitRunState, recordRun } from '../src/runner.js';
+import { run, acquireLock, releaseLock, commitRunState, recordRun, writeFallbackSummary } from '../src/runner.js';
 import { spawnSync } from 'node:child_process';
 import { paths } from '../src/state.js';
 import { readMetrics } from '../src/metrics.js';
@@ -36,4 +36,16 @@ test('commitRunState коммитит служебные файлы прогон
   try { assert.equal(commitRunState(dir, 'r1', () => {}), true); } finally { process.env = prev; }
   assert.match(spawnSync('git', ['log', '--oneline', '-1'], { cwd: dir, encoding: 'utf8' }).stdout, /результат прогона r1/);
   assert.equal(spawnSync('git', ['status', '--porcelain', 'mcfly/progress.md'], { cwd: dir, encoding: 'utf8' }).stdout.trim(), '');
+});
+test('writeFallbackSummary пишет авто-сводку, если репортёр не написал отчёт', () => {
+  const dir = bareProject(); const p = paths(dir);
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  spawnSync('git', ['init', '-q'], { cwd: dir, env }); spawnSync('git', ['commit', '-q', '--allow-empty', '-m', 'init'], { cwd: dir, env });
+  const started = new Date(Date.now() - 60_000);
+  spawnSync('git', ['commit', '-q', '--allow-empty', '-m', 'feat(x): работа ночью'], { cwd: dir, env });
+  const runDir = path.join(p.runs, 'r2'); fs.mkdirSync(runDir, { recursive: true });
+  assert.equal(writeFallbackSummary({ projectDir: dir, runDir, id: 'r2', started, resultText: 'Жду разработчика 3.2.' }), true);
+  const text = fs.readFileSync(path.join(runDir, 'summary.md'), 'utf8');
+  assert.match(text, /авто-сводка/); assert.match(text, /работа ночью/); assert.match(text, /Жду разработчика/);
+  assert.equal(writeFallbackSummary({ projectDir: dir, runDir, id: 'r2', started, resultText: '' }), false, 'существующий отчёт не перезаписывается');
 });

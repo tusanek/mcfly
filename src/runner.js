@@ -46,6 +46,23 @@ export function commitRunState(projectDir, id, log = console.log) {
   return r.status === 0;
 }
 
+/** Страховочная сводка, если репортёр не написал summary.md: коммиты прогона, ветки change/*, последнее сообщение лида. */
+export function writeFallbackSummary({ projectDir, runDir, id, started, resultText }) {
+  const file = path.join(runDir, 'summary.md');
+  if (fs.existsSync(file)) return false;
+  const git = (args) => String(spawnSync('git', args, { cwd: projectDir, encoding: 'utf8' }).stdout || '').trim();
+  const commits = git(['log', '--all', '--oneline', `--since=${started.toISOString()}`]) || '(нет коммитов)';
+  const branches = git(['branch', '--list', 'change/*', '--format=%(refname:short)']).split('\n').filter(Boolean);
+  const branchLines = branches.map((b) => {
+    const tasks = git(['show', `${b}:openspec/changes/${b.replace(/^change\//, '')}/tasks.md`]);
+    const done = (tasks.match(/^\s*- \[x\]/gim) || []).length; const open = (tasks.match(/^\s*- \[ \]/gim) || []).length;
+    return `- ${b}: ${done} сделано / ${open} открыто`;
+  });
+  const text = [`# Прогон ${id} — авто-сводка (репортёр не отработал)`, '', '## Коммиты за прогон', commits, '', '## Ветки изменений', branchLines.join('\n') || '(нет)', '', '## Последнее сообщение лида', String(resultText || '').slice(0, 600) || '(пусто)', ''].join('\n');
+  fs.writeFileSync(file, text);
+  return true;
+}
+
 export function runOpenspecValidate(projectDir) {
   const r = spawnSync('openspec', ['validate', '--all', '--strict', '--json'], { cwd: projectDir, encoding: 'utf8' });
   if (r.error) return { available: false, ok: null, output: String(r.error) };
@@ -103,6 +120,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     if (pending.trim()) onLine(pending);
     logStream.end(); eventsStream.end();
     const parsed = parseResult(result);
+    const fallback = writeFallbackSummary({ projectDir, runDir, id, started, resultText: parsed.resultText || parsed.errorText });
     const validate = runOpenspecValidate(projectDir);
     fs.writeFileSync(path.join(runDir, 'validate.json'), JSON.stringify(validate, null, 2));
     const git = spawnSync('git', ['status', '--porcelain'], { cwd: projectDir, encoding: 'utf8' });
@@ -110,7 +128,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const record = {
       id, mode, slot, started_at: started.toISOString(), ended_at: new Date().toISOString(), status: parsed.status, duration_ms: result.durationMs, exit_code: result.exitCode,
       cost_usd: parsed.costUsd, turns: parsed.turns, session_id: parsed.sessionId, validate_ok: validate.ok, dirty_files: dirty, error: parsed.errorText,
-      note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', validate.available && validate.ok === false ? 'openspec validate: есть ошибки' : '', dirty ? `незакоммиченных файлов: ${dirty}` : ''].filter(Boolean).join('; '),
+      note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', fallback ? 'репортёр не написал отчёт, записана авто-сводка' : '', validate.available && validate.ok === false ? 'openspec validate: есть ошибки' : '', dirty ? `незакоммиченных файлов: ${dirty}` : ''].filter(Boolean).join('; '),
     };
     recordRun(p, record);
     commitRunState(projectDir, id, log);
