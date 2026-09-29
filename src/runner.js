@@ -8,7 +8,7 @@ import { matchSlot } from './window.js';
 import { buildClaudeArgs, runProcess, parseResult, cleanEnv, summarizeEvent } from './claude.js';
 import { buildContext } from './context.js';
 import { buildLeadPrompt, MCFLY_ROOT } from './prompt.js';
-import { appendMetric } from './metrics.js';
+import { appendMetric, runStats } from './metrics.js';
 import { loadQuestions, saveQuestions, expireQuestions } from './questions.js';
 import { listChanges, expireApprovals } from './approvals.js';
 import { pullAnswers } from './pull.js';
@@ -22,13 +22,32 @@ export function acquireLock(p) {
 }
 export function releaseLock(p) { try { fs.unlinkSync(p.lock); } catch {} }
 
+/**
+ * Окружение claude -p для прогона. Фоновые задачи отключены: в -p CLI ждёт фоновых субагентов после последнего хода лида
+ * не дольше CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS (10 минут простоя) и убивает их (прогон 20260929-0400), поэтому субагенты
+ * только синхронные. Потолок снят на случай, если фон всё же появится: прогон ограничивает таймаут runner.
+ */
+export function runEnv(baseEnv, { id, projectDir }) {
+  return {
+    ...cleanEnv(baseEnv), MCFLY_RUN_ID: id, MCFLY_PROJECT_DIR: projectDir, PATH: `${path.join(MCFLY_ROOT, 'bin')}:${baseEnv.PATH || ''}`,
+    CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1', CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: '0',
+  };
+}
+
+/** Режет поток на строки: push(кусок) вызывает onLine для каждой полной непустой строки, flush() — для хвоста. */
+function lineSplitter(onLine) {
+  let pending = '';
+  return {
+    push(chunk) { pending += chunk; const lines = pending.split('\n'); pending = lines.pop(); for (const l of lines) if (l.trim()) onLine(l); },
+    flush() { if (pending.trim()) onLine(pending); pending = ''; },
+  };
+}
+
 export function recordRun(p, record) {
   ensureDir(path.join(p.runs, record.id));
   writeJson(path.join(p.runs, record.id, 'result.json'), record);
   appendMetric(p, { type: 'run', ...record });
-  const cost = record.cost_usd != null ? `, ~$${Number(record.cost_usd).toFixed(2)}` : '';
-  const turns = record.turns != null ? `, ${record.turns} ходов` : '';
-  appendText(p.progress, `- ${fmtLocal(new Date(record.started_at))} прогон ${record.id} (${record.mode}${record.slot ? ', слот ' + record.slot : ''}): ${record.status}${turns}${cost}${record.note ? ' — ' + record.note : ''}\n`);
+  appendText(p.progress, `- ${fmtLocal(new Date(record.started_at))} прогон ${record.id} (${record.mode}${record.slot ? ', слот ' + record.slot : ''}): ${record.status}${runStats(record)}${record.note ? ' — ' + record.note : ''}\n`);
 }
 
 /** Коммитит служебные файлы прогона (журнал, метрики, каталог прогона), чтобы рабочее дерево оставалось чистым для следующего прогона. */
@@ -108,16 +127,17 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const runDir = ensureDir(path.join(p.runs, id));
     fs.writeFileSync(path.join(runDir, 'prompt.md'), prompt);
     if (process.platform === 'darwin') { try { spawn('caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore', detached: true }).unref(); } catch {} }
-    const env = { ...cleanEnv(process.env), MCFLY_RUN_ID: id, MCFLY_PROJECT_DIR: projectDir, PATH: `${path.join(MCFLY_ROOT, 'bin')}:${process.env.PATH || ''}` };
+    const env = runEnv(process.env, { id, projectDir });
     const logStream = fs.createWriteStream(path.join(runDir, 'stdout.log'));
     const eventsStream = fs.createWriteStream(path.join(runDir, 'events.log'));
-    let pending = '';
-    const onLine = (line) => { const s = summarizeEvent(line); if (s) eventsStream.write(`${fmtLocal(new Date())} ${s}\n`); };
-    const onStdout = (chunk) => { logStream.write(chunk); pending += chunk; const lines = pending.split('\n'); pending = lines.pop(); for (const l of lines) if (l.trim()) onLine(l); };
+    const event = (s) => eventsStream.write(`${fmtLocal(new Date())} ${s}\n`);
+    const stdoutLines = lineSplitter((line) => { const s = summarizeEvent(line); if (s) event(s); });
+    const stderrLines = lineSplitter((line) => event(`⚠ ${line.trim().slice(0, 300)}`));
     const started = new Date();
     log(`Прогон ${id} (${mode}${slot ? ', слот ' + slot : ''}) запущен, лимит ${cfg.run.max_minutes} мин.`);
-    const result = await runProcess({ bin: cfg.run.claude_bin, args, cwd: projectDir, env, timeoutMs: cfg.run.max_minutes * 60_000, onStdout, onStderr: (s) => logStream.write(s) });
-    if (pending.trim()) onLine(pending);
+    const result = await runProcess({ bin: cfg.run.claude_bin, args, cwd: projectDir, env, timeoutMs: cfg.run.max_minutes * 60_000,
+      onStdout: (chunk) => { logStream.write(chunk); stdoutLines.push(chunk); }, onStderr: (chunk) => { logStream.write(chunk); stderrLines.push(chunk); } });
+    stdoutLines.flush(); stderrLines.flush();
     logStream.end(); eventsStream.end();
     const parsed = parseResult(result);
     const fallback = writeFallbackSummary({ projectDir, runDir, id, started, resultText: parsed.resultText || parsed.errorText });
@@ -127,7 +147,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const dirty = String(git.stdout || '').trim().split('\n').filter(Boolean).length;
     const record = {
       id, mode, slot, started_at: started.toISOString(), ended_at: new Date().toISOString(), status: parsed.status, duration_ms: result.durationMs, exit_code: result.exitCode,
-      cost_usd: parsed.costUsd, turns: parsed.turns, session_id: parsed.sessionId, validate_ok: validate.ok, dirty_files: dirty, error: parsed.errorText,
+      cost_usd: parsed.costUsd, turns: parsed.turns, subagents: parsed.subagents, session_id: parsed.sessionId, validate_ok: validate.ok, dirty_files: dirty, error: parsed.errorText,
       note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', fallback ? 'репортёр не написал отчёт, записана авто-сводка' : '', validate.available && validate.ok === false ? 'openspec validate: есть ошибки' : '', dirty ? `незакоммиченных файлов: ${dirty}` : ''].filter(Boolean).join('; '),
     };
     recordRun(p, record);

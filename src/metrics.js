@@ -15,6 +15,18 @@ export function aggregate(records, { since = null } = {}) {
   agg.cost_usd = Math.round(agg.cost_usd * 100) / 100;
   return agg;
 }
+/** Хвост строки прогона для журнала и сводки: «, N ходов, ~$X, субагентов M (фоном B, упало F, убито K)» — аномалии только ненулевые. */
+export function runStats(r) {
+  const parts = [];
+  if (r.turns != null) parts.push(`${r.turns} ходов`);
+  if (r.cost_usd != null) parts.push(`~$${Number(r.cost_usd).toFixed(2)}`);
+  const s = r.subagents;
+  if (s?.spawned) {
+    const odd = [['фоном', s.background], ['упало', s.failed], ['убито', s.killed]].filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`);
+    parts.push(`субагентов ${s.spawned}${odd.length ? ` (${odd.join(', ')})` : ''}`);
+  }
+  return parts.map((x) => `, ${x}`).join('');
+}
 export const EVENT_LABELS = { tasks_done: 'задач закрыто', escalations: 'эскалаций', review_rejections: 'возвратов с ревью', changes_proposed: 'изменений предложено', changes_archived: 'изменений завершено', tests_failed: 'падений тестов' };
 export function formatEvents(events) {
   const keys = Object.keys(events);

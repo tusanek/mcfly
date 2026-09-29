@@ -44,21 +44,37 @@ export function cleanEnv(env) {
 
 const LIMIT_RE = /usage limit|session limit|weekly limit|rate limit|limit reached|hit your [^.]*limit|too many requests|\b429\b|quota/i;
 
+const isResultEvent = (obj) => obj && typeof obj === 'object' && (obj.type === 'result' || 'result' in obj || 'is_error' in obj);
+
+/** Статистика субагентов из события result: сколько запущено, сколько стартовало фоном, упало и убито. */
+function subagentsOf(stats) {
+  if (!stats || typeof stats !== 'object') return null;
+  const killed = Object.values(stats.killed || {}).reduce((sum, n) => sum + Number(n || 0), 0);
+  return { spawned: stats.spawned ?? 0, background: stats.started_in_background ?? 0, failed: stats.failed ?? 0, killed };
+}
+
 export function parseResult({ exitCode, stdout, stderr, timedOut }) {
-  // stream-json: по объекту на строку, последний — событие result; json: один объект (возможно многострочный).
-  const lines = String(stdout || '').split('\n').map((l) => l.trim()).filter(Boolean);
-  let json = null;
-  for (let i = lines.length - 1; i >= 0 && !json; i--) {
-    try { const obj = JSON.parse(lines[i]); if (obj && typeof obj === 'object' && (obj.type === 'result' || 'result' in obj || 'is_error' in obj)) json = obj; } catch {}
+  // stream-json: по объекту на строку; событий result столько, сколько ходов сделал лид (CLI будит его по готовности фоновых задач),
+  // статус и стоимость — по последнему, ходы — сумма. json: один объект (возможно многострочный).
+  const results = [];
+  for (const line of String(stdout || '').split('\n')) {
+    if (!line.trim()) continue;
+    try { const obj = JSON.parse(line); if (isResultEvent(obj)) results.push(obj); } catch {}
   }
-  if (!json) { try { const whole = JSON.parse(String(stdout || '').trim()); if (whole && typeof whole === 'object') json = whole; } catch {} }
+  let json = results.at(-1) ?? null;
+  if (!json) { try { const whole = JSON.parse(String(stdout || '').trim()); if (whole && typeof whole === 'object') { json = whole; results.push(whole); } } catch {} }
+  const turnCounts = results.map((r) => r.num_turns).filter((n) => typeof n === 'number');
   const text = `${json?.result || ''}\n${stderr || ''}`;
   const failed = exitCode !== 0 || json?.is_error === true;
   let status = 'ok';
   if (timedOut) status = 'timeout';
   else if (failed && LIMIT_RE.test(text)) status = 'quota';
   else if (failed) status = 'error';
-  return { status, json, costUsd: json?.total_cost_usd ?? null, turns: json?.num_turns ?? null, sessionId: json?.session_id ?? null, resultText: json?.result ?? '', errorText: status === 'ok' ? '' : String(json?.result || stderr || `exit ${exitCode}`).slice(0, 2000) };
+  return {
+    status, json, costUsd: json?.total_cost_usd ?? null, turns: turnCounts.length ? turnCounts.reduce((a, b) => a + b, 0) : null,
+    subagents: subagentsOf(json?.subagent_stats), sessionId: json?.session_id ?? null, resultText: json?.result ?? '',
+    errorText: status === 'ok' ? '' : String(json?.result || stderr || `exit ${exitCode}`).slice(0, 2000),
+  };
 }
 
 /** Краткая человекочитаемая строка по событию stream-json (или null, если событие неинтересно). */

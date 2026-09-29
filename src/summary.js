@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { readText, fmtShort, fmtDuration, truncate, pad2 } from './util.js';
-import { readMetrics, aggregate, formatEvents } from './metrics.js';
+import { readMetrics, aggregate, formatEvents, runStats } from './metrics.js';
 import { loadQuestions, openQuestions } from './questions.js';
 import { listChanges, pendingApprovals, approvedWithWork, proposalExcerpt, approvalDeadline, isAutoApprovable } from './approvals.js';
 import { expectedSlots, slotKey } from './window.js';
@@ -17,10 +17,8 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   const expected = since ? expectedSlots(since, now, cfg.schedule.slots) : [];
   if (!runs.length && !expected.length) L.push('• прогонов не было');
   for (const r of runs) {
-    const turns = r.turns != null ? `, ${r.turns} ходов` : '';
-    const cost = r.cost_usd != null ? `, ~$${Number(r.cost_usd).toFixed(2)}` : '';
     const dur = r.duration_ms ? `, ${fmtDuration(r.duration_ms)}` : '';
-    L.push(`• ${r.slot || fmtShort(new Date(r.started_at))} — ${STATUS_RU[r.status] || r.status}${turns}${cost}${dur}${r.note ? ' — ' + r.note : ''}`);
+    L.push(`• ${r.slot || fmtShort(new Date(r.started_at))} — ${STATUS_RU[r.status] || r.status}${runStats(r)}${dur}${r.note ? ' — ' + r.note : ''}`);
   }
   for (const e of expected) if (!covered.has(e.key)) L.push(`• ${e.slot} — пропущен (Mac был выключен или спал). Вручную: mcfly run --mode day`);
   const reports = runs.map((r) => readText(path.join(p.runs, r.id || '', 'summary.md'), '').trim()).filter(Boolean);

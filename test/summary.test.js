@@ -28,6 +28,12 @@ test('composeSummary: прогоны, пропуски, отчёт, вопрос
   assert.match(text, /add-x \(авто-одобрение 30\.09 01:00\)\n  Добавить X, потому что Y\./);
   assert.match(text, /Метрики за период: 2 задач закрыто; прогонов 1, ~\$2\.5/);
 });
+test('composeSummary: статистика субагентов в строке прогона', () => {
+  const p = paths(bareProject());
+  appendMetric(p, { type: 'run', id: '20260930-0000', slot: '00:00', mode: 'night', started_at: new Date(2026, 8, 30, 0, 0).toISOString(), status: 'quota', duration_ms: 1_800_000, cost_usd: 9.9, turns: 58, subagents: { spawned: 16, background: 0, failed: 4, killed: 0 } });
+  const text = composeSummary(p, cfg, { now: new Date(2026, 8, 30, 8, 0), since: new Date(2026, 8, 29, 8, 0) });
+  assert.match(text, /00:00 — остановлен: лимит квоты, 58 ходов, ~\$9\.90, субагентов 16 \(упало 4\), 30 мин/);
+});
 test('sendSummary без Telegram печатает в консоль и не меняет state', async () => {
   const { p } = seed(); const lines = [];
   const r = await sendSummary(p, { ...cfg, telegram: { chat_id: '', token_env: 'NOPE' } }, { log: (s) => lines.push(s) });

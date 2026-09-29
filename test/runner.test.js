@@ -5,7 +5,10 @@ import { run, acquireLock, releaseLock, commitRunState, recordRun, writeFallback
 import { spawnSync } from 'node:child_process';
 import { paths } from '../src/state.js';
 import { readMetrics } from '../src/metrics.js';
-import { bareProject } from './helpers.js';
+import { bareProject, fakeClaude } from './helpers.js';
+
+const resultEvent = (over = {}) => ({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, total_cost_usd: 0.1, session_id: 's', result: 'готово', ...over });
+const readRecord = (p, id) => JSON.parse(fs.readFileSync(path.join(p.runs, id, 'result.json'), 'utf8'));
 
 test('ночной прогон вне окна записывается как пропущенный', async () => {
   const dir = bareProject(); const p = paths(dir);
@@ -22,6 +25,37 @@ test('dry-run внутри окна сохраняет промпт и не за
   assert.ok(fs.existsSync(path.join(p.logs, `dry-run-${r.id}.prompt.md`)));
   assert.equal(fs.existsSync(path.join(p.runs, r.id)), false, 'сухой прогон не создаёт каталог в runs');
   assert.equal(fs.existsSync(p.lock), false);
+});
+test('прогон запускает claude без фоновых задач и без потолка ожидания фона', async () => {
+  const dir = bareProject();
+  fakeClaude(dir, { lines: [resultEvent()] });
+  await run({ projectDir: dir, mode: 'day', log: () => {} });
+  const env = fs.readFileSync(path.join(dir, 'claude-env.txt'), 'utf8');
+  assert.match(env, /^CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1$/m);
+  assert.match(env, /^CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0$/m);
+});
+test('result.json: ходы по всем событиям result и статистика субагентов', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  const stats = { spawned: 8, requested: { background: 0, foreground: 0, unset: 8 }, started_in_background: 8, completed: 7, failed: 0, killed: { parent: 0, user: 0, system: 1 } };
+  fakeClaude(dir, { lines: [resultEvent({ num_turns: 12, result: 'Жду devops.' }), resultEvent({ num_turns: 3, result: 'Жду разработчика 3.2.', subagent_stats: stats })] });
+  const r = await run({ projectDir: dir, mode: 'day', log: () => {} });
+  const rec = readRecord(p, r.id);
+  assert.equal(rec.turns, 15);
+  assert.deepEqual(rec.subagents, { spawned: 8, background: 8, failed: 0, killed: 1 });
+});
+test('stderr claude попадает в events.log', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  fakeClaude(dir, { lines: [resultEvent()], stderr: 'Background tasks still running after 600s; terminating.' });
+  const r = await run({ projectDir: dir, mode: 'day', log: () => {} });
+  assert.match(fs.readFileSync(path.join(p.runs, r.id, 'events.log'), 'utf8'), /⚠ Background tasks still running after 600s; terminating\./);
+});
+test('recordRun: строка журнала со статистикой субагентов, аномалии только ненулевые', () => {
+  const p = paths(bareProject());
+  recordRun(p, { id: 'r1', mode: 'night', slot: '04:00', started_at: new Date(2026, 8, 29, 4, 0).toISOString(), status: 'ok', turns: 30, cost_usd: 4.1, subagents: { spawned: 8, background: 8, failed: 0, killed: 1 } });
+  recordRun(p, { id: 'r2', mode: 'night', slot: '00:00', started_at: new Date(2026, 8, 30, 0, 0).toISOString(), status: 'ok', turns: 5, cost_usd: 1, subagents: { spawned: 3, background: 0, failed: 0, killed: 0 } });
+  const text = fs.readFileSync(p.progress, 'utf8');
+  assert.match(text, /прогон r1 \(night, слот 04:00\): ok, 30 ходов, ~\$4\.10, субагентов 8 \(фоном 8, убито 1\)\n/);
+  assert.match(text, /прогон r2 \(night, слот 00:00\): ok, 5 ходов, ~\$1\.00, субагентов 3\n/);
 });
 test('лок не даёт второго прогона', () => {
   const p = paths(bareProject());
