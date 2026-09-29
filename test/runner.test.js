@@ -5,7 +5,8 @@ import { run, acquireLock, releaseLock, commitRunState, recordRun, writeFallback
 import { spawnSync } from 'node:child_process';
 import { paths } from '../src/state.js';
 import { readMetrics } from '../src/metrics.js';
-import { bareProject, fakeClaude } from './helpers.js';
+import { ensureGitignore, GITIGNORE_ENTRIES } from '../src/init.js';
+import { bareProject, fakeClaude, tmpDir, git, gitRepo } from './helpers.js';
 
 const resultEvent = (over = {}) => ({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, total_cost_usd: 0.1, session_id: 's', result: 'готово', ...over });
 const readRecord = (p, id) => JSON.parse(fs.readFileSync(path.join(p.runs, id, 'result.json'), 'utf8'));
@@ -28,9 +29,9 @@ test('dry-run внутри окна сохраняет промпт и не за
 });
 test('прогон запускает claude без фоновых задач и без потолка ожидания фона', async () => {
   const dir = bareProject();
-  fakeClaude(dir, { lines: [resultEvent()] });
+  const { envFile } = fakeClaude(dir, { lines: [resultEvent()] });
   await run({ projectDir: dir, mode: 'day', log: () => {} });
-  const env = fs.readFileSync(path.join(dir, 'claude-env.txt'), 'utf8');
+  const env = fs.readFileSync(envFile, 'utf8');
   assert.match(env, /^CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1$/m);
   assert.match(env, /^CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0$/m);
 });
@@ -48,6 +49,33 @@ test('stderr claude попадает в events.log', async () => {
   fakeClaude(dir, { lines: [resultEvent()], stderr: 'Background tasks still running after 600s; terminating.' });
   const r = await run({ projectDir: dir, mode: 'day', log: () => {} });
   assert.match(fs.readFileSync(path.join(p.runs, r.id, 'events.log'), 'utf8'), /⚠ Background tasks still running after 600s; terminating\./);
+});
+/** Проект mcfly в git с .gitignore как после init: всё закоммичено, подставной claude печатает lines. */
+function gitProject(lines = [resultEvent()]) {
+  const dir = bareProject();
+  fakeClaude(dir, { lines }); ensureGitignore(dir, GITIGNORE_ENTRIES);
+  gitRepo(dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'проект');
+  return { dir, p: paths(dir) };
+}
+test('незакоммиченные файлы прогона не включают служебные файлы runner', async () => {
+  const { dir, p } = gitProject();
+  fs.appendFileSync(p.metrics, '{"type":"event","key":"review_rejections","value":1}\n'); // метрика команды за прогон
+  fs.writeFileSync(path.join(dir, 'забытый.txt'), 'x');
+  const r = await run({ projectDir: dir, mode: 'day', log: () => {} });
+  const rec = readRecord(p, r.id);
+  assert.equal(rec.dirty_files, 1);
+  assert.match(rec.note, /незакоммиченных файлов: 1/);
+});
+test('незакоммиченная работа в worktree команды попадает в заметку прогона и авто-сводку', async () => {
+  const { dir, p } = gitProject([resultEvent({ result: 'Жду разработчика 3.2.' })]);
+  const wt = path.join(tmpDir(), 'ddm');
+  git(dir, 'worktree', 'add', '-q', '-b', 'change/ddm', wt);
+  fs.writeFileSync(path.join(wt, 'SiteBuilder.java'), 'class SiteBuilder {}'); git(wt, 'add', '.');
+  const r = await run({ projectDir: dir, mode: 'day', log: () => {} });
+  const where = `${fs.realpathSync(wt)} (change/ddm, 1)`;
+  assert.ok(readRecord(p, r.id).note.includes(`незакоммиченная работа в worktree: ${where}`), readRecord(p, r.id).note);
+  const summary = fs.readFileSync(path.join(p.runs, r.id, 'summary.md'), 'utf8');
+  assert.match(summary, /## Worktree с незакоммиченной работой\n- .*ddm \(change\/ddm, 1\)/);
 });
 test('recordRun: строка журнала со статистикой субагентов, аномалии только ненулевые', () => {
   const p = paths(bareProject());

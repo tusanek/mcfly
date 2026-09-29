@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { paths } from './state.js';
 import { loadConfig } from './config.js';
@@ -12,6 +13,7 @@ import { appendMetric, runStats } from './metrics.js';
 import { loadQuestions, saveQuestions, expireQuestions } from './questions.js';
 import { listChanges, expireApprovals } from './approvals.js';
 import { pullAnswers } from './pull.js';
+import { dirtyFiles, teamWorktrees, branchProgress } from './git.js';
 import { ensureDir, writeJson, appendText, readJson, runId as makeRunId, fmtLocal } from './util.js';
 
 export function acquireLock(p) {
@@ -50,11 +52,15 @@ export function recordRun(p, record) {
   appendText(p.progress, `- ${fmtLocal(new Date(record.started_at))} прогон ${record.id} (${record.mode}${record.slot ? ', слот ' + record.slot : ''}): ${record.status}${runStats(record)}${record.note ? ' — ' + record.note : ''}\n`);
 }
 
+/** Служебные файлы состояния команды, которые runner коммитит сам после прогона. */
+const STATE_FILES = ['mcfly/progress.md', 'mcfly/metrics.jsonl', 'mcfly/questions.yaml', 'mcfly/answers.md'];
+const RUN_FILES = ['result.json', 'summary.md', 'prompt.md', 'validate.json', 'events.log'];
+
 /** Коммитит служебные файлы прогона (журнал, метрики, каталог прогона), чтобы рабочее дерево оставалось чистым для следующего прогона. */
 export function commitRunState(projectDir, id, log = console.log) {
   const inRepo = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: projectDir, encoding: 'utf8' });
   if (inRepo.status !== 0) return false;
-  const candidates = ['mcfly/progress.md', 'mcfly/metrics.jsonl', 'mcfly/questions.yaml', 'mcfly/answers.md', ...['result.json', 'summary.md', 'prompt.md', 'validate.json', 'events.log'].map((f) => `mcfly/runs/${id}/${f}`)];
+  const candidates = [...STATE_FILES, ...RUN_FILES.map((f) => `mcfly/runs/${id}/${f}`)];
   const existing = candidates.filter((f) => fs.existsSync(path.join(projectDir, f)));
   if (!existing.length) return false;
   spawnSync('git', ['add', '--', ...existing], { cwd: projectDir, encoding: 'utf8' });
@@ -65,7 +71,12 @@ export function commitRunState(projectDir, id, log = console.log) {
   return r.status === 0;
 }
 
-/** Страховочная сводка, если репортёр не написал summary.md: коммиты прогона, ветки change/*, последнее сообщение лида. */
+/** Worktree команды с незакоммиченной работой: её теряет обрыв прогона, а следующему прогону её нужно подхватить. */
+export function unfinishedWork(projectDir) { return teamWorktrees(projectDir).filter((w) => w.team && w.dirty > 0); }
+const homeShort = (p) => (p.startsWith(`${os.homedir()}/`) ? `~${p.slice(os.homedir().length)}` : p);
+export const describeWorktree = (w) => `${homeShort(w.path)} (${w.branch}, ${w.dirty})`;
+
+/** Страховочная сводка, если репортёр не написал summary.md: коммиты прогона, ветки change/*, незакоммиченная работа, последнее сообщение лида. */
 export function writeFallbackSummary({ projectDir, runDir, id, started, resultText }) {
   const file = path.join(runDir, 'summary.md');
   if (fs.existsSync(file)) return false;
@@ -73,11 +84,12 @@ export function writeFallbackSummary({ projectDir, runDir, id, started, resultTe
   const commits = git(['log', '--all', '--oneline', `--since=${started.toISOString()}`]) || '(нет коммитов)';
   const branches = git(['branch', '--list', 'change/*', '--format=%(refname:short)']).split('\n').filter(Boolean);
   const branchLines = branches.map((b) => {
-    const tasks = git(['show', `${b}:openspec/changes/${b.replace(/^change\//, '')}/tasks.md`]);
-    const done = (tasks.match(/^\s*- \[x\]/gim) || []).length; const open = (tasks.match(/^\s*- \[ \]/gim) || []).length;
-    return `- ${b}: ${done} сделано / ${open} открыто`;
+    const tasks = branchProgress(projectDir, b.replace(/^change\//, ''));
+    return `- ${b}: ${tasks ? `${tasks.done} сделано / ${tasks.open} открыто` : 'tasks.md нет'}`;
   });
-  const text = [`# Прогон ${id} — авто-сводка (репортёр не отработал)`, '', '## Коммиты за прогон', commits, '', '## Ветки изменений', branchLines.join('\n') || '(нет)', '', '## Последнее сообщение лида', String(resultText || '').slice(0, 600) || '(пусто)', ''].join('\n');
+  const unfinished = unfinishedWork(projectDir).map((w) => `- ${describeWorktree(w)}`);
+  const text = [`# Прогон ${id} — авто-сводка (репортёр не отработал)`, '', '## Коммиты за прогон', commits, '', '## Ветки изменений', branchLines.join('\n') || '(нет)',
+    '', '## Worktree с незакоммиченной работой', unfinished.join('\n') || '(нет)', '', '## Последнее сообщение лида', String(resultText || '').slice(0, 600) || '(пусто)', ''].join('\n');
   fs.writeFileSync(file, text);
   return true;
 }
@@ -143,12 +155,14 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const fallback = writeFallbackSummary({ projectDir, runDir, id, started, resultText: parsed.resultText || parsed.errorText });
     const validate = runOpenspecValidate(projectDir);
     fs.writeFileSync(path.join(runDir, 'validate.json'), JSON.stringify(validate, null, 2));
-    const git = spawnSync('git', ['status', '--porcelain'], { cwd: projectDir, encoding: 'utf8' });
-    const dirty = String(git.stdout || '').trim().split('\n').filter(Boolean).length;
+    // Служебные файлы (журнал, метрики, каталог прогона) runner коммитит сам — это не забытая работа.
+    const dirty = dirtyFiles(projectDir, { exclude: [...STATE_FILES, `mcfly/runs/${id}`] }).length;
+    const unfinished = unfinishedWork(projectDir);
     const record = {
       id, mode, slot, started_at: started.toISOString(), ended_at: new Date().toISOString(), status: parsed.status, duration_ms: result.durationMs, exit_code: result.exitCode,
       cost_usd: parsed.costUsd, turns: parsed.turns, subagents: parsed.subagents, session_id: parsed.sessionId, validate_ok: validate.ok, dirty_files: dirty, error: parsed.errorText,
-      note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', fallback ? 'репортёр не написал отчёт, записана авто-сводка' : '', validate.available && validate.ok === false ? 'openspec validate: есть ошибки' : '', dirty ? `незакоммиченных файлов: ${dirty}` : ''].filter(Boolean).join('; '),
+      note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', fallback ? 'репортёр не написал отчёт, записана авто-сводка' : '', validate.available && validate.ok === false ? 'openspec validate: есть ошибки' : '',
+        dirty ? `незакоммиченных файлов: ${dirty}` : '', unfinished.length ? `незакоммиченная работа в worktree: ${unfinished.map(describeWorktree).join(', ')}` : ''].filter(Boolean).join('; '),
     };
     recordRun(p, record);
     commitRunState(projectDir, id, log);

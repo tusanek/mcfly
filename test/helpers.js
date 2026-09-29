@@ -1,4 +1,5 @@
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import YAML from 'yaml';
 import { DEFAULT_CONFIG } from '../src/config.js';
 export const cfg = { ...DEFAULT_CONFIG, project: 'demo' };
@@ -13,15 +14,37 @@ export function bareProject() {
   fs.writeFileSync(path.join(dir, 'mcfly', 'progress.md'), '# Журнал\n');
   return dir;
 }
-/** Подставной claude для run(): пишет своё окружение в <dir>/claude-env.txt, печатает события stream-json и stderr. */
+export function git(dir, ...args) {
+  const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+  return r.stdout.trim();
+}
+/** Git-репозиторий с первым коммитом на main и локальным автором (не зависит от глобальной настройки). */
+export function gitRepo(dir = tmpDir()) {
+  git(dir, 'init', '-q', '-b', 'main');
+  for (const [k, v] of [['user.email', 't@t'], ['user.name', 't'], ['commit.gpgsign', 'false']]) git(dir, 'config', k, v);
+  git(dir, 'commit', '-q', '--allow-empty', '-m', 'init');
+  return dir;
+}
+/** Ветка change/<имя> с tasks.md изменения; рабочее дерево возвращается на main. */
+export function changeBranch(dir, name, tasks) {
+  git(dir, 'checkout', '-q', '-b', `change/${name}`);
+  fs.mkdirSync(path.join(dir, 'openspec', 'changes', name), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'openspec', 'changes', name, 'tasks.md'), tasks);
+  git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', `feat(${name}): задачи`); git(dir, 'checkout', '-q', 'main');
+}
+/**
+ * Подставной claude для run() проекта dir: печатает события stream-json и stderr, своё окружение пишет в envFile.
+ * Файлы подставного claude лежат вне проекта, чтобы не попадать в git status.
+ */
 export function fakeClaude(dir, { lines = [], stderr = '', exitCode = 0 } = {}) {
-  const out = path.join(dir, 'fake-claude.out');
+  const bin = tmpDir('fake-claude-');
+  const out = path.join(bin, 'out.jsonl'); const envFile = path.join(bin, 'env.txt'); const script = path.join(bin, 'claude.sh');
   fs.writeFileSync(out, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
-  const script = path.join(dir, 'fake-claude.sh');
   const err = stderr ? `printf '%s\\n' ${JSON.stringify(stderr)} >&2\n` : '';
-  fs.writeFileSync(script, `#!/bin/sh\nenv > "${path.join(dir, 'claude-env.txt')}"\ncat "${out}"\n${err}exit ${exitCode}\n`, { mode: 0o755 });
+  fs.writeFileSync(script, `#!/bin/sh\nenv > "${envFile}"\ncat "${out}"\n${err}exit ${exitCode}\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), `project: demo\nrun:\n  claude_bin: ${script}\n  max_minutes: 1\n`);
-  return script;
+  return { script, envFile };
 }
 export function addChange(dir, name, { tasks = '- [ ] первая\n- [x] нулевая\n', proposal = '# Proposal\n\nЗачем: тест.\n', meta = { schema: 'spec-driven' } } = {}) {
   const cdir = path.join(dir, 'openspec', 'changes', name);

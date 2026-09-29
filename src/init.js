@@ -18,6 +18,8 @@ export function mergeSettings(existing, template) {
   out.permissions.deny = deny; if (allow.length) out.permissions.allow = allow;
   return out;
 }
+/** Файлы mcfly вне git: секреты, локальное состояние, лок прогона, логи launchd, сырой вывод claude. */
+export const GITIGNORE_ENTRIES = ['mcfly/.env', 'mcfly/state.json', 'mcfly/.lock', 'mcfly/logs/', 'mcfly/runs/*/stdout.log', '.DS_Store'];
 export function ensureGitignore(projectDir, entries) {
   const file = path.join(projectDir, '.gitignore');
   const cur = readText(file, '');
@@ -48,7 +50,7 @@ export function init({ projectDir, name, withTracker = false, skipOpenspec = fal
   writeText(claudeMd, upsertSection(readText(claudeMd, ''), tpl('CLAUDE.snippet.md').replaceAll('{{PROJECT}}', project)));
   created.push('CLAUDE.md');
   if (withTracker) put(path.join(projectDir, '.mcp.json'), tpl('mcp.tracker.json'));
-  ensureGitignore(projectDir, ['mcfly/.env', 'mcfly/state.json', 'mcfly/.lock', 'mcfly/logs/', 'mcfly/runs/*/stdout.log', '.DS_Store']);
+  ensureGitignore(projectDir, GITIGNORE_ENTRIES);
   let openspec = 'пропущено';
   if (!skipOpenspec) {
     const which = spawnSync('which', ['openspec'], { encoding: 'utf8' });

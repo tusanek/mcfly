@@ -4,11 +4,13 @@ import YAML from 'yaml';
 import { readText, writeText, exists, truncate } from './util.js';
 
 export const priorityOf = (change) => Number(change.mcfly?.priority ?? 100);
+/** Число отмеченных и открытых задач в тексте tasks.md. */
+export function countTasks(text) {
+  return { done: (text.match(/^\s*- \[x\]/gim) || []).length, open: (text.match(/^\s*- \[ \]/gim) || []).length };
+}
 export function readChange(dir) {
   const meta = YAML.parse(readText(path.join(dir, '.openspec.yaml'), '')) || {};
-  const tasks = readText(path.join(dir, 'tasks.md'), '');
-  const tasksDone = (tasks.match(/^\s*- \[x\]/gim) || []).length;
-  const tasksOpen = (tasks.match(/^\s*- \[ \]/gim) || []).length;
+  const { done: tasksDone, open: tasksOpen } = countTasks(readText(path.join(dir, 'tasks.md'), ''));
   return { name: path.basename(dir), dir, meta, mcfly: meta.mcfly || {}, tasksDone, tasksOpen, proposal: readText(path.join(dir, 'proposal.md'), '') };
 }
 export function listChanges(changesDir) {
