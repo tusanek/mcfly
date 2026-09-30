@@ -82,7 +82,8 @@ export function parseResult({ exitCode, stdout, stderr, timedOut }) {
 /** Краткая человекочитаемая строка по событию stream-json (или null, если событие неинтересно). */
 export function summarizeEvent(line) {
   let ev; try { ev = JSON.parse(line); } catch { return null; }
-  const short = (t) => String(t || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+  // events.log коммитится в репозиторий: токены Anthropic и Telegram маскируем до обрезки строки.
+  const short = (t) => String(t || '').replace(/sk-ant-[\w-]+/g, 'sk-ant-***').replace(/\d{6,12}:[\w-]{30,}/g, '***').replace(/\s+/g, ' ').trim().slice(0, 160);
   if (ev.type === 'assistant') {
     const parts = ev.message?.content || [];
     const out = [];

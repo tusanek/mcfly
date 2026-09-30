@@ -54,6 +54,12 @@ test('composeSummary: «В работе» считает задачи по ве�
   const text = composeSummary(p, cfg, { now: new Date(2026, 8, 30, 8, 0), since: new Date(2026, 8, 29, 8, 0) });
   assert.match(text, /В работе:\n• ddm: 2\/3 задач \(ветка change\/ddm\)/);
 });
+test('composeSummary: у prod-вопроса нет «по умолчанию» и срока — решение за человеком', () => {
+  const p = paths(bareProject());
+  const data = loadQuestions(p); addQuestion(data, { category: 'prod', text: 'Ставить на сервер?', now: new Date(2026, 8, 29, 1, 0) }, cfg); saveQuestions(p, data);
+  const text = composeSummary(p, cfg, { now: new Date(2026, 8, 29, 8, 0), since: new Date(2026, 8, 28, 8, 0) });
+  assert.match(text, /• Q1 \[prod\] Ставить на сервер\?\n {2}без ответа по умолчанию: команда ждёт вашего решения\n/);
+});
 test('sendSummary без Telegram печатает в консоль и не меняет state', async () => {
   const { p } = seed(); const lines = [];
   const r = await sendSummary(p, { ...cfg, telegram: { chat_id: '', token_env: 'NOPE' } }, { log: (s) => lines.push(s) });

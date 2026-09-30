@@ -4,6 +4,11 @@ import { paths } from '../src/state.js';
 import { loadQuestions, saveQuestions, addQuestion, answerQuestion, expireQuestions, openQuestions } from '../src/questions.js';
 import { cfg, bareProject } from './helpers.js';
 
+test('вопрос без ответа по умолчанию допустим только в категории без авто-ответа (prod)', () => {
+  const data = { questions: [] };
+  assert.throws(() => addQuestion(data, { category: 'spec', text: 'Формат?' }, cfg), /ответ по умолчанию/);
+  assert.equal(addQuestion(data, { category: 'prod', text: 'Ставить на сервер?' }, cfg).id, 'Q1');
+});
 test('add/answer/expire', () => {
   const p = paths(bareProject());
   const data = loadQuestions(p);

@@ -15,6 +15,12 @@ test('parseResult: ok / error / quota / timeout', () => {
   assert.equal(parseResult({ exitCode: 1, stdout: '{"result":"You\'ve hit your session limit · resets 10pm (Europe/Moscow)","is_error":true}', stderr: '', timedOut: false }).status, 'quota');
   assert.equal(parseResult({ exitCode: null, stdout: '', stderr: '', timedOut: true }).status, 'timeout');
 });
+test('summarizeEvent маскирует токены в журнале событий', () => {
+  const command = 'curl -H "k: sk-ant-oat01-AbC_d-123" https://api.telegram.org/bot123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw/getMe';
+  const s = summarizeEvent(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] } }));
+  assert.doesNotMatch(s, /AbC_d-123|AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw/);
+  assert.match(s, /sk-ant-\*\*\*/);
+});
 test('runProcess не рвёт кириллицу на границе кусков вывода', async () => {
   // 'x' сдвигает двухбайтовые символы на нечётные смещения: граница любого куска чётной длины придётся на середину символа
   const r = await runProcess({ bin: process.execPath, args: ['-e', "process.stdout.write('x' + 'я'.repeat(300000))"], cwd: process.cwd(), env: process.env, timeoutMs: 20_000 });

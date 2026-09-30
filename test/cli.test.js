@@ -18,6 +18,16 @@ test('status показывает прогресс невлитого измен
   assert.match(cli(['status'], dir).stdout, /- ddm: одобрение=approved, задач 0\/3 \(на ветке change\/ddm: 2\/3\)/);
 });
 
+test('одобрение: агент в прогоне не ставит approval set, неизвестная категория запроса отклоняется', () => {
+  const dir = tmpDir();
+  cli(['init', '--name', 'demo'], dir);
+  addChange(dir, 'deploy-x');
+  const inRun = spawnSync(process.execPath, [bin, 'approval', 'set', 'deploy-x', 'approved'], { cwd: dir, encoding: 'utf8', env: { ...process.env, MCFLY_PROJECT_DIR: '', MCFLY_RUN_ID: '20260930-0000' } });
+  assert.equal(inRun.status, 1); assert.match(inRun.stderr, /только человек/);
+  assert.match(cli(['approval', 'list'], dir).stdout, /deploy-x: не запрошено/);
+  const bad = cli(['approval', 'request', 'deploy-x', '--category', 'production'], dir);
+  assert.equal(bad.status, 1); assert.match(bad.stderr, /категория/);
+});
 test('help, init, status, question, approval, metric, context, doctor, dry-run, summary', () => {
   const dir = tmpDir();
   assert.match(cli(['--help'], dir).stdout, /Команды:/);

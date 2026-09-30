@@ -32,6 +32,13 @@ test('request/set/expire', () => {
   assert.equal(changes[0].meta.schema, 'spec-driven');
   assert.equal(proposalExcerpt(changes[0]), 'Зачем: тест.');
 });
+test('изменение с неизвестной категорией не одобряется молчанием', () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'deploy-y');
+  const now = new Date(2026, 8, 29, 1, 0);
+  requestApproval(listChanges(p.openspecChanges)[0], { category: 'production', now });
+  assert.deepEqual(expireApprovals(listChanges(p.openspecChanges), cfg, new Date(now.getTime() + 25 * 3600_000)), []);
+});
 test('приоритет задаёт порядок списка', () => {
   const dir = bareProject(); const p = paths(dir);
   addChange(dir, 'a-late'); addChange(dir, 'b-first');

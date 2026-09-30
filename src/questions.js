@@ -1,5 +1,6 @@
 import YAML from 'yaml';
 import { readText, writeText } from './util.js';
+import { autoDefault } from './config.js';
 
 export function loadQuestions(p) {
   const doc = YAML.parse(readText(p.questions, '')) || {};
@@ -13,6 +14,7 @@ export function nextId(data) {
 export function addQuestion(data, { category, text, defaultAnswer = '', hours, now = new Date(), runId = '' }, cfg) {
   if (!cfg.escalation.categories[category]) throw new Error(`Неизвестная категория "${category}". Допустимо: ${Object.keys(cfg.escalation.categories).join(', ')}`);
   if (!text) throw new Error('Нужен текст вопроса (--text)');
+  if (autoDefault(cfg, category) && !defaultAnswer) throw new Error(`Нужен ответ по умолчанию (--default): по истечении срока команда действует по нему. Без него — только категории, которые ждут человека: ${Object.keys(cfg.escalation.categories).filter((k) => !autoDefault(cfg, k)).join(', ')}`);
   const deadline = new Date(now.getTime() + (hours ?? cfg.escalation.answer_deadline_hours) * 3600_000);
   const q = { id: nextId(data), category, text, default: defaultAnswer || '', status: 'open', created_at: now.toISOString(), deadline_at: deadline.toISOString(), run_id: runId, answer: '', answered_by: '', answered_at: '' };
   data.questions.push(q);
@@ -28,9 +30,7 @@ export function answerQuestion(data, id, answer, by, now = new Date()) {
 export function expireQuestions(data, cfg, now = new Date()) {
   const defaulted = [];
   for (const q of data.questions) {
-    if (q.status !== 'open') continue;
-    const cat = cfg.escalation.categories[q.category] || {};
-    if (cat.auto_default === false) continue;
+    if (q.status !== 'open' || !autoDefault(cfg, q.category)) continue;
     if (new Date(q.deadline_at) <= now) {
       Object.assign(q, { status: 'defaulted', answer: q.default, answered_by: 'default', answered_at: now.toISOString() });
       defaulted.push(q);

@@ -31,11 +31,13 @@ export function releaseLock(p) { try { fs.unlinkSync(p.lock); } catch {} }
  * не дольше CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS (10 минут простоя) и убивает их (прогон 20260929-0400), поэтому субагенты
  * только синхронные. Потолок снят на случай, если фон всё же появится: прогон ограничивает таймаут runner.
  */
-export function runEnv(baseEnv, { id, projectDir }) {
-  return {
+export function runEnv(baseEnv, { id, projectDir, hide = [] }) {
+  const env = {
     ...cleanEnv(baseEnv), MCFLY_RUN_ID: id, MCFLY_PROJECT_DIR: projectDir, PATH: `${path.join(MCFLY_ROOT, 'bin')}:${baseEnv.PATH || ''}`,
     CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1', CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: '0',
   };
+  for (const k of hide) delete env[k]; // секреты runner'а (токен Telegram) агентам не нужны: их Bash видит всё окружение
+  return env;
 }
 
 /** Режет поток на строки: push(кусок) вызывает onLine для каждой полной непустой строки, flush() — для хвоста. */
@@ -147,7 +149,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const runDir = ensureDir(path.join(p.runs, id));
     fs.writeFileSync(path.join(runDir, 'prompt.md'), prompt);
     if (process.platform === 'darwin') { try { spawn('caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore', detached: true }).unref(); } catch {} }
-    const env = runEnv(process.env, { id, projectDir });
+    const env = runEnv(process.env, { id, projectDir, hide: [cfg.telegram.token_env] });
     const logStream = fs.createWriteStream(path.join(runDir, 'stdout.log'));
     const eventsStream = fs.createWriteStream(path.join(runDir, 'events.log'));
     const event = (s) => eventsStream.write(`${fmtLocal(new Date())} ${s}\n`);

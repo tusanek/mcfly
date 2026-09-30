@@ -35,6 +35,13 @@ test('прогон запускает claude без фоновых задач и
   assert.match(env, /^CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1$/m);
   assert.match(env, /^CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0$/m);
 });
+test('прогон не передаёт агентам токен Telegram', async () => {
+  const dir = bareProject();
+  const { envFile } = fakeClaude(dir, { lines: [resultEvent()] });
+  const prev = process.env.MCFLY_TELEGRAM_TOKEN; process.env.MCFLY_TELEGRAM_TOKEN = 'secret-bot-token';
+  try { await run({ projectDir: dir, mode: 'day', log: () => {} }); } finally { if (prev === undefined) delete process.env.MCFLY_TELEGRAM_TOKEN; else process.env.MCFLY_TELEGRAM_TOKEN = prev; }
+  assert.doesNotMatch(fs.readFileSync(envFile, 'utf8'), /MCFLY_TELEGRAM_TOKEN/);
+});
 test('result.json: ходы по всем событиям result и статистика субагентов', async () => {
   const dir = bareProject(); const p = paths(dir);
   const stats = { spawned: 8, requested: { background: 0, foreground: 0, unset: 8 }, started_in_background: 8, completed: 7, failed: 0, killed: { parent: 0, user: 0, system: 1 } };

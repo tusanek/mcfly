@@ -88,8 +88,14 @@ export async function main(argv) {
       if (sub === 'list') { for (const c of changes) log(`${c.name}: ${c.mcfly.approval || 'не запрошено'} (${c.mcfly.category || '-'})`); return 0; }
       const c = changes.find((x) => x.name === rest[0]);
       if (!c) { console.error(`Изменение не найдено: ${rest[0] || '(имя не указано)'}`); return 1; }
-      if (sub === 'request') { requestApproval(c, { category: values.category || 'spec', priority: values.priority, now }); appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_proposed', value: 1, change: c.name }); log(`Одобрение запрошено: ${c.name}. Человек увидит его в утренней сводке.`); return 0; }
-      if (sub === 'set') { const st = rest[1]; if (!['approved', 'rejected'].includes(st)) { console.error('Статус: approved | rejected'); return 1; } setApproval(c, st, 'human-cli', values.note || '', now, { priority: values.priority }); log(`${c.name}: ${st}${values.priority ? ', приоритет ' + values.priority : ''}`); return 0; }
+      if (sub === 'request') {
+        const category = values.category || 'spec';
+        if (!cfg.escalation.categories[category]) { console.error(`Неизвестная категория "${category}". Допустимо: ${Object.keys(cfg.escalation.categories).join(', ')}`); return 1; }
+        requestApproval(c, { category, priority: values.priority, now }); appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_proposed', value: 1, change: c.name }); log(`Одобрение запрошено: ${c.name}. Человек увидит его в утренней сводке.`); return 0; }
+      if (sub === 'set') {
+        // Одобрение — решение человека: в прогоне команды (MCFLY_RUN_ID задаёт runner) агенты только запрашивают его.
+        if (runIdEnv) { console.error('Одобрение ставит только человек: в прогоне команды approval set запрещён, используйте mcfly approval request.'); return 1; }
+        const st = rest[1]; if (!['approved', 'rejected'].includes(st)) { console.error('Статус: approved | rejected'); return 1; } setApproval(c, st, 'human-cli', values.note || '', now, { priority: values.priority }); log(`${c.name}: ${st}${values.priority ? ', приоритет ' + values.priority : ''}`); return 0; }
       break;
     }
     case 'metric': {

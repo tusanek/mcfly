@@ -48,3 +48,8 @@ export function parseConfig(text) {
   return validate(merge(DEFAULT_CONFIG, raw || {}));
 }
 export function loadConfig(configPath) { return parseConfig(readText(configPath, '')); }
+/** Решает ли категория эскалации сама по истечении срока. Неизвестная категория — нет: молчание не должно одобрять то, чего нет в списке. */
+export function autoDefault(cfg, category) {
+  const c = cfg.escalation.categories[category];
+  return !!c && c.auto_default !== false;
+}

@@ -2,6 +2,7 @@ import { readText, fmtShort, exists } from './util.js';
 import { loadQuestions, openQuestions } from './questions.js';
 import { listChanges, pendingApprovals, approvedWithWork, priorityOf } from './approvals.js';
 import { branchProgress, teamWorktrees } from './git.js';
+import { autoDefault } from './config.js';
 
 export function isMcflyProject(p) { return exists(p.config); }
 
@@ -29,7 +30,7 @@ export function buildContext(p, cfg, { progressLines = 15 } = {}) {
   if (others.length) L.push(`Прочие worktree (не команды — не трогать): ${others.map((w) => `${w.path} (${w.branch})`).join(', ')}`);
   const q = openQuestions(loadQuestions(p));
   L.push('', `Открытые вопросы к человеку (${q.length}):`);
-  for (const x of q) L.push(`- ${x.id} [${x.category}] ${x.text} — по умолчанию: ${x.default || '(нет)'} — срок ${fmtShort(new Date(x.deadline_at))}`);
+  for (const x of q) L.push(`- ${x.id} [${x.category}] ${x.text} — ${autoDefault(cfg, x.category) ? `по умолчанию: ${x.default} — срок ${fmtShort(new Date(x.deadline_at))}` : 'без ответа по умолчанию: не выполнять, ждать решения человека'}`);
   const answers = readText(p.answers, '').trim();
   const recent = answers ? answers.split(/\n(?=## )/).slice(-5).join('\n') : '';
   L.push('', 'Последние ответы и заметки человека:', recent || '(нет)');

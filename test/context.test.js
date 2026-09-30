@@ -21,6 +21,11 @@ test('buildContext: прогресс невлитого изменения по 
   assert.ok(text.includes(`Worktree команды (1):\n- ${fs.realpathSync(wt)}: ветка change/ddm, незакоммиченных файлов 1`), text);
   assert.ok(text.includes(`Прочие worktree (не команды — не трогать): ${fs.realpathSync(session)} (claude/s)`), text);
 });
+test('buildContext: prod-вопрос без ответа по умолчанию — ждать человека', () => {
+  const p = paths(bareProject());
+  const data = loadQuestions(p); addQuestion(data, { category: 'prod', text: 'Ставить на сервер?' }, cfg); saveQuestions(p, data);
+  assert.match(buildContext(p, cfg), /- Q1 \[prod\] Ставить на сервер\? — без ответа по умолчанию: не выполнять, ждать решения человека\n/);
+});
 test('buildContext перечисляет изменения, вопросы, ответы и журнал', () => {
   const dir = bareProject(); const p = paths(dir);
   addChange(dir, 'add-a'); addChange(dir, 'add-b');

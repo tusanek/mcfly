@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import { readText, writeText, exists, truncate } from './util.js';
+import { autoDefault } from './config.js';
 
 export const priorityOf = (change) => Number(change.mcfly?.priority ?? 100);
 /** Число отмеченных и открытых задач в тексте tasks.md. */
@@ -35,10 +36,7 @@ export function setApproval(change, status, by, note = '', now = new Date(), { p
 export function approvalDeadline(change, cfg) {
   return new Date(new Date(change.mcfly.requested_at || 0).getTime() + cfg.escalation.approval_deadline_hours * 3600_000);
 }
-export function isAutoApprovable(change, cfg) {
-  const cat = cfg.escalation.categories[change.mcfly.category || 'spec'] || {};
-  return cat.auto_default !== false;
-}
+export function isAutoApprovable(change, cfg) { return autoDefault(cfg, change.mcfly.category || 'spec'); }
 /** Авто-одобряет просроченные pending-изменения (кроме категорий без auto_default). */
 export function expireApprovals(changes, cfg, now = new Date()) {
   const auto = [];
