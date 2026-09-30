@@ -12,7 +12,7 @@ export function upsertSection(existing, section) {
   return (existing.trim() ? existing.trimEnd() + '\n\n' : '') + block + '\n';
 }
 export function mergeSettings(existing, template) {
-  const out = { ...existing, ...template, permissions: { ...(existing.permissions || {}) } };
+  const out = { ...template, ...existing, permissions: { ...(existing.permissions || {}) } }; // значения пользователя главнее шаблона
   const deny = [...new Set([...(existing.permissions?.deny || []), ...(template.permissions?.deny || [])])];
   const allow = [...new Set([...(existing.permissions?.allow || []), ...(template.permissions?.allow || [])])];
   out.permissions.deny = deny; if (allow.length) out.permissions.allow = allow;

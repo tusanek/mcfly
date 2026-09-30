@@ -11,6 +11,13 @@ import { autoDefault } from './config.js';
 
 const STATUS_RU = { ok: 'ок', missed: 'пропущен', error: 'ошибка', timeout: 'остановлен по времени', quota: 'остановлен: лимит квоты', locked: 'не запущен (шёл другой прогон)' };
 
+const STATUS_COUNT_RU = { ok: 'ок', quota: 'квота', timeout: 'по времени', error: 'ошибок', missed: 'пропущено', locked: 'занято' };
+/** «прогонов 3 (квота 2, ок 1)» — частые статусы первыми. */
+function runsByStatus(agg) {
+  const parts = Object.keys(STATUS_COUNT_RU).filter((s) => agg[s]).sort((a, b) => agg[b] - agg[a]).map((s) => `${STATUS_COUNT_RU[s]} ${agg[s]}`);
+  return `прогонов ${agg.runs}${parts.length ? ` (${parts.join(', ')})` : ''}`;
+}
+
 export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) {
   const records = readMetrics(p);
   const runs = records.filter((r) => r.type === 'run' && (!since || new Date(r.started_at) > since));
@@ -45,7 +52,7 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
     }
   }
   const period = aggregate(records, { since }); const total = aggregate(records);
-  L.push('', `Метрики за период: ${formatEvents(period.events)}; прогонов ${period.runs}, ~$${period.cost_usd}.`, `Всего: ${formatEvents(total.events)}; прогонов ${total.runs}, ~$${total.cost_usd}.`);
+  L.push('', `Метрики за период: ${formatEvents(period.events)}; ${runsByStatus(period)}, ~$${period.cost_usd}.`, `Всего: ${formatEvents(total.events)}; ${runsByStatus(total)}, ~$${total.cost_usd}.`);
   return L.join('\n');
 }
 

@@ -27,6 +27,10 @@ test('mergeSettings объединяет deny без дублей', () => {
   const m = mergeSettings({ permissions: { deny: ['X'], allow: ['Y'] }, other: 1 }, { enableAllProjectMcpServers: true, permissions: { deny: ['X', 'Z'] } });
   assert.deepEqual(m.permissions.deny, ['X', 'Z']); assert.deepEqual(m.permissions.allow, ['Y']); assert.equal(m.other, 1); assert.equal(m.enableAllProjectMcpServers, true);
 });
+test('mergeSettings не перетирает настройки пользователя значениями шаблона', () => {
+  const m = mergeSettings({ enableAllProjectMcpServers: false }, { enableAllProjectMcpServers: true, permissions: { deny: ['Z'] } });
+  assert.equal(m.enableAllProjectMcpServers, false); assert.deepEqual(m.permissions.deny, ['Z']);
+});
 test('ensureGitignore добавляет только недостающее', () => {
   const dir = tmpDir(); fs.writeFileSync(path.join(dir, '.gitignore'), 'a\n');
   assert.deepEqual(ensureGitignore(dir, ['a', 'b']), ['b']);

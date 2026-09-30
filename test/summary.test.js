@@ -26,7 +26,7 @@ test('composeSummary: прогоны, пропуски, отчёт, вопрос
   assert.match(text, /задача 1/);
   assert.match(text, /Q1 \[spec\] Формат\?/);
   assert.match(text, /add-x \(авто-одобрение 30\.09 01:00\)\n  Добавить X, потому что Y\./);
-  assert.match(text, /Метрики за период: 2 задач закрыто; прогонов 1, ~\$2\.5/);
+  assert.match(text, /Метрики за период: 2 задач закрыто; прогонов 1 \(ок 1\), ~\$2\.5/);
 });
 test('composeSummary: статистика субагентов в строке прогона', () => {
   const p = paths(bareProject());
@@ -59,6 +59,12 @@ test('composeSummary: у prod-вопроса нет «по умолчанию» 
   const data = loadQuestions(p); addQuestion(data, { category: 'prod', text: 'Ставить на сервер?', now: new Date(2026, 8, 29, 1, 0) }, cfg); saveQuestions(p, data);
   const text = composeSummary(p, cfg, { now: new Date(2026, 8, 29, 8, 0), since: new Date(2026, 8, 28, 8, 0) });
   assert.match(text, /• Q1 \[prod\] Ставить на сервер\?\n {2}без ответа по умолчанию: команда ждёт вашего решения\n/);
+});
+test('composeSummary: метрики за период с числом прогонов по статусам', () => {
+  const p = paths(bareProject());
+  for (const [h, status] of [[0, 'quota'], [4, 'quota'], [12, 'ok']]) appendMetric(p, { type: 'run', id: `r${h}`, mode: 'night', started_at: new Date(2026, 8, 30, h, 0).toISOString(), status });
+  const text = composeSummary(p, cfg, { now: new Date(2026, 8, 30, 13, 0), since: new Date(2026, 8, 29, 13, 0) });
+  assert.match(text, /Метрики за период: нет событий; прогонов 3 \(квота 2, ок 1\), ~\$0\./);
 });
 test('sendSummary без Telegram печатает в консоль и не меняет state', async () => {
   const { p } = seed(); const lines = [];
