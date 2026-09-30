@@ -5,8 +5,8 @@ import { composeSummary, sendSummary } from '../src/summary.js';
 import { paths, loadState } from '../src/state.js';
 import { appendMetric } from '../src/metrics.js';
 import { loadQuestions, addQuestion, saveQuestions } from '../src/questions.js';
-import { listChanges, requestApproval } from '../src/approvals.js';
-import { cfg, bareProject, addChange } from './helpers.js';
+import { listChanges, requestApproval, setApproval } from '../src/approvals.js';
+import { cfg, bareProject, addChange, git, gitRepo, changeBranch } from './helpers.js';
 
 function seed() {
   const dir = bareProject(); const p = paths(dir);
@@ -33,6 +33,26 @@ test('composeSummary: статистика субагентов в строке 
   appendMetric(p, { type: 'run', id: '20260930-0000', slot: '00:00', mode: 'night', started_at: new Date(2026, 8, 30, 0, 0).toISOString(), status: 'quota', duration_ms: 1_800_000, cost_usd: 9.9, turns: 58, subagents: { spawned: 16, background: 0, failed: 4, killed: 0 } });
   const text = composeSummary(p, cfg, { now: new Date(2026, 8, 30, 8, 0), since: new Date(2026, 8, 29, 8, 0) });
   assert.match(text, /00:00 — остановлен: лимит квоты, 58 ходов, ~\$9\.90, субагентов 16 \(упало 4\), 30 мин/);
+});
+test('composeSummary: отчёт каждого прогона под подписью, без отчёта — «(отчёта нет)», пропущенные без отчёта', () => {
+  const p = paths(bareProject());
+  const night = (id, h, status) => appendMetric(p, { type: 'run', id, slot: `0${h}:00`, mode: 'night', started_at: new Date(2026, 8, 30, h, 0).toISOString(), status });
+  night('20260930-0000', 0, 'ok'); night('20260930-0400', 4, 'ok');
+  appendMetric(p, { type: 'run', id: '20260929-2300', slot: null, mode: 'night', started_at: new Date(2026, 8, 29, 23, 0).toISOString(), status: 'missed' });
+  fs.mkdirSync(path.join(p.runs, '20260930-0400'), { recursive: true });
+  fs.writeFileSync(path.join(p.runs, '20260930-0400', 'summary.md'), '# Прогон 20260930-0400\n- сделано 3.2');
+  const text = composeSummary(p, cfg, { now: new Date(2026, 8, 30, 8, 0), since: new Date(2026, 8, 29, 8, 0) });
+  assert.match(text, /Отчёты команды:\n— 00:00 · 20260930-0000 —\n\(отчёта нет\)\n\n— 04:00 · 20260930-0400 —\n# Прогон 20260930-0400\n- сделано 3\.2\n/);
+  assert.doesNotMatch(text, /· 20260929-2300 —/);
+});
+test('composeSummary: «В работе» считает задачи по ветке change/<имя>, если она есть', () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'ddm', { tasks: '- [ ] a\n- [ ] b\n- [ ] c\n' });
+  const [c] = listChanges(p.openspecChanges); requestApproval(c); setApproval(c, 'approved', 'human');
+  gitRepo(dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'проект');
+  changeBranch(dir, 'ddm', '- [x] a\n- [x] b\n- [ ] c\n');
+  const text = composeSummary(p, cfg, { now: new Date(2026, 8, 30, 8, 0), since: new Date(2026, 8, 29, 8, 0) });
+  assert.match(text, /В работе:\n• ddm: 2\/3 задач \(ветка change\/ddm\)/);
 });
 test('sendSummary без Telegram печатает в консоль и не меняет state', async () => {
   const { p } = seed(); const lines = [];

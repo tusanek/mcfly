@@ -2,11 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { tmpDir } from './helpers.js';
+import { tmpDir, addChange, git, gitRepo, changeBranch } from './helpers.js';
 import { MCFLY_ROOT } from '../src/prompt.js';
 
 const bin = path.join(MCFLY_ROOT, 'bin', 'mcfly');
 const cli = (args, cwd) => spawnSync(process.execPath, [bin, ...args], { cwd, encoding: 'utf8', env: { ...process.env, MCFLY_PROJECT_DIR: '' } });
+
+test('status показывает прогресс невлитого изменения по ветке change/<имя>', () => {
+  const dir = tmpDir();
+  cli(['init', '--name', 'demo'], dir);
+  addChange(dir, 'ddm', { tasks: '- [ ] a\n- [ ] b\n- [ ] c\n' });
+  cli(['approval', 'set', 'ddm', 'approved'], dir);
+  gitRepo(dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'проект');
+  changeBranch(dir, 'ddm', '- [x] a\n- [x] b\n- [ ] c\n');
+  assert.match(cli(['status'], dir).stdout, /- ddm: одобрение=approved, задач 0\/3 \(на ветке change\/ddm: 2\/3\)/);
+});
 
 test('help, init, status, question, approval, metric, context, doctor, dry-run, summary', () => {
   const dir = tmpDir();

@@ -6,6 +6,7 @@ import { listChanges, pendingApprovals, approvedWithWork, proposalExcerpt, appro
 import { expectedSlots, slotKey } from './window.js';
 import { loadState, saveState } from './state.js';
 import { createTelegram } from './telegram.js';
+import { branchProgress } from './git.js';
 
 const STATUS_RU = { ok: 'ок', missed: 'пропущен', error: 'ошибка', timeout: 'остановлен по времени', quota: 'остановлен: лимит квоты', locked: 'не запущен (шёл другой прогон)' };
 
@@ -21,8 +22,12 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
     L.push(`• ${r.slot || fmtShort(new Date(r.started_at))} — ${STATUS_RU[r.status] || r.status}${runStats(r)}${dur}${r.note ? ' — ' + r.note : ''}`);
   }
   for (const e of expected) if (!covered.has(e.key)) L.push(`• ${e.slot} — пропущен (Mac был выключен или спал). Вручную: mcfly run --mode day`);
-  const reports = runs.map((r) => readText(path.join(p.runs, r.id || '', 'summary.md'), '').trim()).filter(Boolean);
-  L.push('', 'Отчёт команды:', reports.length ? reports.map((s) => truncate(s, 1500)).join('\n\n') : '(отчёта нет)');
+  // Отчёт — под подписью своего прогона: иначе отчёт вчерашнего дневного прогона читается как ночной.
+  const reports = runs.filter((r) => !['missed', 'locked'].includes(r.status)).map((r) => {
+    const text = readText(path.join(p.runs, r.id || '', 'summary.md'), '').trim();
+    return `— ${r.slot || fmtShort(new Date(r.started_at))} · ${r.id} —\n${text ? truncate(text, 1500) : '(отчёта нет)'}`;
+  });
+  L.push('', 'Отчёты команды:', reports.length ? reports.join('\n\n') : '(отчёта нет)');
   const q = openQuestions(loadQuestions(p));
   L.push('', `Вопросы к вам (${q.length}). Ответ: "Q3: b" или "Q3 свой текст":`);
   for (const x of q) L.push(`• ${x.id} [${x.category}] ${x.text}\n  по умолчанию: ${x.default || '(нет)'} · срок ${fmtShort(new Date(x.deadline_at))}`);
@@ -31,7 +36,13 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   L.push('', `Одобрения (${pend.length}). Ответ: "approve имя" или "reject имя причина":`);
   for (const c of pend) L.push(`• ${c.name} (${isAutoApprovable(c, cfg) ? 'авто-одобрение ' + fmtShort(approvalDeadline(c, cfg)) : 'без авто-одобрения'})\n  ${proposalExcerpt(c, 400)}`);
   const work = approvedWithWork(changes);
-  if (work.length) { L.push('', 'В работе:'); for (const c of work) L.push(`• ${c.name}: ${c.tasksDone}/${c.tasksDone + c.tasksOpen} задач`); }
+  if (work.length) {
+    L.push('', 'В работе:');
+    for (const c of work) {
+      const onBranch = branchProgress(p.projectDir, c.name); // невлитая работа команды видна только в ветке
+      L.push(onBranch ? `• ${c.name}: ${onBranch.done}/${onBranch.done + onBranch.open} задач (ветка change/${c.name})` : `• ${c.name}: ${c.tasksDone}/${c.tasksDone + c.tasksOpen} задач`);
+    }
+  }
   const period = aggregate(records, { since }); const total = aggregate(records);
   L.push('', `Метрики за период: ${formatEvents(period.events)}; прогонов ${period.runs}, ~$${period.cost_usd}.`, `Всего: ${formatEvents(total.events)}; прогонов ${total.runs}, ~$${total.cost_usd}.`);
   return L.join('\n');

@@ -8,7 +8,8 @@ import { run } from './runner.js';
 import { composeSummary, sendSummary } from './summary.js';
 import { pullAnswers } from './pull.js';
 import { buildContext, isMcflyProject } from './context.js';
-import { loadQuestions, saveQuestions, addQuestion, expireQuestions } from './questions.js';
+import { loadQuestions, saveQuestions, addQuestion, expireQuestions, openQuestions } from './questions.js';
+import { branchProgress } from './git.js';
 import { listChanges, requestApproval, setApproval, pendingApprovals } from './approvals.js';
 import { appendMetric, readMetrics, aggregate, formatEvents } from './metrics.js';
 import { createTelegram, extractMessages } from './telegram.js';
@@ -61,10 +62,13 @@ export async function main(argv) {
     case 'summary': { if (values.send) await sendSummary(p, cfg, { now, log }); else log(composeSummary(p, cfg, { now, since: new Date(now.getTime() - 24 * 3600_000) })); return 0; }
     case 'answers': { await pullAnswers({ projectDir, cfg, p, log, now }); return 0; }
     case 'status': {
-      const changes = listChanges(p.openspecChanges); const q = loadQuestions(p).questions.filter((x) => x.status === 'open'); const agg = aggregate(readMetrics(p));
+      const changes = listChanges(p.openspecChanges); const q = openQuestions(loadQuestions(p)); const agg = aggregate(readMetrics(p));
       log(`Проект ${cfg.project}. Изменений: ${changes.length}, ожидают одобрения: ${pendingApprovals(changes).length}, открытых вопросов: ${q.length}.`);
       log(`Прогонов: ${agg.runs} (ок ${agg.ok}, пропущено ${agg.missed}, ошибок ${agg.error}, по времени ${agg.timeout}, квота ${agg.quota}), ~$${agg.cost_usd}. События: ${formatEvents(agg.events)}.`);
-      for (const c of changes) log(`- ${c.name}: одобрение=${c.mcfly.approval || 'не запрошено'}, задач ${c.tasksDone}/${c.tasksDone + c.tasksOpen}`);
+      for (const c of changes) {
+        const onBranch = branchProgress(projectDir, c.name);
+        log(`- ${c.name}: одобрение=${c.mcfly.approval || 'не запрошено'}, задач ${c.tasksDone}/${c.tasksDone + c.tasksOpen}${onBranch ? ` (на ветке change/${c.name}: ${onBranch.done}/${onBranch.done + onBranch.open})` : ''}`);
+      }
       for (const x of q) log(`- ${x.id} [${x.category}] ${x.text} (срок ${fmtShort(new Date(x.deadline_at))})`);
       return 0;
     }
