@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planJobs, buildPlist, labelFor } from '../src/schedule.js';
+import { planJobs, buildPlist, labelFor, staleLabels, ownLabels } from '../src/schedule.js';
 import { cfg } from './helpers.js';
 
 test('planJobs: прогоны по слотам и сводка', () => {
@@ -14,4 +14,15 @@ test('planJobs: прогоны по слотам и сводка', () => {
 test('buildPlist экранирует XML', () => {
   const s = buildPlist({ label: labelFor('x', 'y'), node: '/n', mcflyBin: '/m', args: ['a&b'], projectDir: '/p', hour: 1, minute: 2, logPath: '/l', pathEnv: '/x', home: '/h' });
   assert.match(s, /a&amp;b/);
+});
+test('staleLabels: задания проекта, которых нет в плане (слот убран из конфигурации)', () => {
+  const files = ['com.mcfly.demo.run-0000.plist', 'com.mcfly.demo.run-0200.plist', 'com.mcfly.demo.summary.plist',
+    'com.mcfly.other.run-0000.plist', 'com.mcfly.demo.run-0400.plist.bak', 'com.apple.x.plist'];
+  const planned = ['com.mcfly.demo.run-0200', 'com.mcfly.demo.run-0600', 'com.mcfly.demo.summary'];
+  assert.deepEqual(staleLabels(files, 'demo', planned), ['com.mcfly.demo.run-0000']);
+});
+test('ownLabels: задания проекта с точкой в имени не принадлежат проекту-префиксу', () => {
+  const files = ['com.mcfly.demo.run-0000.plist', 'com.mcfly.demo.v2.run-0000.plist', 'com.mcfly.demo.v2.summary.plist', 'com.mcfly.demo.summary.plist', 'com.mcfly.demo.notes.plist'];
+  assert.deepEqual(ownLabels(files, 'demo'), ['com.mcfly.demo.run-0000', 'com.mcfly.demo.summary']);
+  assert.deepEqual(ownLabels(files, 'demo.v2'), ['com.mcfly.demo.v2.run-0000', 'com.mcfly.demo.v2.summary']);
 });

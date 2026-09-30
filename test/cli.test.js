@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { tmpDir, addChange, git, gitRepo, changeBranch } from './helpers.js';
 import { MCFLY_ROOT } from '../src/prompt.js';
@@ -42,4 +43,28 @@ test('help, init, status, question, approval, metric, context, doctor, dry-run, 
   assert.match(cli(['run', '--mode', 'day', '--dry-run'], dir).stdout, /dry-run/);
   assert.match(cli(['summary'], dir).stdout, /сводка/);
   assert.equal(cli(['approval', 'request', 'nope'], dir).status, 1);
+});
+
+test('approval set человеком сразу коммитит метаданные одобрения', () => {
+  const dir = tmpDir();
+  cli(['init', '--name', 'demo'], dir);
+  addChange(dir, 'ddm', { tasks: '- [ ] a\n' });
+  gitRepo(dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'проект');
+  const r = cli(['approval', 'set', 'ddm', 'approved', '--priority', '3'], dir);
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /Закоммичено/);
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore(ddm): одобрение человека — approved');
+  assert.equal(git(dir, 'status', '--porcelain', '--', 'openspec'), '');
+});
+
+test('approval set во время прогона (есть mcfly/.lock) не коммитит: метаданные закоммитит прогон', () => {
+  const dir = tmpDir();
+  cli(['init', '--name', 'demo'], dir);
+  addChange(dir, 'ddm', { tasks: '- [ ] a\n' });
+  gitRepo(dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'проект');
+  fs.writeFileSync(path.join(dir, 'mcfly', '.lock'), JSON.stringify({ pid: process.pid }));
+  const r = cli(['approval', 'set', 'ddm', 'approved'], dir);
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /идёт прогон/);
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'проект');
 });

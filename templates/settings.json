@@ -12,7 +12,10 @@
       "Edit(./mcfly/config.yaml)",
       "Edit(./mcfly/.env)",
       "Write(./mcfly/config.yaml)",
-      "Write(./mcfly/.env)"
+      "Write(./mcfly/.env)",
+      "Read(./.env)",
+      "Edit(./.env)",
+      "Write(./.env)"
     ]
   }
 }
