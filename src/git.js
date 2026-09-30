@@ -4,7 +4,7 @@ import { countTasks } from './approvals.js';
 
 /** stdout git или null, если команда не удалась (не репозиторий, нет ветки и т. п.). */
 function git(dir, args) {
-  const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
+  const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }); // тысячи файлов вне .gitignore не должны давать «чисто»
   return r.status === 0 ? r.stdout : null;
 }
 
@@ -20,6 +20,12 @@ export function dirtyFiles(dir, { exclude = [] } = {}) {
   }
   const bases = exclude.map((x) => x.replace(/\/$/, ''));
   return files.filter((f) => !bases.some((b) => f === b || f.startsWith(`${b}/`)));
+}
+
+/** Отслеживаемые файлы, изменённые относительно HEAD (в индексе или в рабочем дереве); новые и удалённые не входят. */
+export function changedTrackedFiles(dir) {
+  const out = git(dir, ['diff', 'HEAD', '--name-only', '--diff-filter=M', '-z']);
+  return out ? out.split('\0').filter(Boolean) : [];
 }
 
 /** Ветки, на которых работает команда: изменения OpenSpec и worktree субагентов-разработчиков. */

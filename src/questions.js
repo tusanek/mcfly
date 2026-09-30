@@ -1,6 +1,6 @@
 import YAML from 'yaml';
 import { readText, writeText } from './util.js';
-import { autoDefault } from './config.js';
+import { autoDefault, isCategory } from './config.js';
 
 export function loadQuestions(p) {
   const doc = YAML.parse(readText(p.questions, '')) || {};
@@ -12,7 +12,7 @@ export function nextId(data) {
   return `Q${max + 1}`;
 }
 export function addQuestion(data, { category, text, defaultAnswer = '', hours, now = new Date(), runId = '' }, cfg) {
-  if (!cfg.escalation.categories[category]) throw new Error(`Неизвестная категория "${category}". Допустимо: ${Object.keys(cfg.escalation.categories).join(', ')}`);
+  if (!isCategory(cfg, category)) throw new Error(`Неизвестная категория "${category}". Допустимо: ${Object.keys(cfg.escalation.categories).join(', ')}`);
   if (!text) throw new Error('Нужен текст вопроса (--text)');
   if (autoDefault(cfg, category) && !defaultAnswer) throw new Error(`Нужен ответ по умолчанию (--default): по истечении срока команда действует по нему. Без него — только категории, которые ждут человека: ${Object.keys(cfg.escalation.categories).filter((k) => !autoDefault(cfg, k)).join(', ')}`);
   const deadline = new Date(now.getTime() + (hours ?? cfg.escalation.answer_deadline_hours) * 3600_000);

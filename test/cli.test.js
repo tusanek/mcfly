@@ -6,7 +6,7 @@ import { tmpDir, addChange, git, gitRepo, changeBranch } from './helpers.js';
 import { MCFLY_ROOT } from '../src/prompt.js';
 
 const bin = path.join(MCFLY_ROOT, 'bin', 'mcfly');
-const cli = (args, cwd) => spawnSync(process.execPath, [bin, ...args], { cwd, encoding: 'utf8', env: { ...process.env, MCFLY_PROJECT_DIR: '' } });
+const cli = (args, cwd) => spawnSync(process.execPath, [bin, ...args], { cwd, encoding: 'utf8', env: { ...process.env, MCFLY_PROJECT_DIR: '', MCFLY_RUN_ID: '' } });
 
 test('status показывает прогресс невлитого изменения по ветке change/<имя>', () => {
   const dir = tmpDir();

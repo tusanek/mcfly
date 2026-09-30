@@ -38,7 +38,7 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   L.push('', 'Отчёты команды:', reports.length ? reports.join('\n\n') : '(отчёта нет)');
   const q = openQuestions(loadQuestions(p));
   L.push('', `Вопросы к вам (${q.length}). Ответ: "Q3: b" или "Q3 свой текст":`);
-  for (const x of q) L.push(`• ${x.id} [${x.category}] ${x.text}\n  ${autoDefault(cfg, x.category) ? `по умолчанию: ${x.default} · срок ${fmtShort(new Date(x.deadline_at))}` : 'без ответа по умолчанию: команда ждёт вашего решения'}`);
+  for (const x of q) L.push(`• ${x.id} [${x.category}] ${x.text}\n  ${autoDefault(cfg, x.category) ? `по умолчанию: ${x.default || '(нет)'} · срок ${fmtShort(new Date(x.deadline_at))}` : 'без ответа по умолчанию: команда ждёт вашего решения'}`);
   const changes = listChanges(p.openspecChanges);
   const pend = pendingApprovals(changes);
   L.push('', `Одобрения (${pend.length}). Ответ: "approve имя" или "reject имя причина":`);

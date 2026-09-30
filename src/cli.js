@@ -2,7 +2,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import YAML from 'yaml';
 import { paths, loadState, saveState } from './state.js';
-import { loadConfig } from './config.js';
+import { loadConfig, autoDefault, isCategory } from './config.js';
 import { loadEnv } from './env.js';
 import { run } from './runner.js';
 import { composeSummary, sendSummary } from './summary.js';
@@ -29,7 +29,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   answers                                         забрать ответы из Telegram
   context                                         контекст состояния для агентов
   status                                          состояние проекта
-  question add --category <c> --text <t> [--default <d>] [--hours <n>]
+  question add --category <c> --text <t> --default <d> [--hours <n>]   (--default обязателен, кроме prod)
   question list | question expire
   approval request <изменение> [--category <c>] [--priority <n>]
   approval set <изменение> approved|rejected [--note <t>] [--priority <n>]   (меньше = раньше; по умолчанию 100)
@@ -77,7 +77,7 @@ export async function main(argv) {
       if (sub === 'add') {
         const q = addQuestion(data, { category: values.category, text: values.text, defaultAnswer: values.default, hours: values.hours ? Number(values.hours) : undefined, now, runId: runIdEnv }, cfg);
         saveQuestions(p, data); appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'escalations', value: 1 });
-        log(`${q.id} зарегистрирован (категория ${q.category}, срок ${fmtShort(new Date(q.deadline_at))}). ${q.category === 'prod' ? 'Категория prod: остановитесь и ждите ответа.' : 'Продолжайте по ответу по умолчанию.'}`); return 0;
+        log(`${q.id} зарегистрирован (категория ${q.category}, срок ${fmtShort(new Date(q.deadline_at))}). ${autoDefault(cfg, q.category) ? 'Продолжайте по ответу по умолчанию.' : `Категория ${q.category} без ответа по умолчанию: остановитесь и ждите решения человека.`}`); return 0;
       }
       if (sub === 'list') { for (const x of data.questions) log(`${x.id} [${x.category}] ${x.status}: ${x.text}${x.answer ? ' → ' + x.answer : ''}`); return 0; }
       if (sub === 'expire') { const d = expireQuestions(data, cfg, now); saveQuestions(p, data); log(`Закрыто по умолчанию: ${d.length}`); return 0; }
@@ -90,7 +90,7 @@ export async function main(argv) {
       if (!c) { console.error(`Изменение не найдено: ${rest[0] || '(имя не указано)'}`); return 1; }
       if (sub === 'request') {
         const category = values.category || 'spec';
-        if (!cfg.escalation.categories[category]) { console.error(`Неизвестная категория "${category}". Допустимо: ${Object.keys(cfg.escalation.categories).join(', ')}`); return 1; }
+        if (!isCategory(cfg, category)) { console.error(`Неизвестная категория "${category}". Допустимо: ${Object.keys(cfg.escalation.categories).join(', ')}`); return 1; }
         requestApproval(c, { category, priority: values.priority, now }); appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_proposed', value: 1, change: c.name }); log(`Одобрение запрошено: ${c.name}. Человек увидит его в утренней сводке.`); return 0; }
       if (sub === 'set') {
         // Одобрение — решение человека: в прогоне команды (MCFLY_RUN_ID задаёт runner) агенты только запрашивают его.

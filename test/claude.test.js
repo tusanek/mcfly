@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildClaudeArgs, parseResult, runProcess, cleanEnv, summarizeEvent } from '../src/claude.js';
+import { buildClaudeArgs, parseResult, runProcess, cleanEnv, summarizeEvent, maskSecrets } from '../src/claude.js';
 import { cfg } from './helpers.js';
 
 test('buildClaudeArgs', () => {
@@ -20,6 +20,11 @@ test('summarizeEvent маскирует токены в журнале собы�
   const s = summarizeEvent(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] } }));
   assert.doesNotMatch(s, /AbC_d-123|AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw/);
   assert.match(s, /sk-ant-\*\*\*/);
+});
+test('maskSecrets маскирует OAuth-токены Яндекса и ключи вида sk-… (LiteLLM)', () => {
+  const s = maskSecrets('TRACKER y0__xDEADBEEFdeadbeef0123456789abcdefABCDEF LLM sk-1234567890abcdefghijKLMN ok');
+  assert.doesNotMatch(s, /DEADBEEF|1234567890abcdefghij/);
+  assert.match(s, / ok$/);
 });
 test('runProcess не рвёт кириллицу на границе кусков вывода', async () => {
   // 'x' сдвигает двухбайтовые символы на нечётные смещения: граница любого куска чётной длины придётся на середину символа

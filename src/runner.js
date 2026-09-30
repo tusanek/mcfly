@@ -6,25 +6,40 @@ import { paths } from './state.js';
 import { loadConfig } from './config.js';
 import { loadEnv } from './env.js';
 import { matchSlot } from './window.js';
-import { buildClaudeArgs, runProcess, parseResult, cleanEnv, summarizeEvent } from './claude.js';
+import { buildClaudeArgs, runProcess, parseResult, cleanEnv, summarizeEvent, maskSecrets } from './claude.js';
 import { buildContext } from './context.js';
 import { buildLeadPrompt, MCFLY_ROOT } from './prompt.js';
 import { appendMetric, runStats } from './metrics.js';
 import { loadQuestions, saveQuestions, expireQuestions } from './questions.js';
 import { listChanges, expireApprovals } from './approvals.js';
 import { pullAnswers } from './pull.js';
-import { dirtyFiles, teamWorktrees, branchProgress } from './git.js';
+import { dirtyFiles, teamWorktrees, branchProgress, changedTrackedFiles } from './git.js';
 import { ensureDir, writeJson, appendText, readJson, runId as makeRunId, fmtLocal } from './util.js';
 
-/** Лок прогона. Брошенным считается лок без живого процесса или старше maxAgeMs: после сбоя питания его pid может достаться другому процессу. */
+/** Команда процесса по pid (ps) или null, если узнать не удалось. */
+function processCommand(pid) {
+  const r = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' });
+  return r.status === 0 ? r.stdout.trim() : null;
+}
+/**
+ * Держит ли лок живой прогон. Прогон mcfly держит лок, сколько бы ни шёл: Mac мог спать посреди прогона, и время по часам
+ * больше лимита. Если pid после сбоя питания достался постороннему процессу — лок брошен. Без ps судим по возрасту (maxAgeMs).
+ */
+function lockHeld({ pid, at }, maxAgeMs) {
+  if (pid === process.pid) return true;
+  try { process.kill(pid, 0); } catch { return false; } // процесса нет
+  const command = processCommand(pid);
+  if (command !== null) return /\bmcfly\b.*\brun\b/.test(command);
+  return Date.now() - new Date(at || 0).getTime() < maxAgeMs;
+}
 export function acquireLock(p, { maxAgeMs = Infinity } = {}) {
   const existing = readJson(p.lock, null);
-  const fresh = Date.now() - new Date(existing?.at || 0).getTime() < maxAgeMs;
-  if (existing?.pid && fresh) { try { process.kill(existing.pid, 0); return false; } catch { /* процесса нет — лок устарел */ } }
+  if (existing?.pid && lockHeld(existing, maxAgeMs)) return false;
   writeJson(p.lock, { pid: process.pid, at: new Date().toISOString() });
   return true;
 }
-export function releaseLock(p) { try { fs.unlinkSync(p.lock); } catch {} }
+/** Снимает только свой лок: прогон, наткнувшийся на чужой, лок идущего прогона не трогает. */
+export function releaseLock(p) { if (readJson(p.lock, null)?.pid === process.pid) { try { fs.unlinkSync(p.lock); } catch {} } }
 
 /**
  * Окружение claude -p для прогона. Фоновые задачи отключены: в -p CLI ждёт фоновых субагентов после последнего хода лида
@@ -56,8 +71,11 @@ export function recordRun(p, record) {
   appendText(p.progress, `- ${fmtLocal(new Date(record.started_at))} прогон ${record.id} (${record.mode}${record.slot ? ', слот ' + record.slot : ''}): ${record.status}${runStats(record)}${record.note ? ' — ' + record.note : ''}\n`);
 }
 
-/** Служебные файлы команды, которые runner коммитит сам после прогона: журнал, метрики, вопросы, ответы и каталоги прогонов (stdout.log в .gitignore). */
+/** Служебные файлы команды, которые runner коммитит сам после прогона: журнал, метрики, вопросы, ответы и каталоги прогонов. */
 const STATE_PATHS = ['mcfly/progress.md', 'mcfly/metrics.jsonl', 'mcfly/questions.yaml', 'mcfly/answers.md', 'mcfly/runs'];
+const RAW_LOG = ':(exclude)mcfly/runs/*/stdout.log'; // сырой вывод claude не коммитится, даже если в .gitignore нет строки
+/** Метаданные одобрения изменений (.openspec.yaml), изменённые runner'ом (авто-одобрение по сроку, ответы из Telegram) или человеком. */
+const approvalMeta = (projectDir) => changedTrackedFiles(projectDir).filter((f) => /^openspec\/changes\/[^/]+\/\.openspec\.yaml$/.test(f));
 
 /**
  * Коммитит служебные файлы прогона, чтобы рабочее дерево оставалось чистым для следующего прогона.
@@ -66,12 +84,14 @@ const STATE_PATHS = ['mcfly/progress.md', 'mcfly/metrics.jsonl', 'mcfly/question
 export function commitRunState(projectDir, id, log = console.log) {
   const inRepo = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: projectDir, encoding: 'utf8' });
   if (inRepo.status !== 0) return false;
-  const existing = STATE_PATHS.filter((f) => fs.existsSync(path.join(projectDir, f)));
+  const existing = [...STATE_PATHS.filter((f) => fs.existsSync(path.join(projectDir, f))), ...approvalMeta(projectDir)];
   if (!existing.length) return false;
-  spawnSync('git', ['add', '--', ...existing], { cwd: projectDir, encoding: 'utf8' });
-  const staged = spawnSync('git', ['diff', '--cached', '--quiet', '--', ...existing], { cwd: projectDir });
+  const pathspec = ['--', ...existing, RAW_LOG];
+  const add = spawnSync('git', ['add', ...pathspec], { cwd: projectDir, encoding: 'utf8' });
+  if (add.status !== 0) { log(`Не удалось закоммитить файлы прогона: ${String(add.stderr || add.stdout).trim().slice(0, 200)}`); return false; }
+  const staged = spawnSync('git', ['diff', '--cached', '--quiet', ...pathspec], { cwd: projectDir });
   if (staged.status === 0) return false;
-  const r = spawnSync('git', ['commit', '-q', '-m', `chore(mcfly): результат прогона ${id}`, '--', ...existing], { cwd: projectDir, encoding: 'utf8' });
+  const r = spawnSync('git', ['commit', '-q', '-m', `chore(mcfly): результат прогона ${id}`, ...pathspec], { cwd: projectDir, encoding: 'utf8' });
   if (r.status !== 0) log(`Не удалось закоммитить файлы прогона: ${String(r.stderr || r.stdout).trim().slice(0, 200)}`);
   return r.status === 0;
 }
@@ -125,7 +145,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
   // Лок старше лимита прогона с запасом — брошенный: runner убивает claude по таймауту, живой прогон столько не держит лок.
   if (!acquireLock(p, { maxAgeMs: (cfg.run.max_minutes + 30) * 60_000 })) {
     // Запись без коммита: коммитит идущий прогон. В сводке слот будет «не запущен (шёл другой прогон)», а не «Mac спал».
-    recordRun(p, { id, mode, slot, started_at: now.toISOString(), ended_at: now.toISOString(), status: 'locked', note: 'шёл другой прогон (mcfly/.lock)' });
+    if (!dryRun) recordRun(p, { id, mode, slot, started_at: now.toISOString(), ended_at: now.toISOString(), status: 'locked', note: 'шёл другой прогон (mcfly/.lock)' });
     log('Другой прогон уже идёт (mcfly/.lock).'); return { status: 'locked', id };
   }
   try {
@@ -154,7 +174,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const eventsStream = fs.createWriteStream(path.join(runDir, 'events.log'));
     const event = (s) => eventsStream.write(`${fmtLocal(new Date())} ${s}\n`);
     const stdoutLines = lineSplitter((line) => { const s = summarizeEvent(line); if (s) event(s); });
-    const stderrLines = lineSplitter((line) => event(`⚠ ${line.trim().slice(0, 300)}`));
+    const stderrLines = lineSplitter((line) => event(`⚠ ${maskSecrets(line).trim().slice(0, 300)}`));
     const started = new Date();
     log(`Прогон ${id} (${mode}${slot ? ', слот ' + slot : ''}) запущен, лимит ${cfg.run.max_minutes} мин.`);
     const result = await runProcess({ bin: cfg.run.claude_bin, args, cwd: projectDir, env, timeoutMs: cfg.run.max_minutes * 60_000,
@@ -165,8 +185,9 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const fallback = writeFallbackSummary({ projectDir, runDir, id, started, resultText: parsed.resultText || parsed.errorText });
     const validate = runOpenspecValidate(projectDir);
     fs.writeFileSync(path.join(runDir, 'validate.json'), JSON.stringify(validate, null, 2));
-    // Служебные файлы (журнал, метрики, каталог прогона) runner коммитит сам — это не забытая работа.
-    const dirty = dirtyFiles(projectDir, { exclude: STATE_PATHS }).length;
+    // Служебные файлы (журнал, метрики, каталоги прогонов, метаданные одобрений) runner коммитит сам — это не забытая работа.
+    const committedByRunner = new Set(approvalMeta(projectDir));
+    const dirty = dirtyFiles(projectDir, { exclude: STATE_PATHS }).filter((f) => !committedByRunner.has(f)).length;
     const unfinished = unfinishedWork(projectDir);
     const record = {
       id, mode, slot, started_at: started.toISOString(), ended_at: new Date().toISOString(), status: parsed.status, duration_ms: result.durationMs, exit_code: result.exitCode,

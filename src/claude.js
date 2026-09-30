@@ -46,6 +46,10 @@ export function cleanEnv(env) {
 
 const LIMIT_RE = /usage limit|session limit|weekly limit|rate limit|limit reached|hit your [^.]*limit|too many requests|\b429\b|quota/i;
 
+/** Маскирует токены Anthropic, ботов Telegram, OAuth Яндекса и ключи вида sk-… (LiteLLM): журнал событий, result.json и progress.md коммитятся. */
+export const maskSecrets = (text) => String(text || '').replace(/sk-ant-[\w-]+/g, 'sk-ant-***').replace(/\d{6,12}:[\w-]{30,}/g, '***')
+  .replace(/\by\d_[\w-]{20,}/g, 'y0_***').replace(/\bsk-[\w-]{16,}/g, 'sk-***');
+
 const isResultEvent = (obj) => obj && typeof obj === 'object' && (obj.type === 'result' || 'result' in obj || 'is_error' in obj);
 
 /** Статистика субагентов из события result: сколько запущено, сколько стартовало фоном, упало и убито. */
@@ -75,15 +79,14 @@ export function parseResult({ exitCode, stdout, stderr, timedOut }) {
   return {
     status, json, costUsd: json?.total_cost_usd ?? null, turns: turnCounts.length ? turnCounts.reduce((a, b) => a + b, 0) : null,
     subagents: subagentsOf(json?.subagent_stats), sessionId: json?.session_id ?? null, resultText: json?.result ?? '',
-    errorText: status === 'ok' ? '' : String(json?.result || stderr || `exit ${exitCode}`).slice(0, 2000),
+    errorText: status === 'ok' ? '' : maskSecrets(json?.result || stderr || `exit ${exitCode}`).slice(0, 2000),
   };
 }
 
 /** Краткая человекочитаемая строка по событию stream-json (или null, если событие неинтересно). */
 export function summarizeEvent(line) {
   let ev; try { ev = JSON.parse(line); } catch { return null; }
-  // events.log коммитится в репозиторий: токены Anthropic и Telegram маскируем до обрезки строки.
-  const short = (t) => String(t || '').replace(/sk-ant-[\w-]+/g, 'sk-ant-***').replace(/\d{6,12}:[\w-]{30,}/g, '***').replace(/\s+/g, ' ').trim().slice(0, 160);
+  const short = (t) => maskSecrets(t).replace(/\s+/g, ' ').trim().slice(0, 160); // маска — до обрезки строки
   if (ev.type === 'assistant') {
     const parts = ev.message?.content || [];
     const out = [];

@@ -50,6 +50,7 @@ export function parseConfig(text) {
 export function loadConfig(configPath) { return parseConfig(readText(configPath, '')); }
 /** Решает ли категория эскалации сама по истечении срока. Неизвестная категория — нет: молчание не должно одобрять то, чего нет в списке. */
 export function autoDefault(cfg, category) {
-  const c = cfg.escalation.categories[category];
-  return !!c && c.auto_default !== false;
+  return isCategory(cfg, category) && cfg.escalation.categories[category].auto_default !== false;
 }
+/** Категория эскалации из конфигурации (только собственные ключи: «toString» и прочее унаследованное — не категории). */
+export const isCategory = (cfg, category) => Object.hasOwn(cfg.escalation.categories, String(category));

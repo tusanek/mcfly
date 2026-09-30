@@ -13,6 +13,12 @@ test('dirtyFiles: изменённые и новые файлы, кроме ис
   fs.writeFileSync(path.join(dir, 'mcfly', 'metrics.jsonl'), '{}\n');
   assert.deepEqual(dirtyFiles(dir, { exclude: ['mcfly/runs/r1', 'mcfly/metrics.jsonl'] }).sort(), ['a.txt', 'новый файл.txt']);
 });
+test('dirtyFiles: вывод git status больше мегабайта не превращается в «чисто»', () => {
+  const dir = gitRepo(); const many = path.join(dir, 'many'); fs.mkdirSync(many);
+  const name = 'x'.repeat(120);
+  for (let i = 0; i < 10_000; i++) fs.writeFileSync(path.join(many, `${name}-${i}.txt`), '');
+  assert.equal(dirtyFiles(dir).length, 10_000);
+});
 test('dirtyFiles: не git-каталог — пустой список', () => {
   assert.deepEqual(dirtyFiles(tmpDir()), []);
 });

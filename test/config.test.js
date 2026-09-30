@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseConfig, DEFAULT_CONFIG } from '../src/config.js';
+import { parseConfig, DEFAULT_CONFIG, autoDefault } from '../src/config.js';
 import { paths } from '../src/state.js';
 
 test('пустой конфиг даёт дефолты', () => {
@@ -24,4 +24,9 @@ test('paths строит пути состояния', () => {
   const p = paths('/tmp/proj');
   assert.equal(p.config, '/tmp/proj/mcfly/config.yaml');
   assert.equal(p.openspecChanges, '/tmp/proj/openspec/changes');
+});
+test('autoDefault: неизвестная категория и унаследованные ключи объекта сами не решают', () => {
+  const cfg = parseConfig('');
+  assert.equal(autoDefault(cfg, 'spec'), true); assert.equal(autoDefault(cfg, 'prod'), false);
+  assert.equal(autoDefault(cfg, 'production'), false); assert.equal(autoDefault(cfg, 'toString'), false);
 });

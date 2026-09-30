@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import path from 'node:path';
 import { run, acquireLock, releaseLock, commitRunState, recordRun, writeFallbackSummary } from '../src/runner.js';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { paths } from '../src/state.js';
 import { readMetrics } from '../src/metrics.js';
 import { ensureGitignore, GITIGNORE_ENTRIES } from '../src/init.js';
-import { bareProject, fakeClaude, tmpDir, git, gitRepo } from './helpers.js';
+import { listChanges, requestApproval } from '../src/approvals.js';
+import { bareProject, fakeClaude, tmpDir, git, gitRepo, addChange } from './helpers.js';
 
 const resultEvent = (over = {}) => ({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, total_cost_usd: 0.1, session_id: 's', result: 'готово', ...over });
 const readRecord = (p, id) => JSON.parse(fs.readFileSync(path.join(p.runs, id, 'result.json'), 'utf8'));
@@ -101,19 +102,79 @@ test('commitRunState коммитит только служебные файлы
   assert.doesNotMatch(git(dir, 'show', '--name-only', '--format=', 'HEAD'), /Half\.java/);
   assert.match(git(dir, 'status', '--porcelain'), /^A {2}Half\.java$/m);
 });
-test('лок старше лимита прогона считается брошенным, даже если его pid занят другим процессом', () => {
-  const p = paths(bareProject());
-  fs.writeFileSync(p.lock, JSON.stringify({ pid: process.pid, at: new Date(Date.now() - 5 * 3600_000).toISOString() }));
-  assert.equal(acquireLock(p, { maxAgeMs: 3.5 * 3600_000 }), true);
-  releaseLock(p);
+/** Живой процесс-владелец лока: с аргументами «mcfly run» выглядит как прогон mcfly, без них — как посторонний процесс с тем же pid. */
+function liveProcess(asRunner) {
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)', ...(asRunner ? ['mcfly', 'run'] : [])], { stdio: 'ignore' });
+  spawnSync('sleep', ['0.3']); // дать процессу выполнить exec, чтобы ps видел его собственную команду
+  return child;
+}
+const lockBy = (p, pid, ageMs = 0) => fs.writeFileSync(p.lock, JSON.stringify({ pid, at: new Date(Date.now() - ageMs).toISOString() }));
+test('лок живого прогона mcfly держится и дольше лимита: Mac мог спать посреди прогона', () => {
+  const p = paths(bareProject()); const other = liveProcess(true);
+  try { lockBy(p, other.pid, 5 * 3600_000); assert.equal(acquireLock(p, { maxAgeMs: 3.5 * 3600_000 }), false); } finally { other.kill(); }
 });
-test('прогон, наткнувшийся на чужой лок, записывается как locked', async () => {
+test('лок, чей pid занят посторонним процессом, считается брошенным', () => {
+  const p = paths(bareProject()); const other = liveProcess(false);
+  try { lockBy(p, other.pid); assert.equal(acquireLock(p), true); releaseLock(p); } finally { other.kill(); }
+});
+test('releaseLock снимает только свой лок', () => {
+  const p = paths(bareProject());
+  lockBy(p, 999_999); releaseLock(p);
+  assert.ok(fs.existsSync(p.lock));
+});
+test('прогон, наткнувшийся на чужой лок, записывается как locked и лок не снимает', async () => {
+  const dir = bareProject(); const p = paths(dir); const other = liveProcess(true);
+  try {
+    fakeClaude(dir, { lines: [resultEvent()] }); lockBy(p, other.pid); // идёт другой прогон
+    const r = await run({ projectDir: dir, mode: 'day', log: () => {} });
+    assert.equal(r.status, 'locked');
+    assert.equal(readMetrics(p).at(-1).status, 'locked');
+    assert.ok(fs.existsSync(p.lock), 'лок идущего прогона на месте');
+  } finally { other.kill(); }
+});
+test('commitRunState сообщает, если git не смог добавить файлы (остался index.lock)', () => {
   const dir = bareProject(); const p = paths(dir);
-  fakeClaude(dir, { lines: [resultEvent()] });
-  fs.writeFileSync(p.lock, JSON.stringify({ pid: process.pid, at: new Date().toISOString() })); // идёт другой прогон
+  gitRepo(dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'проект');
+  recordRun(p, { id: 'r1', mode: 'day', slot: null, started_at: new Date().toISOString(), status: 'timeout' });
+  fs.writeFileSync(path.join(dir, '.git', 'index.lock'), ''); // git агента убит по таймауту
+  const lines = [];
+  assert.equal(commitRunState(dir, 'r1', (s) => lines.push(s)), false);
+  assert.match(lines.join('\n'), /Не удалось закоммитить файлы прогона/);
+});
+test('токен в stderr claude маскируется в events.log, result.json и журнале', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  fakeClaude(dir, { lines: [], stderr: 'auth failed for sk-ant-oat01-SECRETSECRET', exitCode: 1 });
   const r = await run({ projectDir: dir, mode: 'day', log: () => {} });
-  assert.equal(r.status, 'locked');
-  assert.equal(readMetrics(p).at(-1).status, 'locked');
+  for (const file of [path.join(p.runs, r.id, 'events.log'), path.join(p.runs, r.id, 'result.json'), p.progress, p.metrics]) {
+    assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /SECRETSECRET/, file);
+  }
+  assert.match(fs.readFileSync(path.join(p.runs, r.id, 'events.log'), 'utf8'), /sk-ant-\*\*\*/);
+});
+test('dry-run при чужом локе не оставляет записей', async () => {
+  const dir = bareProject(); const p = paths(dir); const other = liveProcess(true);
+  try {
+    lockBy(p, other.pid);
+    const r = await run({ projectDir: dir, mode: 'day', dryRun: true, log: () => {} });
+    assert.equal(r.status, 'locked');
+    assert.equal(readMetrics(p).length, 0); assert.equal(fs.existsSync(path.join(p.runs, r.id)), false);
+  } finally { other.kill(); }
+});
+test('метаданные одобрения, которые runner правит сам, коммитятся и не считаются незакоммиченными', async () => {
+  const { dir, p } = gitProject();
+  addChange(dir, 'add-x'); requestApproval(listChanges(p.openspecChanges)[0], { category: 'spec', now: new Date(Date.now() - 48 * 3600_000) });
+  git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'изменение ждёт одобрения');
+  const r = await run({ projectDir: dir, mode: 'day', log: () => {} }); // срок истёк — runner авто-одобряет
+  assert.match(fs.readFileSync(path.join(dir, 'openspec', 'changes', 'add-x', '.openspec.yaml'), 'utf8'), /approval: approved/);
+  assert.equal(readRecord(p, r.id).dirty_files, 0);
+  assert.equal(git(dir, 'status', '--porcelain'), '');
+});
+test('commitRunState не коммитит сырой stdout.log, даже без строки в .gitignore', () => {
+  const dir = bareProject(); const p = paths(dir);
+  gitRepo(dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'проект');
+  fs.mkdirSync(path.join(p.runs, 'r1'), { recursive: true }); fs.writeFileSync(path.join(p.runs, 'r1', 'stdout.log'), 'сырой вывод');
+  recordRun(p, { id: 'r1', mode: 'day', slot: null, started_at: new Date().toISOString(), status: 'ok' });
+  assert.equal(commitRunState(dir, 'r1', () => {}), true);
+  assert.doesNotMatch(git(dir, 'show', '--name-only', '--format=', 'HEAD'), /stdout\.log/);
 });
 test('лок не даёт второго прогона', () => {
   const p = paths(bareProject());
