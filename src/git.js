@@ -28,6 +28,15 @@ export function changedTrackedFiles(dir) {
   return out ? out.split('\0').filter(Boolean) : [];
 }
 
+/**
+ * Коммитит только указанные отслеживаемые пути (git commit --only): чужие изменения в индексе остаются как были.
+ * Неотслеживаемый путь или не git — { ok: false, error } без исключения.
+ */
+export function commitPaths(dir, paths, message) {
+  const r = spawnSync('git', ['commit', '-q', '--only', '-m', message, '--', ...paths], { cwd: dir, encoding: 'utf8' });
+  return r.status === 0 ? { ok: true } : { ok: false, error: String(r.stderr || r.stdout || '').trim().slice(0, 200) };
+}
+
 /** Ветки, на которых работает команда: изменения OpenSpec и worktree субагентов-разработчиков. */
 const TEAM_BRANCH = /^(change\/|worktree-agent-)/;
 

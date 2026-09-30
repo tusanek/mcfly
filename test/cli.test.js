@@ -43,3 +43,15 @@ test('help, init, status, question, approval, metric, context, doctor, dry-run, 
   assert.match(cli(['summary'], dir).stdout, /сводка/);
   assert.equal(cli(['approval', 'request', 'nope'], dir).status, 1);
 });
+
+test('approval set человеком сразу коммитит метаданные одобрения', () => {
+  const dir = tmpDir();
+  cli(['init', '--name', 'demo'], dir);
+  addChange(dir, 'ddm', { tasks: '- [ ] a\n' });
+  gitRepo(dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'проект');
+  const r = cli(['approval', 'set', 'ddm', 'approved', '--priority', '3'], dir);
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /Закоммичено/);
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore(ddm): одобрение человека — approved');
+  assert.equal(git(dir, 'status', '--porcelain', '--', 'openspec'), '');
+});

@@ -9,7 +9,7 @@ import { composeSummary, sendSummary } from './summary.js';
 import { pullAnswers } from './pull.js';
 import { buildContext, isMcflyProject } from './context.js';
 import { loadQuestions, saveQuestions, addQuestion, expireQuestions, openQuestions } from './questions.js';
-import { branchProgress } from './git.js';
+import { branchProgress, commitPaths } from './git.js';
 import { listChanges, requestApproval, setApproval, pendingApprovals } from './approvals.js';
 import { appendMetric, readMetrics, aggregate, formatEvents } from './metrics.js';
 import { createTelegram, extractMessages } from './telegram.js';
@@ -95,7 +95,10 @@ export async function main(argv) {
       if (sub === 'set') {
         // Одобрение — решение человека: в прогоне команды (MCFLY_RUN_ID задаёт runner) агенты только запрашивают его.
         if (runIdEnv) { console.error('Одобрение ставит только человек: в прогоне команды approval set запрещён, используйте mcfly approval request.'); return 1; }
-        const st = rest[1]; if (!['approved', 'rejected'].includes(st)) { console.error('Статус: approved | rejected'); return 1; } setApproval(c, st, 'human-cli', values.note || '', now, { priority: values.priority }); log(`${c.name}: ${st}${values.priority ? ', приоритет ' + values.priority : ''}`); return 0; }
+        const st = rest[1]; if (!['approved', 'rejected'].includes(st)) { console.error('Статус: approved | rejected'); return 1; } setApproval(c, st, 'human-cli', values.note || '', now, { priority: values.priority }); log(`${c.name}: ${st}${values.priority ? ', приоритет ' + values.priority : ''}`);
+        // решение человека сразу в истории: рабочее дерево остаётся чистым до прогона
+        const committed = commitPaths(projectDir, [path.relative(projectDir, path.join(c.dir, '.openspec.yaml'))], `chore(${c.name}): одобрение человека — ${st}`);
+        log(committed.ok ? 'Закоммичено.' : `Не закоммичено (закоммитит ближайший прогон): ${committed.error}`); return 0; }
       break;
     }
     case 'metric': {
