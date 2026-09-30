@@ -50,10 +50,24 @@ export function defaultPathEnv() {
 }
 export function launchAgentsDir() { return path.join(os.homedir(), 'Library', 'LaunchAgents'); }
 
+/** Метки заданий проекта в LaunchAgents, которых нет в плане: слот убрали из конфигурации. */
+export function staleJobs(files, project, plannedLabels) {
+  const prefix = `com.mcfly.${project}.`;
+  return files.filter((f) => f.startsWith(prefix) && f.endsWith('.plist'))
+    .map((f) => f.replace(/\.plist$/, ''))
+    .filter((label) => !plannedLabels.includes(label));
+}
+
 export function install(cfg, { projectDir, mcflyBin, logsDir, dryRun = false, log = console.log }) {
   const jobs = planJobs(cfg, { projectDir, node: process.execPath, mcflyBin, logsDir, pathEnv: defaultPathEnv(), home: os.homedir() });
   ensureDir(logsDir);
   const dir = ensureDir(launchAgentsDir()); const uid = process.getuid();
+  for (const label of staleJobs(fs.readdirSync(dir), cfg.project, jobs.map((j) => j.label))) {
+    if (dryRun) { log(`[dry-run] удалить ${label} (слота нет в конфигурации)`); continue; }
+    spawnSync('launchctl', ['bootout', `gui/${uid}/${label}`], { encoding: 'utf8' });
+    fs.unlinkSync(path.join(dir, `${label}.plist`));
+    log(`✓ удалено ${label} (слота нет в конфигурации)`);
+  }
   for (const j of jobs) {
     const file = path.join(dir, `${j.label}.plist`);
     if (dryRun) { log(`[dry-run] ${file} → ${pad2(j.hour)}:${pad2(j.minute)}`); continue; }
