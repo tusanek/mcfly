@@ -30,11 +30,14 @@ export function changedTrackedFiles(dir) {
 
 /**
  * Коммитит только указанные отслеживаемые пути (git commit --only): чужие изменения в индексе остаются как были.
- * Неотслеживаемый путь или не git — { ok: false, error } без исключения.
+ * Изменений в путях нет — { ok: true, committed: false }; неотслеживаемый путь или не git — { ok: false, error }.
  */
 export function commitPaths(dir, paths, message) {
+  const same = spawnSync('git', ['diff', '--quiet', 'HEAD', '--', ...paths], { cwd: dir, encoding: 'utf8' });
+  const tracked = spawnSync('git', ['ls-files', '--error-unmatch', '--', ...paths], { cwd: dir, encoding: 'utf8' });
+  if (same.status === 0 && tracked.status === 0) return { ok: true, committed: false };
   const r = spawnSync('git', ['commit', '-q', '--only', '-m', message, '--', ...paths], { cwd: dir, encoding: 'utf8' });
-  return r.status === 0 ? { ok: true } : { ok: false, error: String(r.stderr || r.stdout || '').trim().slice(0, 200) };
+  return r.status === 0 ? { ok: true, committed: true } : { ok: false, error: String(r.stderr || r.stdout || '').trim().slice(0, 200) };
 }
 
 /** Ветки, на которых работает команда: изменения OpenSpec и worktree субагентов-разработчиков. */

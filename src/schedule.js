@@ -50,22 +50,31 @@ export function defaultPathEnv() {
 }
 export function launchAgentsDir() { return path.join(os.homedir(), 'Library', 'LaunchAgents'); }
 
-/** Метки заданий проекта в LaunchAgents, которых нет в плане: слот убрали из конфигурации. */
-export function staleJobs(files, project, plannedLabels) {
+/** Метки заданий проекта в LaunchAgents: ровно `com.mcfly.<проект>.run-ЧЧММ` или `.summary` — задания проекта `demo.v2` проекту `demo` не принадлежат. */
+export function ownLabels(files, project) {
   const prefix = `com.mcfly.${project}.`;
   return files.filter((f) => f.startsWith(prefix) && f.endsWith('.plist'))
-    .map((f) => f.replace(/\.plist$/, ''))
-    .filter((label) => !plannedLabels.includes(label));
+    .map((f) => f.slice(0, -'.plist'.length))
+    .filter((label) => /^(run-\d{4}|summary)$/.test(label.slice(prefix.length)));
+}
+
+/** Метки заданий проекта, которых нет в плане: слот убрали из конфигурации. */
+export function staleLabels(files, project, plannedLabels) {
+  return ownLabels(files, project).filter((label) => !plannedLabels.includes(label));
+}
+
+function removeJob(dir, uid, label) {
+  spawnSync('launchctl', ['bootout', `gui/${uid}/${label}`], { encoding: 'utf8' });
+  fs.unlinkSync(path.join(dir, `${label}.plist`));
 }
 
 export function install(cfg, { projectDir, mcflyBin, logsDir, dryRun = false, log = console.log }) {
   const jobs = planJobs(cfg, { projectDir, node: process.execPath, mcflyBin, logsDir, pathEnv: defaultPathEnv(), home: os.homedir() });
   ensureDir(logsDir);
   const dir = ensureDir(launchAgentsDir()); const uid = process.getuid();
-  for (const label of staleJobs(fs.readdirSync(dir), cfg.project, jobs.map((j) => j.label))) {
+  for (const label of staleLabels(fs.readdirSync(dir), cfg.project, jobs.map((j) => j.label))) {
     if (dryRun) { log(`[dry-run] удалить ${label} (слота нет в конфигурации)`); continue; }
-    spawnSync('launchctl', ['bootout', `gui/${uid}/${label}`], { encoding: 'utf8' });
-    fs.unlinkSync(path.join(dir, `${label}.plist`));
+    removeJob(dir, uid, label);
     log(`✓ удалено ${label} (слота нет в конфигурации)`);
   }
   for (const j of jobs) {
@@ -80,11 +89,8 @@ export function install(cfg, { projectDir, mcflyBin, logsDir, dryRun = false, lo
 }
 export function remove(cfg, { log = console.log }) {
   const dir = launchAgentsDir(); if (!exists(dir)) return; const uid = process.getuid();
-  for (const f of fs.readdirSync(dir)) {
-    if (!f.startsWith(`com.mcfly.${cfg.project}.`) || !f.endsWith('.plist')) continue;
-    const label = f.replace(/\.plist$/, '');
-    spawnSync('launchctl', ['bootout', `gui/${uid}/${label}`], { encoding: 'utf8' });
-    fs.unlinkSync(path.join(dir, f));
+  for (const label of ownLabels(fs.readdirSync(dir), cfg.project)) {
+    removeJob(dir, uid, label);
     log(`✓ удалено ${label}`);
   }
 }

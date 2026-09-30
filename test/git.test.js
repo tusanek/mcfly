@@ -55,7 +55,7 @@ test('commitPaths коммитит только указанный путь, ч�
   fs.writeFileSync(path.join(dir, 'openspec/changes/x/.openspec.yaml'), 'schema: spec-driven\nmcfly:\n  approval: approved\n');
   fs.writeFileSync(path.join(dir, 'work.txt'), 'b'); git(dir, 'add', 'work.txt');
   const r = commitPaths(dir, ['openspec/changes/x/.openspec.yaml'], 'chore(x): одобрение человека — approved');
-  assert.equal(r.ok, true);
+  assert.deepEqual(r, { ok: true, committed: true });
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore(x): одобрение человека — approved');
   assert.match(git(dir, 'show', 'HEAD:openspec/changes/x/.openspec.yaml'), /approved/);
   assert.equal(git(dir, 'diff', '--cached', '--name-only'), 'work.txt');
@@ -63,7 +63,14 @@ test('commitPaths коммитит только указанный путь, ч�
 test('commitPaths: неотслеживаемый путь или не git — ok false с причиной, без исключения', () => {
   const dir = gitRepo();
   fs.writeFileSync(path.join(dir, 'new.yaml'), 'x');
-  const r = commitPaths(dir, ['new.yaml'], 'm');
+  const r = commitPaths(dir, ['new.yaml'], 'одобрение');
   assert.equal(r.ok, false); assert.ok(r.error);
-  assert.equal(commitPaths(tmpDir(), ['a'], 'm').ok, false);
+  assert.equal(commitPaths(tmpDir(), ['meta.yaml'], 'одобрение').ok, false);
+});
+test('commitPaths: изменений нет — ok, без коммита и без ошибки', () => {
+  const dir = gitRepo();
+  fs.writeFileSync(path.join(dir, 'meta.yaml'), 'x'); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'base');
+  const before = git(dir, 'rev-parse', 'HEAD');
+  assert.deepEqual(commitPaths(dir, ['meta.yaml'], 'одобрение'), { ok: true, committed: false });
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), before);
 });

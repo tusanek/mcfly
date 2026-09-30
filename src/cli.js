@@ -17,7 +17,7 @@ import * as schedule from './schedule.js';
 import { init } from './init.js';
 import { doctor } from './doctor.js';
 import { MCFLY_ROOT } from './prompt.js';
-import { fmtShort, readText, writeText } from './util.js';
+import { exists, fmtShort, readText, writeText } from './util.js';
 
 const HELP = `mcfly — комплект ИИ-команды разработки на Claude Code
 
@@ -96,9 +96,10 @@ export async function main(argv) {
         // Одобрение — решение человека: в прогоне команды (MCFLY_RUN_ID задаёт runner) агенты только запрашивают его.
         if (runIdEnv) { console.error('Одобрение ставит только человек: в прогоне команды approval set запрещён, используйте mcfly approval request.'); return 1; }
         const st = rest[1]; if (!['approved', 'rejected'].includes(st)) { console.error('Статус: approved | rejected'); return 1; } setApproval(c, st, 'human-cli', values.note || '', now, { priority: values.priority }); log(`${c.name}: ${st}${values.priority ? ', приоритет ' + values.priority : ''}`);
-        // решение человека сразу в истории: рабочее дерево остаётся чистым до прогона
+        // решение человека сразу в истории; во время прогона HEAD под агентами не двигаем — метаданные закоммитит прогон
+        if (exists(p.lock)) { log('Не закоммичено: идёт прогон, метаданные одобрения закоммитит он.'); return 0; }
         const committed = commitPaths(projectDir, [path.relative(projectDir, path.join(c.dir, '.openspec.yaml'))], `chore(${c.name}): одобрение человека — ${st}`);
-        log(committed.ok ? 'Закоммичено.' : `Не закоммичено (закоммитит ближайший прогон): ${committed.error}`); return 0; }
+        log(!committed.ok ? `Не закоммичено (закоммитит ближайший прогон): ${committed.error}` : committed.committed ? 'Закоммичено.' : 'Изменений нет, коммит не нужен.'); return 0; }
       break;
     }
     case 'metric': {
