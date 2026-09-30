@@ -85,6 +85,29 @@ test('recordRun: строка журнала со статистикой суб�
   assert.match(text, /прогон r1 \(night, слот 04:00\): ok, 30 ходов, ~\$4\.10, субагентов 8 \(фоном 8, убито 1\)\n/);
   assert.match(text, /прогон r2 \(night, слот 00:00\): ok, 5 ходов, ~\$1\.00, субагентов 3\n/);
 });
+test('commitRunState коммитит только служебные файлы, чужой индекс не трогает', () => {
+  const dir = bareProject(); const p = paths(dir);
+  gitRepo(dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'проект');
+  fs.writeFileSync(path.join(dir, 'Half.java'), 'class Half {}'); git(dir, 'add', 'Half.java'); // работа агента в индексе на момент обрыва
+  recordRun(p, { id: 'r1', mode: 'day', slot: null, started_at: new Date().toISOString(), status: 'timeout' });
+  assert.equal(commitRunState(dir, 'r1', () => {}), true);
+  assert.doesNotMatch(git(dir, 'show', '--name-only', '--format=', 'HEAD'), /Half\.java/);
+  assert.match(git(dir, 'status', '--porcelain'), /^A {2}Half\.java$/m);
+});
+test('лок старше лимита прогона считается брошенным, даже если его pid занят другим процессом', () => {
+  const p = paths(bareProject());
+  fs.writeFileSync(p.lock, JSON.stringify({ pid: process.pid, at: new Date(Date.now() - 5 * 3600_000).toISOString() }));
+  assert.equal(acquireLock(p, { maxAgeMs: 3.5 * 3600_000 }), true);
+  releaseLock(p);
+});
+test('прогон, наткнувшийся на чужой лок, записывается как locked', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  fakeClaude(dir, { lines: [resultEvent()] });
+  fs.writeFileSync(p.lock, JSON.stringify({ pid: process.pid, at: new Date().toISOString() })); // идёт другой прогон
+  const r = await run({ projectDir: dir, mode: 'day', log: () => {} });
+  assert.equal(r.status, 'locked');
+  assert.equal(readMetrics(p).at(-1).status, 'locked');
+});
 test('лок не даёт второго прогона', () => {
   const p = paths(bareProject());
   assert.equal(acquireLock(p), true); assert.equal(acquireLock(p), false); releaseLock(p); assert.equal(acquireLock(p), true); releaseLock(p);

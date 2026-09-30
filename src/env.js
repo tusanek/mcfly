@@ -16,9 +16,10 @@ export function parseDotenv(text) {
 }
 /** Переменные, которые файл mcfly/.env перекрывает всегда: они задаются именно для прогонов команды. */
 export const OVERRIDE_KEYS = new Set(['CLAUDE_CODE_OAUTH_TOKEN']);
-/** Загружает <project>/mcfly/.env в env; заданные переменные окружения важнее файла, кроме OVERRIDE_KEYS. */
+/** Загружает <project>/mcfly/.env в env; заданные переменные окружения важнее файла, кроме непустых OVERRIDE_KEYS. */
 export function loadEnv(projectDir, env = process.env) {
   const vars = parseDotenv(readText(path.join(projectDir, 'mcfly', '.env'), ''));
-  for (const [k, v] of Object.entries(vars)) if (env[k] === undefined || OVERRIDE_KEYS.has(k)) env[k] = v;
+  // Пустая строка из шаблона (CLAUDE_CODE_OAUTH_TOKEN=) не должна затирать токен, заданный в окружении.
+  for (const [k, v] of Object.entries(vars)) if (env[k] === undefined || (OVERRIDE_KEYS.has(k) && v !== '')) env[k] = v;
   return vars;
 }

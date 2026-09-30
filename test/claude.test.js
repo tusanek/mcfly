@@ -15,6 +15,12 @@ test('parseResult: ok / error / quota / timeout', () => {
   assert.equal(parseResult({ exitCode: 1, stdout: '{"result":"You\'ve hit your session limit · resets 10pm (Europe/Moscow)","is_error":true}', stderr: '', timedOut: false }).status, 'quota');
   assert.equal(parseResult({ exitCode: null, stdout: '', stderr: '', timedOut: true }).status, 'timeout');
 });
+test('runProcess не рвёт кириллицу на границе кусков вывода', async () => {
+  // 'x' сдвигает двухбайтовые символы на нечётные смещения: граница любого куска чётной длины придётся на середину символа
+  const r = await runProcess({ bin: process.execPath, args: ['-e', "process.stdout.write('x' + 'я'.repeat(300000))"], cwd: process.cwd(), env: process.env, timeoutMs: 20_000 });
+  assert.equal(r.stdout.includes('�'), false);
+  assert.equal(r.stdout.length, 300_001);
+});
 test('runProcess с таймаутом', async () => {
   const r = await runProcess({ bin: 'sleep', args: ['5'], cwd: process.cwd(), env: process.env, timeoutMs: 200 });
   assert.equal(r.timedOut, true);

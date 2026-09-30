@@ -17,18 +17,20 @@ export function doctor({ projectDir, probe = false, log = console.log }) {
   let cfg = null;
   try { cfg = loadConfig(p.config); add(true, 'конфигурация валидна'); } catch (e) { add(false, 'конфигурация валидна', e.message); }
   const node = ver('node', ['-v']); add(node, `node ${node || ''}`);
-  const claude = ver('claude'); add(claude, `claude ${claude || ''}`, 'установите Claude Code CLI');
+  // Проверяем тот claude и того лида, с которыми пойдёт прогон (run.claude_bin, run.lead_agent), а не значения по умолчанию.
+  const bin = cfg?.run.claude_bin || 'claude'; const agent = cfg?.run.lead_agent || 'mcfly:lead';
+  const claude = ver(bin); add(claude, `claude ${claude || ''}`, 'установите Claude Code CLI');
   if (claude) {
-    const r = spawnSync('claude', ['auth', 'status'], { env: cleanEnv(process.env), encoding: 'utf8' });
+    const r = spawnSync(bin, ['auth', 'status'], { env: cleanEnv(process.env), encoding: 'utf8' });
     let loggedIn = false; try { loggedIn = !!JSON.parse(r.stdout || '{}').loggedIn; } catch {}
     add(loggedIn, 'claude CLI авторизован для прогонов', 'войдите: claude (затем /login) или claude setup-token → CLAUDE_CODE_OAUTH_TOKEN в mcfly/.env');
     const tok = process.env.CLAUDE_CODE_OAUTH_TOKEN || '';
     add(true, `· CLAUDE_CODE_OAUTH_TOKEN: ${tok ? `задан, ${tok.length} символов, префикс ${tok.slice(0, 11)}…` : 'не задан (используется вход CLI из связки ключей)'}`);
     add(true, `· ANTHROPIC_BASE_URL в окружении: ${process.env.ANTHROPIC_BASE_URL ? 'есть (прогон его уберёт)' : 'нет'}; вложенная сессия Claude: ${process.env.CLAUDECODE === '1' ? 'да' : 'нет'}`);
     if (probe) {
-      const pr = spawnSync('claude', ['-p', '--output-format', 'json', '--plugin-dir', MCFLY_ROOT, '--agent', 'mcfly:lead', 'Проверка. Ответь одним словом: ок'], { env: cleanEnv(process.env), encoding: 'utf8', timeout: 180_000 });
+      const pr = spawnSync(bin, ['-p', '--output-format', 'json', '--plugin-dir', MCFLY_ROOT, '--agent', agent, 'Проверка. Ответь одним словом: ок'], { env: cleanEnv(process.env), encoding: 'utf8', timeout: 180_000 });
       let res = null; try { res = JSON.parse(String(pr.stdout || '').trim().split('\n').pop() || '{}'); } catch {}
-      add(pr.status === 0 && res && !res.is_error, `пробный запуск claude -p с агентом mcfly:lead${res?.result ? ': ' + String(res.result).slice(0, 60).replace(/\n/g, ' ') : ''}`, String(res?.result || pr.stderr || '').slice(0, 200).replace(/\n/g, ' ') + ' — при 401 повторите вход (claude /login или claude setup-token)');
+      add(pr.status === 0 && res && !res.is_error, `пробный запуск claude -p с агентом ${agent}${res?.result ? ': ' + String(res.result).slice(0, 60).replace(/\n/g, ' ') : ''}`, String(res?.result || pr.stderr || '').slice(0, 200).replace(/\n/g, ' ') + ' — при 401 повторите вход (claude /login или claude setup-token)');
     }
   }
   const openspec = ver('openspec'); add(openspec, `openspec ${openspec || ''}`, 'npm install -g @fission-ai/openspec@latest');

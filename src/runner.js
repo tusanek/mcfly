@@ -16,9 +16,11 @@ import { pullAnswers } from './pull.js';
 import { dirtyFiles, teamWorktrees, branchProgress } from './git.js';
 import { ensureDir, writeJson, appendText, readJson, runId as makeRunId, fmtLocal } from './util.js';
 
-export function acquireLock(p) {
+/** Лок прогона. Брошенным считается лок без живого процесса или старше maxAgeMs: после сбоя питания его pid может достаться другому процессу. */
+export function acquireLock(p, { maxAgeMs = Infinity } = {}) {
   const existing = readJson(p.lock, null);
-  if (existing?.pid) { try { process.kill(existing.pid, 0); return false; } catch { /* процесса нет — лок устарел */ } }
+  const fresh = Date.now() - new Date(existing?.at || 0).getTime() < maxAgeMs;
+  if (existing?.pid && fresh) { try { process.kill(existing.pid, 0); return false; } catch { /* процесса нет — лок устарел */ } }
   writeJson(p.lock, { pid: process.pid, at: new Date().toISOString() });
   return true;
 }
@@ -52,21 +54,22 @@ export function recordRun(p, record) {
   appendText(p.progress, `- ${fmtLocal(new Date(record.started_at))} прогон ${record.id} (${record.mode}${record.slot ? ', слот ' + record.slot : ''}): ${record.status}${runStats(record)}${record.note ? ' — ' + record.note : ''}\n`);
 }
 
-/** Служебные файлы состояния команды, которые runner коммитит сам после прогона. */
-const STATE_FILES = ['mcfly/progress.md', 'mcfly/metrics.jsonl', 'mcfly/questions.yaml', 'mcfly/answers.md'];
-const RUN_FILES = ['result.json', 'summary.md', 'prompt.md', 'validate.json', 'events.log'];
+/** Служебные файлы команды, которые runner коммитит сам после прогона: журнал, метрики, вопросы, ответы и каталоги прогонов (stdout.log в .gitignore). */
+const STATE_PATHS = ['mcfly/progress.md', 'mcfly/metrics.jsonl', 'mcfly/questions.yaml', 'mcfly/answers.md', 'mcfly/runs'];
 
-/** Коммитит служебные файлы прогона (журнал, метрики, каталог прогона), чтобы рабочее дерево оставалось чистым для следующего прогона. */
+/**
+ * Коммитит служебные файлы прогона, чтобы рабочее дерево оставалось чистым для следующего прогона.
+ * Только эти пути (commit -- <пути>): работа агентов, оставшаяся в индексе после обрыва, в коммит прогона не попадает.
+ */
 export function commitRunState(projectDir, id, log = console.log) {
   const inRepo = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: projectDir, encoding: 'utf8' });
   if (inRepo.status !== 0) return false;
-  const candidates = [...STATE_FILES, ...RUN_FILES.map((f) => `mcfly/runs/${id}/${f}`)];
-  const existing = candidates.filter((f) => fs.existsSync(path.join(projectDir, f)));
+  const existing = STATE_PATHS.filter((f) => fs.existsSync(path.join(projectDir, f)));
   if (!existing.length) return false;
   spawnSync('git', ['add', '--', ...existing], { cwd: projectDir, encoding: 'utf8' });
-  const staged = spawnSync('git', ['diff', '--cached', '--quiet'], { cwd: projectDir });
+  const staged = spawnSync('git', ['diff', '--cached', '--quiet', '--', ...existing], { cwd: projectDir });
   if (staged.status === 0) return false;
-  const r = spawnSync('git', ['commit', '-q', '-m', `chore(mcfly): результат прогона ${id}`], { cwd: projectDir, encoding: 'utf8' });
+  const r = spawnSync('git', ['commit', '-q', '-m', `chore(mcfly): результат прогона ${id}`, '--', ...existing], { cwd: projectDir, encoding: 'utf8' });
   if (r.status !== 0) log(`Не удалось закоммитить файлы прогона: ${String(r.stderr || r.stdout).trim().slice(0, 200)}`);
   return r.status === 0;
 }
@@ -117,7 +120,12 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
       return { status: 'missed', id };
     }
   }
-  if (!acquireLock(p)) { log('Другой прогон уже идёт (mcfly/.lock).'); return { status: 'locked', id }; }
+  // Лок старше лимита прогона с запасом — брошенный: runner убивает claude по таймауту, живой прогон столько не держит лок.
+  if (!acquireLock(p, { maxAgeMs: (cfg.run.max_minutes + 30) * 60_000 })) {
+    // Запись без коммита: коммитит идущий прогон. В сводке слот будет «не запущен (шёл другой прогон)», а не «Mac спал».
+    recordRun(p, { id, mode, slot, started_at: now.toISOString(), ended_at: now.toISOString(), status: 'locked', note: 'шёл другой прогон (mcfly/.lock)' });
+    log('Другой прогон уже идёт (mcfly/.lock).'); return { status: 'locked', id };
+  }
   try {
     if (!dryRun) {
       try { await pullAnswers({ projectDir, cfg, p, log, now }); } catch (e) { log(`Telegram недоступен: ${e.message}`); }
@@ -156,7 +164,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const validate = runOpenspecValidate(projectDir);
     fs.writeFileSync(path.join(runDir, 'validate.json'), JSON.stringify(validate, null, 2));
     // Служебные файлы (журнал, метрики, каталог прогона) runner коммитит сам — это не забытая работа.
-    const dirty = dirtyFiles(projectDir, { exclude: [...STATE_FILES, `mcfly/runs/${id}`] }).length;
+    const dirty = dirtyFiles(projectDir, { exclude: STATE_PATHS }).length;
     const unfinished = unfinishedWork(projectDir);
     const record = {
       id, mode, slot, started_at: started.toISOString(), ended_at: new Date().toISOString(), status: parsed.status, duration_ms: result.durationMs, exit_code: result.exitCode,

@@ -18,8 +18,10 @@ export function runProcess({ bin, args, cwd, env, timeoutMs, onStdout, onStderr 
     let stdout = '', stderr = '', timedOut = false;
     const child = spawn(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGTERM'); setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 30_000).unref(); }, timeoutMs);
-    child.stdout.on('data', (d) => { const s = d.toString(); stdout += s; onStdout?.(s); });
-    child.stderr.on('data', (d) => { const s = d.toString(); stderr += s; onStderr?.(s); });
+    // Декодер потока склеивает многобайтовые символы, разрезанные границей куска (кириллица в выводе claude).
+    child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (s) => { stdout += s; onStdout?.(s); });
+    child.stderr.on('data', (s) => { stderr += s; onStderr?.(s); });
     const done = (exitCode, extra = '') => { clearTimeout(timer); resolve({ exitCode, stdout, stderr: stderr + extra, timedOut, durationMs: Date.now() - started, pid: child.pid }); };
     child.on('error', (err) => done(-1, String(err)));
     child.on('close', (code) => done(code));
