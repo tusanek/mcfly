@@ -4,7 +4,7 @@ import YAML from 'yaml';
 import { paths, loadState, saveState } from './state.js';
 import { loadConfig, autoDefault, isCategory } from './config.js';
 import { loadEnv } from './env.js';
-import { run } from './runner.js';
+import { run, currentRun } from './runner.js';
 import { composeSummary, sendSummary } from './summary.js';
 import { pullAnswers } from './pull.js';
 import { buildContext, isMcflyProject } from './context.js';
@@ -17,7 +17,7 @@ import * as schedule from './schedule.js';
 import { init } from './init.js';
 import { doctor } from './doctor.js';
 import { MCFLY_ROOT } from './prompt.js';
-import { exists, fmtShort, readText, writeText } from './util.js';
+import { exists, fmtShort, readText, writeText, pad2 } from './util.js';
 
 const HELP = `mcfly — комплект ИИ-команды разработки на Claude Code
 
@@ -63,8 +63,10 @@ export async function main(argv) {
     case 'answers': { await pullAnswers({ projectDir, cfg, p, log, now }); return 0; }
     case 'status': {
       const changes = listChanges(p.openspecChanges); const q = openQuestions(loadQuestions(p)); const agg = aggregate(readMetrics(p));
+      const cur = currentRun(p);
+      log(cur ? `Идёт прогон ${cur.id || '?'} с ${pad2(cur.since.getHours())}:${pad2(cur.since.getMinutes())}${cur.lastEvent ? `; последнее: ${cur.lastEvent}` : ''}` : 'Прогон сейчас не идёт.');
       log(`Проект ${cfg.project}. Изменений: ${changes.length}, ожидают одобрения: ${pendingApprovals(changes).length}, открытых вопросов: ${q.length}.`);
-      log(`Прогонов: ${agg.runs} (ок ${agg.ok}, пропущено ${agg.missed}, ошибок ${agg.error}, по времени ${agg.timeout}, квота ${agg.quota}), ~$${agg.cost_usd}. События: ${formatEvents(agg.events)}.`);
+      log(`Прогонов: ${agg.runs} (ок ${agg.ok}, пропущено ${agg.missed}, ошибок ${agg.error}, по времени ${agg.timeout}, квота ${agg.quota}${agg.network ? `, нет сети ${agg.network}` : ''}), ~$${agg.cost_usd}. События: ${formatEvents(agg.events)}.`);
       for (const c of changes) {
         const onBranch = branchProgress(projectDir, c.name);
         log(`- ${c.name}: одобрение=${c.mcfly.approval || 'не запрошено'}, задач ${c.tasksDone}/${c.tasksDone + c.tasksOpen}${onBranch ? ` (на ветке change/${c.name}: ${onBranch.done}/${onBranch.done + onBranch.open})` : ''}`);

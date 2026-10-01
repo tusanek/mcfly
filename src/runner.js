@@ -15,8 +15,9 @@ import { listChanges, expireApprovals } from './approvals.js';
 import { pullAnswers } from './pull.js';
 import { createTelegram } from './telegram.js';
 import { ensureVpn } from './vpn.js';
+import { STATUS_RU } from './summary.js';
 import { dirtyFiles, teamWorktrees, branchProgress, changedTrackedFiles } from './git.js';
-import { ensureDir, writeJson, appendText, readJson, runId as makeRunId, fmtLocal } from './util.js';
+import { ensureDir, writeJson, appendText, readJson, readText, runId as makeRunId, fmtLocal, fmtDuration, pad2 } from './util.js';
 
 /** Команда процесса по pid (ps) или null, если узнать не удалось. */
 function processCommand(pid) {
@@ -34,11 +35,20 @@ function lockHeld({ pid, at }, maxAgeMs) {
   if (command !== null) return /\bmcfly\b.*\brun\b/.test(command);
   return Date.now() - new Date(at || 0).getTime() < maxAgeMs;
 }
-export function acquireLock(p, { maxAgeMs = Infinity } = {}) {
+export function acquireLock(p, { maxAgeMs = Infinity, id = null } = {}) {
   const existing = readJson(p.lock, null);
   if (existing?.pid && lockHeld(existing, maxAgeMs)) return false;
-  writeJson(p.lock, { pid: process.pid, at: new Date().toISOString() });
+  writeJson(p.lock, { pid: process.pid, at: new Date().toISOString(), ...(id ? { id } : {}) });
   return true;
+}
+/** Идущий прогон: id (из лока, у старых локов — самый новый каталог runs), время старта и последняя строка events.log; null — прогона нет. */
+export function currentRun(p) {
+  const lock = readJson(p.lock, null);
+  if (!lock?.pid || !lockHeld(lock, Infinity)) return null;
+  let id = lock.id;
+  if (!id) { try { id = fs.readdirSync(p.runs).filter((d) => /^\d{8}-\d{4}$/.test(d)).sort().at(-1) || null; } catch { id = null; } }
+  const lastEvent = id ? readText(path.join(p.runs, id, 'events.log'), '').trim().split('\n').filter(Boolean).at(-1) || '' : '';
+  return { id, since: new Date(lock.at), lastEvent };
 }
 /** Снимает только свой лок: прогон, наткнувшийся на чужой, лок идущего прогона не трогает. */
 export function releaseLock(p) { if (readJson(p.lock, null)?.pid === process.pid) { try { fs.unlinkSync(p.lock); } catch {} } }
@@ -138,6 +148,22 @@ export function telegramNotifier(cfg) {
   };
 }
 
+const FINISH_ICON = { ok: '✅', quota: '⏸', timeout: '⏱' };
+/** Прогресс одобренных изменений: «add-x 1/2» — по ветке change/<имя>, если она есть, иначе по main. */
+function approvedProgress(projectDir, p) {
+  return listChanges(p.openspecChanges).filter((c) => c.mcfly.approval === 'approved').map((c) => {
+    const b = branchProgress(projectDir, c.name) || { done: c.tasksDone, open: c.tasksOpen };
+    return `${c.name} ${b.done}/${b.done + b.open}`;
+  }).join(', ');
+}
+/** Сообщение в Telegram по окончании прогона: тревога при network и error, иначе короткий итог. */
+export function finishText(cfg, record, progress = '') {
+  if (['network', 'error'].includes(record.status)) return alertText(cfg, record);
+  const start = new Date(record.started_at);
+  const when = record.slot || `${pad2(start.getHours())}:${pad2(start.getMinutes())}`;
+  return `${FINISH_ICON[record.status] || 'ℹ️'} mcfly ${cfg.project}: прогон ${when} завершён: ${STATUS_RU[record.status] || record.status}${runStats(record)}, ${fmtDuration(record.duration_ms || 0)}.${progress ? ` ${progress}.` : ''}`;
+}
+
 /** Текст тревоги о прогоне, который не выполнил работу и требует внимания человека. */
 export function alertText(cfg, record) {
   const when = record.slot ? `прогон ${record.slot}` : `прогон ${record.id}`;
@@ -167,7 +193,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     }
   }
   // Лок старше лимита прогона с запасом — брошенный: runner убивает claude по таймауту, живой прогон столько не держит лок.
-  if (!acquireLock(p, { maxAgeMs: (cfg.run.max_minutes + 30) * 60_000 })) {
+  if (!acquireLock(p, { maxAgeMs: (cfg.run.max_minutes + 30) * 60_000, id })) {
     // Запись без коммита: коммитит идущий прогон. В сводке слот будет «не запущен (шёл другой прогон)», а не «Mac спал».
     if (!dryRun) recordRun(p, { id, mode, slot, started_at: now.toISOString(), ended_at: now.toISOString(), status: 'locked', note: 'шёл другой прогон (mcfly/.lock)' });
     log('Другой прогон уже идёт (mcfly/.lock).'); return { status: 'locked', id };
@@ -241,9 +267,8 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     };
     recordRun(p, record);
     commitRunState(projectDir, id, log);
-    if (['network', 'error'].includes(record.status)) {
-      try { await (notify || telegramNotifier(cfg))(alertText(cfg, record)); } catch (e) { log(`Тревога не отправлена: ${e.message}`); }
-    }
+    // Итог любого прогона — сразу в Telegram: дневной прогон иначе молчит до утренней сводки.
+    try { await (notify || telegramNotifier(cfg))(finishText(cfg, record, approvedProgress(projectDir, p))); } catch (e) { log(`Сообщение в Telegram не отправлено: ${e.message}`); }
     log(`Прогон ${id} завершён: ${record.status} (${fmtLocal(new Date())}).`);
     return { status: record.status, id };
   } finally { releaseLock(p); }

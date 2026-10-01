@@ -62,6 +62,10 @@ test('parseResult читает последний объект потока stre
 test('summarizeEvent даёт краткие строки для инструментов, текста и результата', () => {
   assert.equal(summarizeEvent('{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"mvn -q test"}}]}}'), '→ Bash: mvn -q test');
   assert.equal(summarizeEvent('{"type":"assistant","message":{"content":[{"type":"text","text":"Начинаю  задачу\\n1.1"}]}}'), '💬 Начинаю задачу 1.1');
-  assert.equal(summarizeEvent('{"type":"result","is_error":false,"num_turns":3,"total_cost_usd":1.2}'), '■ результат: ок, ходов 3, ~$1.2');
+  assert.equal(summarizeEvent('{"type":"result","is_error":false,"num_turns":3,"total_cost_usd":1.2}'), '■ результат: ок, ходов 3, ~$1.20');
   assert.equal(summarizeEvent('{"type":"system"}'), null); assert.equal(summarizeEvent('не json'), null);
+});
+
+test('summarizeEvent округляет стоимость до центов', () => {
+  assert.equal(summarizeEvent(JSON.stringify({ type: 'result', is_error: true, num_turns: 33, total_cost_usd: 8.002524000000001 })), '■ результат: ошибка, ходов 33, ~$8.00');
 });

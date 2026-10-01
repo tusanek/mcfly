@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { tmpDir, addChange, git, gitRepo, changeBranch } from './helpers.js';
@@ -67,4 +67,17 @@ test('approval set во время прогона (есть mcfly/.lock) не к
   assert.equal(r.status, 0);
   assert.match(r.stdout, /идёт прогон/);
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'проект');
+});
+
+test('status говорит, идёт ли прогон', () => {
+  const dir = tmpDir(); gitRepo(dir);
+  cli(['init', '--name', 'demo'], dir);
+  assert.match(cli(['status'], dir).stdout, /^Прогон сейчас не идёт\./m);
+  const runDir = path.join(dir, 'mcfly', 'runs', '20261001-0926'); fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'events.log'), '2026-10-01 09:55 → Bash: mvn test\n');
+  // Лок живой, только если его держит процесс «mcfly … run».
+  const runner = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)', 'mcfly', 'run'], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(dir, 'mcfly', '.lock'), JSON.stringify({ pid: runner.pid, at: new Date(2026, 9, 1, 9, 26).toISOString(), id: '20261001-0926' }));
+  let out; try { out = cli(['status'], dir).stdout; } finally { runner.kill(); }
+  assert.match(out, /^Идёт прогон 20261001-0926 с 09:26; последнее: 2026-10-01 09:55 → Bash: mvn test/m);
 });
