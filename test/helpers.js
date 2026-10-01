@@ -46,6 +46,22 @@ export function fakeClaude(dir, { lines = [], stderr = '', exitCode = 0 } = {}) 
   fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), `project: demo\nrun:\n  claude_bin: ${script}\n  max_minutes: 1\n`);
   return { script, envFile };
 }
+/** Поддельный claude, который на каждой следующей попытке отвечает по-своему: attempts — [{ lines, stderr, exitCode }]. */
+export function fakeClaudeSeq(dir, attempts, { config = '' } = {}) {
+  const bin = tmpDir('fake-claude-seq-');
+  const counter = path.join(bin, 'n'); const script = path.join(bin, 'claude.sh');
+  let body = `#!/bin/sh\nn=$(cat "${counter}" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${counter}"\n`;
+  attempts.forEach((a, i) => {
+    const out = path.join(bin, `out${i + 1}.jsonl`);
+    fs.writeFileSync(out, (a.lines || []).map((l) => JSON.stringify(l)).join('\n') + '\n');
+    const err = a.stderr ? `printf '%s\\n' ${JSON.stringify(a.stderr)} >&2; ` : '';
+    body += `if [ $n -eq ${i + 1} ]; then cat "${out}"; ${err}exit ${a.exitCode ?? 0}; fi\n`;
+  });
+  body += 'exit 0\n';
+  fs.writeFileSync(script, body, { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), `project: demo\nrun:\n  claude_bin: ${script}\n  max_minutes: 120\n${config}`);
+  return { script, calls: () => Number(fs.readFileSync(counter, 'utf8').trim() || 0) };
+}
 export function addChange(dir, name, { tasks = '- [ ] первая\n- [x] нулевая\n', proposal = '# Proposal\n\nЗачем: тест.\n', meta = { schema: 'spec-driven' } } = {}) {
   const cdir = path.join(dir, 'openspec', 'changes', name);
   fs.mkdirSync(cdir, { recursive: true });

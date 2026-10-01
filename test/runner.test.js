@@ -7,7 +7,7 @@ import { paths } from '../src/state.js';
 import { readMetrics } from '../src/metrics.js';
 import { ensureGitignore, GITIGNORE_ENTRIES } from '../src/init.js';
 import { listChanges, requestApproval } from '../src/approvals.js';
-import { bareProject, fakeClaude, tmpDir, git, gitRepo, addChange } from './helpers.js';
+import { bareProject, fakeClaude, fakeClaudeSeq, tmpDir, git, gitRepo, addChange } from './helpers.js';
 
 const resultEvent = (over = {}) => ({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, total_cost_usd: 0.1, session_id: 's', result: 'готово', ...over });
 const readRecord = (p, id) => JSON.parse(fs.readFileSync(path.join(p.runs, id, 'result.json'), 'utf8'));
@@ -201,4 +201,56 @@ test('writeFallbackSummary пишет авто-сводку, если репор
   const text = fs.readFileSync(path.join(runDir, 'summary.md'), 'utf8');
   assert.match(text, /авто-сводка/); assert.match(text, /работа ночью/); assert.match(text, /Жду разработчика/);
   assert.equal(writeFallbackSummary({ projectDir: dir, runDir, id: 'r2', started, resultText: '' }), false, 'существующий отчёт не перезаписывается');
+});
+
+const noAccess = { lines: [resultEvent({ is_error: true, result: 'Failed to authenticate. API Error: 403 Request not allowed', api_error_status: 403 })], exitCode: 1 };
+test('нет доступа к API: прогон повторяется через паузу и продолжает, когда доступ появился', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  const fake = fakeClaudeSeq(dir, [noAccess, { lines: [resultEvent()] }]);
+  const waits = []; const notes = [];
+  const r = await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async (ms) => { waits.push(ms); }, notify: async (t) => { notes.push(t); } });
+  assert.equal(r.status, 'ok');
+  assert.equal(fake.calls(), 2);
+  assert.deepEqual(waits, [10 * 60_000]);
+  const rec = readRecord(p, r.id);
+  assert.equal(rec.attempts, 2);
+  assert.match(fs.readFileSync(path.join(p.runs, r.id, 'events.log'), 'utf8'), /↻ нет доступа к API.*повтор через 10 мин \(попытка 2 из 7\)/);
+  assert.deepEqual(notes, [], 'доступ появился — тревога не нужна');
+});
+test('нет доступа к API весь час: статус network и сразу сообщение в Telegram', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  const fake = fakeClaudeSeq(dir, Array(7).fill(noAccess), { config: '  network_retries: 2\n  network_retry_minutes: 5\n' });
+  const waits = []; const notes = [];
+  const r = await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async (ms) => { waits.push(ms); }, notify: async (t) => { notes.push(t); } });
+  assert.equal(r.status, 'network');
+  assert.equal(fake.calls(), 3);
+  assert.deepEqual(waits, [5 * 60_000, 5 * 60_000]);
+  const rec = readRecord(p, r.id);
+  assert.equal(rec.attempts, 3);
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /demo/); assert.match(notes[0], /нет доступа к API/); assert.match(notes[0], /VPN/); assert.match(notes[0], /3 попыт/);
+});
+test('ошибка прогона (не сеть) не повторяется, но сразу сообщается в Telegram', async () => {
+  const dir = bareProject();
+  const fake = fakeClaudeSeq(dir, [{ lines: [resultEvent({ is_error: true, result: 'Failed to authenticate. API Error: 401 Invalid bearer token' })], exitCode: 1 }]);
+  const waits = []; const notes = [];
+  const r = await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async (ms) => { waits.push(ms); }, notify: async (t) => { notes.push(t); } });
+  assert.equal(r.status, 'error'); assert.equal(fake.calls(), 1); assert.deepEqual(waits, []);
+  assert.equal(notes.length, 1); assert.match(notes[0], /401/);
+});
+test('успешный прогон и квота не шлют тревогу', async () => {
+  for (const attempt of [{ lines: [resultEvent()] }, { lines: [resultEvent({ is_error: true, result: "You've hit your weekly limit" })], exitCode: 1 }]) {
+    const dir = bareProject(); fakeClaudeSeq(dir, [attempt]);
+    const notes = [];
+    await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async () => {}, notify: async (t) => { notes.push(t); } });
+    assert.deepEqual(notes, []);
+  }
+});
+test('сбой отправки тревоги не роняет прогон', async () => {
+  const dir = bareProject();
+  fakeClaudeSeq(dir, [{ lines: [], stderr: 'boom', exitCode: 1 }]);
+  const logs = [];
+  const r = await run({ projectDir: dir, mode: 'day', log: (s) => logs.push(s), sleep: async () => {}, notify: async () => { throw new Error('Telegram недоступен'); } });
+  assert.equal(r.status, 'error');
+  assert.ok(logs.some((s) => /Telegram недоступен/.test(s)));
 });

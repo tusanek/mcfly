@@ -79,3 +79,11 @@ test('sendSummary через Telegram обновляет last_summary_at', async
   const r = await sendSummary(p, { ...cfg, telegram: { chat_id: '1', token_env: 'TOK' } }, { telegram: tg, now: new Date(2026, 8, 29, 8, 0), log: () => {} });
   assert.equal(r.sent, true); assert.equal(sent.length, 1); assert.ok(loadState(p).last_summary_at);
 });
+
+test('composeSummary: прогон без доступа к API назван по-человечески', () => {
+  const dir = bareProject(); const p = paths(dir);
+  appendMetric(p, { type: 'run', id: '20261001-0200', slot: '02:00', mode: 'night', started_at: new Date(2026, 9, 1, 2, 0).toISOString(), status: 'network', duration_ms: 3000, turns: 1, note: '403 Request not allowed' });
+  const text = composeSummary(p, cfg, { now: new Date(2026, 9, 1, 10, 30), since: new Date(2026, 8, 30, 10, 30) });
+  assert.match(text, /02:00 — не выполнен: нет доступа к API \(VPN\?\)/);
+  assert.match(text, /прогонов 1 \(нет сети 1\)/);
+});

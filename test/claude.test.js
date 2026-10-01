@@ -15,6 +15,13 @@ test('parseResult: ok / error / quota / timeout', () => {
   assert.equal(parseResult({ exitCode: 1, stdout: '{"result":"You\'ve hit your session limit · resets 10pm (Europe/Moscow)","is_error":true}', stderr: '', timedOut: false }).status, 'quota');
   assert.equal(parseResult({ exitCode: null, stdout: '', stderr: '', timedOut: true }).status, 'timeout');
 });
+test('parseResult: нет доступа к API (403 Request not allowed без VPN, сетевые ошибки) — статус network', () => {
+  const region = parseResult({ exitCode: 1, stdout: '{"type":"result","is_error":true,"result":"Failed to authenticate. API Error: 403 Request not allowed","api_error_status":403}', stderr: '', timedOut: false });
+  assert.equal(region.status, 'network');
+  assert.equal(parseResult({ exitCode: 1, stdout: '', stderr: 'Error: getaddrinfo ENOTFOUND api.anthropic.com', timedOut: false }).status, 'network');
+  assert.equal(parseResult({ exitCode: 1, stdout: '', stderr: 'connect ECONNREFUSED 1.2.3.4:443', timedOut: false }).status, 'network');
+  assert.equal(parseResult({ exitCode: 1, stdout: '{"is_error":true,"result":"Failed to authenticate. API Error: 401 Invalid bearer token"}', stderr: '', timedOut: false }).status, 'error', 'протухший токен — не сеть');
+});
 test('summarizeEvent маскирует токены в журнале событий', () => {
   const command = 'curl -H "k: sk-ant-oat01-AbC_d-123" https://api.telegram.org/bot123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw/getMe';
   const s = summarizeEvent(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] } }));

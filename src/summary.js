@@ -9,9 +9,9 @@ import { createTelegram } from './telegram.js';
 import { branchProgress } from './git.js';
 import { autoDefault } from './config.js';
 
-const STATUS_RU = { ok: 'ок', missed: 'пропущен', error: 'ошибка', timeout: 'остановлен по времени', quota: 'остановлен: лимит квоты', locked: 'не запущен (шёл другой прогон)' };
+const STATUS_RU = { ok: 'ок', missed: 'пропущен', error: 'ошибка', timeout: 'остановлен по времени', quota: 'остановлен: лимит квоты', network: 'не выполнен: нет доступа к API (VPN?)', locked: 'не запущен (шёл другой прогон)' };
 
-const STATUS_COUNT_RU = { ok: 'ок', quota: 'квота', timeout: 'по времени', error: 'ошибок', missed: 'пропущено', locked: 'занято' };
+const STATUS_COUNT_RU = { ok: 'ок', quota: 'квота', network: 'нет сети', timeout: 'по времени', error: 'ошибок', missed: 'пропущено', locked: 'занято' };
 /** «прогонов 3 (квота 2, ок 1)» — частые статусы первыми. */
 function runsByStatus(agg) {
   const parts = Object.keys(STATUS_COUNT_RU).filter((s) => agg[s]).sort((a, b) => agg[b] - agg[a]).map((s) => `${STATUS_COUNT_RU[s]} ${agg[s]}`);
