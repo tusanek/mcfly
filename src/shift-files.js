@@ -16,7 +16,7 @@ export function listShifts(p) {
   try { files = fs.readdirSync(p.shifts); } catch { return []; }
   return files.map((file) => ({ file, m: NAME.exec(file) })).filter((x) => x.m)
     .map(({ file, m }) => ({ file, path: path.join(p.shifts, file), kind: m[2], at: m[1], n: Number(m[3] || 1) }))
-    .sort((a, b) => (a.at === b.at ? a.n - b.n : a.at < b.at ? -1 : 1))
+    .sort((a, b) => (a.at !== b.at ? (a.at < b.at ? -1 : 1) : a.kind !== b.kind ? (a.kind === 'day' ? -1 : 1) : a.n - b.n)) // одна минута: день раньше ночи
     .map(({ n, ...s }) => s);
 }
 export function latestShift(p, kind) { return listShifts(p).filter((s) => s.kind === kind).at(-1) || null; }
@@ -29,7 +29,8 @@ export function activeDayHandoff(p) {
 }
 export function validateHandoff(text) {
   const lines = String(text || '').split('\n').map((l) => l.trim());
-  const has = (h) => lines.some((l) => l === h || l.startsWith(`${h} `) || (h.endsWith(':') && l.startsWith(h)));
+  // Заголовок раздела — ровно как в формате: «## Порядок на ночь» лид и сводка не узнают, значит и проверка его не принимает.
+  const has = (h) => lines.some((l) => l === h || (h.endsWith(':') && l.startsWith(h)));
   return REQUIRED.filter((h) => (Array.isArray(h) ? !h.some(has) : !has(h))).map((h) => (Array.isArray(h) ? h.join(' или ') : h));
 }
 /** Имена изменений: заголовки «### <имя> — …» и строки «1. <имя>» в разделе порядка. */
@@ -77,6 +78,8 @@ export function renderAutoHandoff(p, kind, now, { runs = [] } = {}) {
   if (!active.length) L.push('- одобренных изменений с открытыми задачами нет');
   L.push(kind === 'day' ? '## Порядок' : '## Предложение на день');
   L.push(...(active.length ? active.map((c, i) => `${i + 1}. ${c.name}`) : ['- нет']));
+  const rest = shifts.filter((s) => !active.some((c) => c.name === s.change) && (s.ahead > 0 || s.dirty > 0));
   L.push('## Нужны решения человека', active.length ? '- нет' : '- одобрить следующее изменение', '## Заметки', '- передача собрана автоматически: смену не сдавали');
+  for (const s of rest) L.push(`- Не трогать: ${s.branch} — не сдано днём (коммитов ${s.ahead}${s.dirty ? `, незакоммиченных файлов ${s.dirty}` : ''}), изменение вне работы ночи`);
   return L.join('\n') + '\n';
 }

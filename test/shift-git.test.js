@@ -107,7 +107,7 @@ test('shift write: файл в mcfly/shifts закоммичен один, ст�
   assert.deepEqual(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), ['mcfly/progress.md', 'mcfly/shifts/20261001-1830-day.md']);
   assert.match(git(dir, 'status', '--porcelain'), /^A {2}other\.txt$/m, 'чужой индекс не тронут');
   assert.match(fs.readFileSync(path.join(dir, 'mcfly', 'progress.md'), 'utf8'), /2026-10-01 18:30 смена сдана: llm-adaptation → page-map-seed/);
-  assert.deepEqual(notes, ['🌙 Смена сдана 18:30: ночью llm-adaptation → page-map-seed; решений не ждёт']);
+  assert.deepEqual(notes, ['🌙 Смена сдана 18:30: ночью llm-adaptation; решений не ждёт; не одобрено — ночь не тронет: page-map-seed']);
 });
 test('shift write: без обязательных заголовков не пишет и называет недостающее', async () => {
   const { dir } = projectWithSession();
@@ -125,4 +125,42 @@ test('shift start: без имени и с неизвестным изменен
   assert.match(shiftStart({ sessionDir: sess, change: undefined, now: new Date() }).error, /укажите изменение/);
   assert.match(shiftStart({ sessionDir: sess, change: 'dmm', now: new Date() }).error, /изменение dmm не найдено/);
   assert.equal(git(dir, 'branch', '--list', 'change/dmm', 'change/undefined', 'shift/*'), '');
+});
+
+test('0.5.1: shift start из worktree команды (change/*, worktree-agent-*) — отказ', () => {
+  const { dir } = projectWithSession();
+  const team = path.join(tmpDir(), 'team'); git(dir, 'worktree', 'add', '-q', team, 'change/ddm');
+  assert.match(shiftStart({ sessionDir: team, change: 'ddm', now: new Date() }).error, /worktree команды/);
+});
+test('0.5.1: shift merge — ветки изменения нет: понятное сообщение, не «конфликт»', () => {
+  const { dir, sess } = projectWithSession();
+  shiftStart({ sessionDir: sess, change: 'ddm', now: new Date(2026, 9, 1, 9, 30) });
+  commit(sess, 'a.txt', 'a');
+  git(dir, 'branch', '-D', 'change/ddm');
+  const r = shiftMerge({ sessionDir: sess });
+  assert.equal(r.ok, false); assert.match(r.error, /ветки change\/ddm нет/); assert.doesNotMatch(r.error, /конфликт/);
+});
+test('0.5.1: shift merge во время прогона — отказ', () => {
+  const { dir, sess } = projectWithSession();
+  shiftStart({ sessionDir: sess, change: 'ddm', now: new Date(2026, 9, 1, 9, 30) });
+  fs.writeFileSync(path.join(dir, 'mcfly', '.lock'), JSON.stringify({ pid: process.pid, at: new Date().toISOString(), id: 'r' }));
+  assert.match(shiftMerge({ sessionDir: sess }).error, /идёт прогон/);
+});
+test('0.5.1: строка Telegram не обещает неодобренное', async () => {
+  const { dir } = projectWithSession();
+  addChange(dir, 'llm-adaptation'); const [c] = listChanges(paths(dir).openspecChanges); requestApproval(c); setApproval(c, 'approved', 'human');
+  git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'изменение');
+  const notes = [];
+  await shiftWrite({ projectDir: dir, text: HANDOFF, now: new Date(2026, 9, 1, 18, 30), notify: async (t) => notes.push(t) });
+  assert.deepEqual(notes, ['🌙 Смена сдана 18:30: ночью llm-adaptation; решений не ждёт; не одобрено — ночь не тронет: page-map-seed']);
+});
+test('0.5.1: коммит передачи не удался — файл и строка журнала убраны', async () => {
+  const { dir } = projectWithSession();
+  fs.writeFileSync(path.join(dir, '.git', 'index.lock'), ''); // git commit упадёт
+  const before = fs.readFileSync(path.join(dir, 'mcfly', 'progress.md'), 'utf8');
+  const r = await shiftWrite({ projectDir: dir, text: HANDOFF, now: new Date(2026, 9, 1, 18, 30), notify: async () => {} });
+  fs.unlinkSync(path.join(dir, '.git', 'index.lock'));
+  assert.equal(r.ok, false); assert.match(r.error, /не закоммичен/);
+  assert.equal(fs.existsSync(path.join(dir, 'mcfly', 'shifts', '20261001-1830-day.md')), false);
+  assert.equal(fs.readFileSync(path.join(dir, 'mcfly', 'progress.md'), 'utf8'), before);
 });
