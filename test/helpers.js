@@ -70,3 +70,19 @@ export function addChange(dir, name, { tasks = '- [ ] первая\n- [x] нул
   fs.writeFileSync(path.join(cdir, '.openspec.yaml'), YAML.stringify(meta));
   return cdir;
 }
+
+/** Поддельный scutil: сервис service в состоянии state; start переводит в Connected (stuck — не переводит). Вызовы — в calls.log. */
+export function fakeScutil({ service = 'Test VPN', state = 'Connected', stuck = false } = {}) {
+  const bin = tmpDir('fake-scutil-');
+  const stateFile = path.join(bin, 'state'); const calls = path.join(bin, 'calls.log'); const script = path.join(bin, 'scutil.sh');
+  fs.writeFileSync(stateFile, state + '\n');
+  fs.writeFileSync(script, `#!/bin/sh
+echo "$2 $3" >> "${calls}"
+[ "$3" = ${JSON.stringify(service)} ] || { echo "No service"; exit 1; }
+case "$2" in
+  status) cat "${stateFile}" ;;
+  start) ${stuck ? 'true' : `echo Connected > "${stateFile}"`} ;;
+esac
+`, { mode: 0o755 });
+  return { script, service, calls: () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n') : []), setState: (st) => fs.writeFileSync(stateFile, st + '\n') };
+}

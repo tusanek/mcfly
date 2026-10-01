@@ -10,6 +10,7 @@ run:
   max_minutes: 180              # жёсткий лимит одного прогона
   network_retries: 6            # повторы при отсутствии доступа к API (упал VPN или сеть)
   network_retry_minutes: 10     # пауза между повторами
+  vpn_service: ""               # macOS: имя VPN из scutil --nc list — runner поднимет его перед прогоном и перед повтором
   permission_mode: auto         # auto | dontAsk | acceptEdits | bypassPermissions | default | plan
   model: ""                     # пусто = модель Claude Code по умолчанию
   max_budget_usd: 0             # 0 = без ограничения (оценка стоимости; на подписке не списывается)

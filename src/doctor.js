@@ -6,6 +6,7 @@ import { loadEnv } from './env.js';
 import { exists } from './util.js';
 import { MCFLY_ROOT } from './prompt.js';
 import { cleanEnv } from './claude.js';
+import { vpnStatus } from './vpn.js';
 
 function ver(bin, args = ['--version']) { const r = spawnSync(bin, args, { encoding: 'utf8' }); return r.status === 0 ? String(r.stdout || r.stderr).trim().split('\n')[0] : null; }
 
@@ -40,6 +41,7 @@ export function doctor({ projectDir, probe = false, log = console.log }) {
   if (cfg) {
     add(process.env[cfg.telegram.token_env], `токен Telegram (${cfg.telegram.token_env})`, 'задайте в mcfly/.env');
     add(cfg.telegram.chat_id, 'Telegram chat_id', 'выполните mcfly telegram pair');
+    if (cfg.run.vpn_service) { const st = vpnStatus(cfg.run.vpn_service, { scutil: cfg.run.scutil_bin }); add(st, `VPN «${cfg.run.vpn_service}»: ${st || 'не найден'}`, 'имя сервиса — как в scutil --nc list'); }
   }
   add(exists(path.join(projectDir, 'openspec', 'config.yaml')), 'openspec/ инициализирован', 'openspec init --tools claude');
   add(exists(path.join(projectDir, '.git')), 'git-репозиторий проекта', 'git init');
