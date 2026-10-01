@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import YAML from 'yaml';
@@ -34,6 +35,8 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   approval request <изменение> [--category <c>] [--priority <n>]
   approval set <изменение> approved|rejected [--note <t>] [--priority <n>]   (меньше = раньше; по умолчанию 100)
   approval list
+  shift start <изменение> | shift merge           дневная работа в ветке shift/<изменение>-… и её слияние в change/<изменение>
+  shift write [--file <путь>] | shift auto [--kind day|night]   записать передачу смены / показать авто-передачу
   metric add --key <k> [--value <n>] [--change <имя>] | metric
   telegram pair                                   привязать чат (отправьте боту любое сообщение)
   schedule install|remove|status [--dry-run]      задания launchd: ночные прогоны и сводка
@@ -43,7 +46,7 @@ export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
     project: { type: 'string' }, mode: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
-    change: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, priority: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
+    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, priority: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
   const projectDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
   const p = paths(projectDir);
@@ -52,6 +55,24 @@ export async function main(argv) {
   if (cmd === 'init') { init({ projectDir, name: values.name, withTracker: !!values['with-tracker'], log }); return 0; }
   if (cmd === 'context') { if (!isMcflyProject(p)) return 0; loadEnv(projectDir); log(buildContext(p, loadConfig(p.config))); return 0; }
   if (cmd === 'doctor') { doctor({ projectDir, probe: !!values.probe, log }); return 0; }
+  if (cmd === 'shift') {
+    const { shiftStart, shiftMerge, shiftWrite, mainCheckout } = await import('./shift-git.js');
+    const { renderAutoHandoff } = await import('./shift-files.js');
+    const main = mainCheckout(projectDir); const mp = paths(main);
+    if (!isMcflyProject(mp)) { console.error(`Это не проект mcfly: нет ${mp.config}.`); return 1; }
+    loadEnv(main); const mcfg = loadConfig(mp.config); const at = new Date();
+    const done = (r, text) => { if (!r.ok) { console.error(r.error); return 1; } log(text); for (const w of r.warnings || []) log(`⚠ ${w}`); return 0; };
+    if (sub === 'start') { const r = shiftStart({ sessionDir: projectDir, change: rest[0], now: at }); return done(r, r.ok ? `Ветка дневной работы: ${r.branch}` : ''); }
+    if (sub === 'merge') { const r = shiftMerge({ sessionDir: projectDir }); return done(r, r.message); }
+    if (sub === 'write') {
+      const text = values.file ? readText(values.file, '') : fs.readFileSync(0, 'utf8');
+      const { telegramNotifier } = await import('./runner.js');
+      const r = await shiftWrite({ projectDir: main, text, now: at, notify: telegramNotifier(mcfg) });
+      return done(r, r.ok ? `Передача записана: ${path.relative(main, r.path)}` : '');
+    }
+    if (sub === 'auto') { log(renderAutoHandoff(mp, values.kind === 'night' ? 'night' : 'day', at)); return 0; }
+    console.error('mcfly shift start <изменение> | merge | write [--file] | auto [--kind]'); return 1;
+  }
   if (!isMcflyProject(p)) { console.error(`Это не проект mcfly: нет ${p.config}. Выполните mcfly init.`); return 1; }
   loadEnv(projectDir);
   const cfg = loadConfig(p.config);
