@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import path from 'node:path';
-import { run, acquireLock, releaseLock, commitRunState, recordRun, writeFallbackSummary } from '../src/runner.js';
+import { run, acquireLock, releaseLock, commitRunState, recordRun, writeFallbackSummary, currentRun } from '../src/runner.js';
 import { spawn, spawnSync } from 'node:child_process';
 import { paths } from '../src/state.js';
 import { readMetrics } from '../src/metrics.js';
@@ -215,7 +215,7 @@ test('нет доступа к API: прогон повторяется чере
   const rec = readRecord(p, r.id);
   assert.equal(rec.attempts, 2);
   assert.match(fs.readFileSync(path.join(p.runs, r.id, 'events.log'), 'utf8'), /↻ нет доступа к API.*повтор через 10 мин \(попытка 2 из 7\)/);
-  assert.deepEqual(notes, [], 'доступ появился — тревога не нужна');
+  assert.equal(notes.length, 1); assert.match(notes[0], /^✅/, 'доступ появился — итог без тревоги');
 });
 test('нет доступа к API весь час: статус network и сразу сообщение в Telegram', async () => {
   const dir = bareProject(); const p = paths(dir);
@@ -238,13 +238,21 @@ test('ошибка прогона (не сеть) не повторяется, �
   assert.equal(r.status, 'error'); assert.equal(fake.calls(), 1); assert.deepEqual(waits, []);
   assert.equal(notes.length, 1); assert.match(notes[0], /401/);
 });
-test('успешный прогон и квота не шлют тревогу', async () => {
-  for (const attempt of [{ lines: [resultEvent()] }, { lines: [resultEvent({ is_error: true, result: "You've hit your weekly limit" })], exitCode: 1 }]) {
+test('успешный прогон и квота: одно сообщение о завершении, без тревоги', async () => {
+  for (const [attempt, re] of [[{ lines: [resultEvent()] }, /✅ mcfly demo: прогон \d\d:\d\d завершён: ок, 1 ходов, ~\$0\.10/], [{ lines: [resultEvent({ is_error: true, result: "You've hit your weekly limit" })], exitCode: 1 }, /⏸ mcfly demo: прогон \d\d:\d\d завершён: остановлен: лимит квоты/]]) {
     const dir = bareProject(); fakeClaudeSeq(dir, [attempt]);
     const notes = [];
     await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async () => {}, notify: async (t) => { notes.push(t); } });
-    assert.deepEqual(notes, []);
+    assert.equal(notes.length, 1); assert.match(notes[0], re); assert.doesNotMatch(notes[0], /⚠️/);
   }
+});
+test('сообщение о завершении называет прогресс одобренных изменений по веткам', async () => {
+  const dir = bareProject();
+  addChange(dir, 'add-x', { tasks: '- [x] a\n- [ ] b\n', meta: { schema: 'spec-driven', mcfly: { approval: 'approved' } } });
+  fakeClaudeSeq(dir, [{ lines: [resultEvent()] }]);
+  const notes = [];
+  await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async () => {}, notify: async (t) => { notes.push(t); } });
+  assert.match(notes[0], /add-x 1\/2/);
 });
 test('сбой отправки тревоги не роняет прогон', async () => {
   const dir = bareProject();
@@ -285,4 +293,17 @@ test('нет доступа к API, VPN не поднимается: трево�
   const r = await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async () => {}, notify: async (t) => { notes.push(t); } });
   assert.equal(r.status, 'network');
   assert.equal(notes.length, 1); assert.match(notes[0], /VPN «Test VPN» не подключился/);
+});
+
+test('currentRun: идущий прогон — id из лока и последнее событие; без лока — null', () => {
+  const dir = bareProject(); const p = paths(dir);
+  assert.equal(currentRun(p), null);
+  assert.ok(acquireLock(p, { id: '20261001-0926' }));
+  fs.mkdirSync(path.join(p.runs, '20261001-0926'), { recursive: true });
+  fs.writeFileSync(path.join(p.runs, '20261001-0926', 'events.log'), '2026-10-01 09:55 → Bash: mvn test\n2026-10-01 09:56 ↻ повтор через 10 мин\n');
+  const cur = currentRun(p);
+  assert.equal(cur.id, '20261001-0926');
+  assert.match(cur.lastEvent, /09:56 ↻ повтор/);
+  releaseLock(p);
+  assert.equal(currentRun(p), null);
 });

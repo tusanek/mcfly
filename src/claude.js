@@ -102,6 +102,6 @@ export function summarizeEvent(line) {
     }
     return out.length ? out.join('\n') : null;
   }
-  if (ev.type === 'result') return `■ результат: ${ev.is_error ? 'ошибка' : 'ок'}, ходов ${ev.num_turns ?? '?'}, ~$${ev.total_cost_usd ?? '?'}`;
+  if (ev.type === 'result') return `■ результат: ${ev.is_error ? 'ошибка' : 'ок'}, ходов ${ev.num_turns ?? '?'}, ~$${ev.total_cost_usd == null ? '?' : Number(ev.total_cost_usd).toFixed(2)}`;
   return null;
 }
