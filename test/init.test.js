@@ -20,6 +20,7 @@ test('init создаёт файлы, идемпотентен и не пере�
   // секреты продукта в корневом .env агентам недоступны так же, как mcfly/.env
   for (const rule of ['Read(./.env)', 'Edit(./.env)', 'Write(./.env)']) assert.ok(settings.permissions.deny.includes(rule), rule);
   assert.match(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8'), /mcfly\/\.env/);
+  assert.ok(fs.existsSync(path.join(dir, 'mcfly', 'shifts')), 'init создаёт mcfly/shifts');
 });
 test('upsertSection заменяет блок между маркерами', () => {
   const once = upsertSection('старое', 'A');
