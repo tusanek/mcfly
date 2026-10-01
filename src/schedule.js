@@ -8,7 +8,11 @@ import { ensureDir, writeText, exists, pad2 } from './util.js';
 export function labelFor(project, job) { return `com.mcfly.${project}.${job}`; }
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-export function buildPlist({ label, node, mcflyBin, args, projectDir, hour, minute, logPath, pathEnv, home }) {
+export function buildPlist({ label, node, mcflyBin, args, projectDir, hour, minute, interval, logPath, pathEnv, home }) {
+  const when = interval
+    ? `  <key>StartInterval</key><integer>${interval}</integer>`
+    : `  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>${hour}</integer><key>Minute</key><integer>${minute}</integer></dict>`;
   const arr = [node, mcflyBin, ...args].map((a) => `    <string>${esc(a)}</string>`).join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -26,8 +30,7 @@ ${arr}
     <key>HOME</key><string>${esc(home)}</string>
     <key>LANG</key><string>ru_RU.UTF-8</string>
   </dict>
-  <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>${hour}</integer><key>Minute</key><integer>${minute}</integer></dict>
+${when}
   <key>StandardOutPath</key><string>${esc(logPath)}</string>
   <key>StandardErrorPath</key><string>${esc(logPath)}</string>
 </dict>
@@ -39,6 +42,8 @@ export function planJobs(cfg, { projectDir, node, mcflyBin, logsDir, pathEnv, ho
   const jobs = cfg.schedule.slots.map((slot) => { const m = parseSlot(slot); return { label: labelFor(cfg.project, `run-${slot.replace(':', '')}`), hour: Math.floor(m / 60), minute: m % 60, args: ['run', '--mode', 'night', '--project', projectDir] }; });
   const s = parseSlot(cfg.schedule.summary_at);
   jobs.push({ label: labelFor(cfg.project, 'summary'), hour: Math.floor(s / 60), minute: s % 60, args: ['summary', '--send', '--project', projectDir] });
+  // Опрос ответов и нажатий кнопок из Telegram: иначе ответ на сводку применится только к ночному прогону.
+  if (cfg.schedule.answers_every_minutes > 0) jobs.push({ label: labelFor(cfg.project, 'answers'), interval: cfg.schedule.answers_every_minutes * 60, args: ['answers', '--project', projectDir] });
   return jobs.map((j) => ({ ...j, plist: buildPlist({ ...j, node, mcflyBin, projectDir, logPath: path.join(logsDir, `${j.label}.log`), pathEnv, home }) }));
 }
 
@@ -55,7 +60,7 @@ export function ownLabels(files, project) {
   const prefix = `com.mcfly.${project}.`;
   return files.filter((f) => f.startsWith(prefix) && f.endsWith('.plist'))
     .map((f) => f.slice(0, -'.plist'.length))
-    .filter((label) => /^(run-\d{4}|summary)$/.test(label.slice(prefix.length)));
+    .filter((label) => /^(run-\d{4}|summary|answers)$/.test(label.slice(prefix.length)));
 }
 
 /** Метки заданий проекта, которых нет в плане: слот убрали из конфигурации. */

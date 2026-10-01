@@ -3,7 +3,7 @@ import { readText } from './util.js';
 
 export const DEFAULT_CONFIG = {
   project: 'project',
-  schedule: { slots: ['00:00', '04:00'], tolerance_minutes: 30, summary_at: '08:00' },
+  schedule: { slots: ['00:00', '04:00'], tolerance_minutes: 30, summary_at: '08:00', answers_every_minutes: 10 },
   run: { max_minutes: 180, permission_mode: 'auto', model: '', max_budget_usd: 0, claude_bin: 'claude', lead_agent: 'mcfly:lead', extra_args: [], network_retries: 6, network_retry_minutes: 10, vpn_service: '', scutil_bin: 'scutil' },
   escalation: {
     answer_deadline_hours: 24,
@@ -36,6 +36,7 @@ export function validate(cfg) {
   if (!cfg.project || typeof cfg.project !== 'string') errors.push('project: обязательное строковое поле');
   for (const s of cfg.schedule.slots) if (!/^\d{2}:\d{2}$/.test(String(s))) errors.push(`schedule.slots: неверный слот "${s}" (нужно HH:MM)`);
   if (!/^\d{2}:\d{2}$/.test(String(cfg.schedule.summary_at))) errors.push('schedule.summary_at: нужно HH:MM');
+  if (!(Number.isInteger(cfg.schedule.answers_every_minutes) && cfg.schedule.answers_every_minutes >= 0)) errors.push('schedule.answers_every_minutes: целое число от 0');
   if (!(cfg.run.max_minutes > 0)) errors.push('run.max_minutes: должно быть больше 0');
   if (!(Number.isInteger(cfg.run.network_retries) && cfg.run.network_retries >= 0)) errors.push('run.network_retries: целое число от 0');
   if (!(cfg.run.network_retry_minutes > 0)) errors.push('run.network_retry_minutes: должно быть больше 0');

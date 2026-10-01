@@ -18,19 +18,42 @@ export function createTelegram({ token, fetchImpl = globalThis.fetch }) {
     return data.result;
   }
   return {
-    async sendMessage(chatId, text) {
+    /** html — разметка Telegram HTML (сводка укладывается в одно сообщение); keyboard — кнопки под последним куском. */
+    async sendMessage(chatId, text, { html = false, keyboard = null } = {}) {
       const results = [];
-      for (const part of chunk(text)) results.push(await call('sendMessage', { chat_id: chatId, text: part, disable_web_page_preview: true }));
+      const parts = html ? [text] : chunk(text);
+      for (const [i, part] of parts.entries()) {
+        const body = { chat_id: chatId, text: part, disable_web_page_preview: true };
+        if (html) body.parse_mode = 'HTML';
+        if (keyboard?.length && i === parts.length - 1) body.reply_markup = { inline_keyboard: keyboard };
+        results.push(await call('sendMessage', body));
+      }
       return results;
     },
-    getUpdates(offset = 0, timeoutSec = 0) { return call('getUpdates', { offset, timeout: timeoutSec, allowed_updates: ['message'] }); },
+    getUpdates(offset = 0, timeoutSec = 0) { return call('getUpdates', { offset, timeout: timeoutSec, allowed_updates: ['message', 'callback_query'] }); },
+    answerCallbackQuery(id, text = '') { return call('answerCallbackQuery', { callback_query_id: id, text }); },
   };
 }
-/** Текстовые сообщения из нужного чата (chatId=null — из любого) и следующий offset. */
+/** Кнопка сводки → команда, как если бы человек написал её текстом: ap:имя, rj:имя, qd:Qn. */
+export function callbackText(data) {
+  const m = /^(ap|rj|qd):(.+)$/.exec(String(data || ''));
+  if (!m) return null;
+  if (m[1] === 'ap') return `approve ${m[2]}`;
+  if (m[1] === 'rj') return `reject ${m[2]} отклонено кнопкой в Telegram`;
+  return `${m[2]}: по умолчанию`;
+}
+/** Текстовые сообщения и нажатия кнопок из нужного чата (chatId=null — из любого) и следующий offset. */
 export function extractMessages(updates, chatId) {
   const messages = []; let nextOffset = null;
   for (const u of updates) {
     nextOffset = u.update_id + 1;
+    const cq = u.callback_query;
+    if (cq) {
+      const text = callbackText(cq.data);
+      if (!text || !cq.message || (chatId && String(cq.message.chat?.id) !== String(chatId))) continue;
+      messages.push({ id: cq.message.message_id, chatId: cq.message.chat.id, text, date: new Date(cq.message.date * 1000), from: cq.from?.username || cq.from?.first_name || '', callbackId: cq.id });
+      continue;
+    }
     const m = u.message;
     if (!m || !m.text) continue;
     if (chatId && String(m.chat?.id) !== String(chatId)) continue;

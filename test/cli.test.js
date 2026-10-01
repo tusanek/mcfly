@@ -41,7 +41,7 @@ test('help, init, status, question, approval, metric, context, doctor, dry-run, 
   assert.match(cli(['context'], dir).stdout, /Q1 \[spec\]/);
   assert.match(cli(['doctor'], dir).stdout, /конфигурация валидна/);
   assert.match(cli(['run', '--mode', 'day', '--dry-run'], dir).stdout, /dry-run/);
-  assert.match(cli(['summary'], dir).stdout, /сводка/);
+  assert.match(cli(['summary'], dir).stdout, /🌙 Прогоны/);
   assert.equal(cli(['approval', 'request', 'nope'], dir).status, 1);
 });
 
@@ -80,4 +80,13 @@ test('status говорит, идёт ли прогон', () => {
   fs.writeFileSync(path.join(dir, 'mcfly', '.lock'), JSON.stringify({ pid: runner.pid, at: new Date(2026, 9, 1, 9, 26).toISOString(), id: '20261001-0926' }));
   let out; try { out = cli(['status'], dir).stdout; } finally { runner.kill(); }
   assert.match(out, /^Идёт прогон 20261001-0926 с 09:26; последнее: 2026-10-01 09:55 → Bash: mvn test/m);
+});
+
+test('answers во время прогона ничего не забирает: ответы заберёт сам прогон', () => {
+  const dir = tmpDir(); gitRepo(dir);
+  cli(['init', '--name', 'demo'], dir);
+  const runner = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)', 'mcfly', 'run'], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(dir, 'mcfly', '.lock'), JSON.stringify({ pid: runner.pid, at: new Date().toISOString(), id: '20261001-0926' }));
+  let out; try { out = cli(['answers'], dir); } finally { runner.kill(); }
+  assert.equal(out.status, 0); assert.match(out.stdout, /идёт прогон/);
 });

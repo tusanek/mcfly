@@ -11,6 +11,8 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
   const { messages, nextOffset } = extractMessages(updates, cfg.telegram.chat_id);
   const acks = applyMessages(p, messages, { now });
   if (nextOffset) { state.telegram_offset = nextOffset; saveState(p, state); }
+  // Нажатие кнопки ждёт ответа, иначе Telegram крутит на ней индикатор; устаревшее нажатие API отклоняет — не страшно.
+  for (const m of messages.filter((x) => x.callbackId)) { try { await tg.answerCallbackQuery(m.callbackId, 'Принято'); } catch {} }
   if (acks.length) await tg.sendMessage(cfg.telegram.chat_id, acks.join('\n'));
   log(`Telegram: сообщений ${messages.length}, применено ${acks.length}.`);
   return { applied: acks.length, messages };

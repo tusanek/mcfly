@@ -31,3 +31,11 @@ test('applyMessages меняет состояние и возвращает по
   assert.match(acks[0], /Q1/); assert.match(acks[1], /одобрено/); assert.match(acks[2], /не найдено/); assert.match(acks[3], /заметку/);
   assert.match(readText(p.answers), /ответ на Q1\nJSON/);
 });
+
+test('applyMessages: ответ «по умолчанию» берёт текст ответа по умолчанию', () => {
+  const dir = bareProject(); const p = paths(dir);
+  const data = loadQuestions(p); addQuestion(data, { category: 'spec', text: 'Формат?', defaultAnswer: 'YAML' }, cfg); saveQuestions(p, data);
+  const acks = applyMessages(p, [{ text: 'Q1 по умолчанию' }]);
+  assert.equal(loadQuestions(p).questions[0].answer, 'YAML');
+  assert.match(acks[0], /Q1/);
+});

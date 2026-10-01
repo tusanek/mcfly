@@ -23,8 +23,11 @@ export function applyMessages(p, messages, { now = new Date(), by = 'human' } = 
     const parsed = parseMessage(msg.text);
     switch (parsed.type) {
       case 'answer': {
-        const q = answerQuestion(qdata, parsed.id, parsed.text, by, now);
-        appendText(p.answers, `\n## ${stamp} — ответ на ${parsed.id}\n${parsed.text}\n`);
+        // «по умолчанию» (кнопка сводки или текст) — ответ по умолчанию самого вопроса.
+        const asked = qdata.questions.find((x) => x.id === parsed.id);
+        const text = /^по умолчанию$/i.test(parsed.text) && asked?.default ? asked.default : parsed.text;
+        const q = answerQuestion(qdata, parsed.id, text, by, now);
+        appendText(p.answers, `\n## ${stamp} — ответ на ${parsed.id}\n${text}\n`);
         acks.push(q ? `✅ ${parsed.id}: ответ записан` : `⚠️ ${parsed.id}: вопрос не найден, записал как заметку`);
         break;
       }

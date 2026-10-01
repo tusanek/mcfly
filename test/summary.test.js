@@ -1,89 +1,119 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import path from 'node:path';
-import { composeSummary, sendSummary } from '../src/summary.js';
+import { composeSummary, summaryKeyboard, htmlToPlain, sendSummary } from '../src/summary.js';
 import { paths, loadState } from '../src/state.js';
 import { appendMetric } from '../src/metrics.js';
 import { loadQuestions, addQuestion, saveQuestions } from '../src/questions.js';
 import { listChanges, requestApproval, setApproval } from '../src/approvals.js';
 import { cfg, bareProject, addChange, git, gitRepo, changeBranch } from './helpers.js';
 
-function seed() {
+const NOW = new Date(2026, 9, 1, 10, 30); const SINCE = new Date(2026, 8, 30, 10, 30);
+const run = (p, over) => appendMetric(p, { type: 'run', mode: 'night', duration_ms: 3_300_000, ...over });
+const report = (p, id, text) => { fs.mkdirSync(path.join(p.runs, id), { recursive: true }); fs.writeFileSync(path.join(p.runs, id, 'summary.md'), text); };
+const compose = (p, c = cfg) => composeSummary(p, c, { now: NOW, since: SINCE });
+
+test('сводка: сначала то, что нужно от человека, с номерами', () => {
   const dir = bareProject(); const p = paths(dir);
-  appendMetric(p, { type: 'run', id: '20260929-0000', slot: '00:00', mode: 'night', started_at: new Date(2026, 8, 29, 0, 1).toISOString(), status: 'ok', duration_ms: 3600000, cost_usd: 2.5, turns: 20 });
-  fs.mkdirSync(path.join(p.runs, '20260929-0000'), { recursive: true });
-  fs.writeFileSync(path.join(p.runs, '20260929-0000', 'summary.md'), '# Прогон\n## Сделано\n- задача 1');
-  appendMetric(p, { type: 'event', at: new Date(2026, 8, 29, 1, 0).toISOString(), key: 'tasks_done', value: 2 });
-  const data = loadQuestions(p); addQuestion(data, { category: 'spec', text: 'Формат?', defaultAnswer: 'YAML', now: new Date(2026, 8, 29, 1, 0) }, cfg); saveQuestions(p, data);
-  addChange(dir, 'add-x', { proposal: '# add-x\n\nДобавить X, потому что Y.\n' }); requestApproval(listChanges(p.openspecChanges)[0], { now: new Date(2026, 8, 29, 1, 0) });
-  return { dir, p };
-}
-test('composeSummary: прогоны, пропуски, отчёт, вопросы, одобрения, метрики', () => {
-  const { p } = seed();
-  const text = composeSummary(p, cfg, { now: new Date(2026, 8, 29, 8, 0), since: new Date(2026, 8, 28, 8, 0) });
-  assert.match(text, /00:00 — ок, 20 ходов, ~\$2\.50, 1 ч 00 мин/);
-  assert.match(text, /04:00 — пропущен/);
-  assert.match(text, /задача 1/);
-  assert.match(text, /Q1 \[spec\] Формат\?/);
-  assert.match(text, /add-x \(авто-одобрение 30\.09 01:00\)\n  Добавить X, потому что Y\./);
-  assert.match(text, /Метрики за период: 2 задач закрыто; прогонов 1 \(ок 1\), ~\$2\.5/);
+  const data = loadQuestions(p); addQuestion(data, { category: 'spec', text: 'Кэш в git?', defaultAnswer: 'оставить', now: new Date(2026, 9, 1, 9, 0) }, cfg); saveQuestions(p, data);
+  addChange(dir, 'fix-x', { proposal: '# fix-x\n\nМелочи ревью.\n' }); requestApproval(listChanges(p.openspecChanges)[0], { now: new Date(2026, 9, 1, 9, 0) });
+  run(p, { id: '20261001-0926', slot: null, mode: 'day', started_at: new Date(2026, 9, 1, 9, 26).toISOString(), status: 'ok', cost_usd: 4.43, turns: 25 });
+  report(p, '20261001-0926', '# Прогон\n## Сделано\n- llm-adaptation: 10/10\n## Нужно от человека\n- Запустить eval 1.2.0 и утвердить стиль\n## План\n- …\n');
+  const html = compose(p);
+  assert.match(html, /^☀️ <b>demo<\/b> · 01\.10/);
+  const need = html.indexOf('🙋'); assert.ok(need > 0 && need < html.indexOf('🌙'), 'блок «Нужно от вас» идёт перед прогонами');
+  assert.match(html, /<b>🙋 Нужно от вас \(3\)<\/b>/);
+  assert.match(html, /1\. Вопрос <b>Q1<\/b>: Кэш в git\? — по умолчанию «оставить», срок 02\.10/);
+  assert.match(html, /2\. Одобрить <b>fix-x<\/b>: Мелочи ревью\./);
+  assert.match(html, /3\. Запустить eval 1\.2\.0 и утвердить стиль/);
 });
-test('composeSummary: статистика субагентов в строке прогона', () => {
+test('сводка: ничего не нужно — одна строка', () => {
   const p = paths(bareProject());
-  appendMetric(p, { type: 'run', id: '20260930-0000', slot: '00:00', mode: 'night', started_at: new Date(2026, 8, 30, 0, 0).toISOString(), status: 'quota', duration_ms: 1_800_000, cost_usd: 9.9, turns: 58, subagents: { spawned: 16, background: 0, failed: 4, killed: 0 } });
-  const text = composeSummary(p, cfg, { now: new Date(2026, 8, 30, 8, 0), since: new Date(2026, 8, 29, 8, 0) });
-  assert.match(text, /00:00 — остановлен: лимит квоты, 58 ходов, ~\$9\.90, субагентов 16 \(упало 4\), 30 мин/);
+  assert.match(compose(p), /От вас ничего не нужно/);
 });
-test('composeSummary: отчёт каждого прогона под подписью, без отчёта — «(отчёта нет)», пропущенные без отчёта', () => {
+test('сводка: прогоны по строке со значком, причина по-человечески, пропущенный слот', () => {
   const p = paths(bareProject());
-  const night = (id, h, status) => appendMetric(p, { type: 'run', id, slot: `0${h}:00`, mode: 'night', started_at: new Date(2026, 8, 30, h, 0).toISOString(), status });
-  night('20260930-0000', 0, 'ok'); night('20260930-0400', 4, 'ok');
-  appendMetric(p, { type: 'run', id: '20260929-2300', slot: null, mode: 'night', started_at: new Date(2026, 8, 29, 23, 0).toISOString(), status: 'missed' });
-  fs.mkdirSync(path.join(p.runs, '20260930-0400'), { recursive: true });
-  fs.writeFileSync(path.join(p.runs, '20260930-0400', 'summary.md'), '# Прогон 20260930-0400\n- сделано 3.2');
-  const text = composeSummary(p, cfg, { now: new Date(2026, 8, 30, 8, 0), since: new Date(2026, 8, 29, 8, 0) });
-  assert.match(text, /Отчёты команды:\n— 00:00 · 20260930-0000 —\n\(отчёта нет\)\n\n— 04:00 · 20260930-0400 —\n# Прогон 20260930-0400\n- сделано 3\.2\n/);
-  assert.doesNotMatch(text, /· 20260929-2300 —/);
+  run(p, { id: '20261001-0000', slot: '00:00', started_at: new Date(2026, 9, 1, 0, 0).toISOString(), status: 'network', note: 'Failed to authenticate. API Error: 403 Request not allowed; репортёр не написал отчёт, записана авто-сводка' });
+  run(p, { id: '20261001-0926', slot: null, mode: 'day', started_at: new Date(2026, 9, 1, 9, 26).toISOString(), status: 'ok', cost_usd: 4.43, turns: 25 });
+  const html = compose(p);
+  assert.match(html, /❌ 00:00 — нет доступа к API \(VPN\?\)/);
+  assert.match(html, /💤 04:00 — пропущен: Mac спал или был выключен/);
+  assert.match(html, /✅ 09:26 \(днём\) — 55 мин · ~\$4\.43/);
+  assert.doesNotMatch(html, /авто-сводка|репортёр не написал/);
 });
-test('composeSummary: «В работе» считает задачи по ветке change/<имя>, если она есть', () => {
+test('сводка: изменения с прогрессом по ветке и строка о следующем прогоне', () => {
   const dir = bareProject(); const p = paths(dir);
   addChange(dir, 'ddm', { tasks: '- [ ] a\n- [ ] b\n- [ ] c\n' });
   const [c] = listChanges(p.openspecChanges); requestApproval(c); setApproval(c, 'approved', 'human');
   gitRepo(dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'проект');
   changeBranch(dir, 'ddm', '- [x] a\n- [x] b\n- [ ] c\n');
-  const text = composeSummary(p, cfg, { now: new Date(2026, 8, 30, 8, 0), since: new Date(2026, 8, 29, 8, 0) });
-  assert.match(text, /В работе:\n• ddm: 2\/3 задач \(ветка change\/ddm\)/);
+  const html = compose(p);
+  assert.match(html, /<b>📦 Изменения<\/b>\n🔧 ddm — 2\/3/);
+  assert.match(html, /<b>🗓 Следующий прогон:<\/b> команда продолжит ddm \(2\/3\)/);
 });
-test('composeSummary: у prod-вопроса нет «по умолчанию» и срока — решение за человеком', () => {
+test('сводка: работы нет — подсказка одобрить изменение', () => {
   const p = paths(bareProject());
-  const data = loadQuestions(p); addQuestion(data, { category: 'prod', text: 'Ставить на сервер?', now: new Date(2026, 8, 29, 1, 0) }, cfg); saveQuestions(p, data);
-  const text = composeSummary(p, cfg, { now: new Date(2026, 8, 29, 8, 0), since: new Date(2026, 8, 28, 8, 0) });
-  assert.match(text, /• Q1 \[prod\] Ставить на сервер\?\n {2}без ответа по умолчанию: команда ждёт вашего решения\n/);
+  assert.match(compose(p), /<b>🗓 Следующий прогон:<\/b> работы нет — одобрите изменение/);
 });
-test('composeSummary: метрики за период с числом прогонов по статусам', () => {
+test('сводка: отчёты команды и метрики свёрнуты, авто-сводки не вставляются, HTML экранирован', () => {
   const p = paths(bareProject());
-  for (const [h, status] of [[0, 'quota'], [4, 'quota'], [12, 'ok']]) appendMetric(p, { type: 'run', id: `r${h}`, mode: 'night', started_at: new Date(2026, 8, 30, h, 0).toISOString(), status });
-  const text = composeSummary(p, cfg, { now: new Date(2026, 8, 30, 13, 0), since: new Date(2026, 8, 29, 13, 0) });
-  assert.match(text, /Метрики за период: нет событий; прогонов 3 \(квота 2, ок 1\), ~\$0\./);
+  run(p, { id: '20261001-0926', slot: null, mode: 'day', started_at: new Date(2026, 9, 1, 9, 26).toISOString(), status: 'ok' });
+  run(p, { id: '20261001-0200', slot: '02:00', started_at: new Date(2026, 9, 1, 2, 0).toISOString(), status: 'error', note: 'boom' });
+  report(p, '20261001-0926', '# Прогон 20261001-0926\n## Сделано\n- eval: отчёт <reports/eval.md> & кэш\n## В работе\n- нет\n');
+  report(p, '20261001-0200', '# Прогон 20261001-0200 — авто-сводка (репортёр не отработал)\n## Коммиты за прогон\n(нет коммитов)\n');
+  const html = compose(p);
+  assert.match(html, /<blockquote expandable><b>Отчёт 09:26<\/b>\nСделано:\n• eval: отчёт &lt;reports\/eval\.md&gt; &amp; кэш/);
+  assert.doesNotMatch(html, /Коммиты за прогон/);
+  assert.match(html, /<blockquote expandable>📊 За период: /);
 });
-test('sendSummary без Telegram печатает в консоль и не меняет state', async () => {
-  const { p } = seed(); const lines = [];
-  const r = await sendSummary(p, { ...cfg, telegram: { chat_id: '', token_env: 'NOPE' } }, { log: (s) => lines.push(s) });
-  assert.equal(r.sent, false); assert.ok(lines.join('\n').includes('сводка'));
+test('сводка: длинные отчёты урезаются, сообщение влезает в лимит Telegram', () => {
+  const p = paths(bareProject());
+  for (let i = 0; i < 6; i++) {
+    const id = `20261001-0${i}00`;
+    run(p, { id, slot: `0${i}:00`, started_at: new Date(2026, 9, 1, i, 0).toISOString(), status: 'ok' });
+    report(p, id, '## Сделано\n' + Array.from({ length: 40 }, (_, k) => `- пункт ${k} ${'x'.repeat(60)}`).join('\n'));
+  }
+  const html = compose(p);
+  assert.ok(html.length <= 3900, `длина ${html.length}`);
+  assert.match(html, /…/);
+  assert.equal((html.match(/<blockquote expandable>/g) || []).length, (html.match(/<\/blockquote>/g) || []).length, 'теги не разорваны');
+});
+test('summaryKeyboard: кнопки одобрения и ответа по умолчанию; prod-вопрос без кнопки', () => {
+  const dir = bareProject(); const p = paths(dir);
+  const data = loadQuestions(p);
+  addQuestion(data, { category: 'spec', text: 'a?', defaultAnswer: 'да' }, cfg);
+  addQuestion(data, { category: 'prod', text: 'на сервер?' }, cfg); saveQuestions(p, data);
+  addChange(dir, 'fix-x'); requestApproval(listChanges(p.openspecChanges)[0]);
+  assert.deepEqual(summaryKeyboard(p, cfg), [
+    [{ text: '✅ Q1: по умолчанию', callback_data: 'qd:Q1' }],
+    [{ text: '✅ Одобрить fix-x', callback_data: 'ap:fix-x' }, { text: '❌ Отклонить', callback_data: 'rj:fix-x' }],
+  ]);
+});
+test('htmlToPlain: для консоли без тегов и сущностей', () => {
+  assert.equal(htmlToPlain('<b>а</b> &lt;b&gt; &amp; <blockquote expandable>в</blockquote>'), 'а <b> & в');
+});
+test('sendSummary без Telegram печатает текст без тегов и не меняет state', async () => {
+  const p = paths(bareProject()); const lines = [];
+  const r = await sendSummary(p, { ...cfg, telegram: { chat_id: '', token_env: 'NOPE' } }, { log: (s) => lines.push(s), now: NOW });
+  assert.equal(r.sent, false); assert.doesNotMatch(lines.join('\n'), /<b>/);
   assert.equal(loadState(p).last_summary_at, undefined);
 });
-test('sendSummary через Telegram обновляет last_summary_at', async () => {
-  const { p } = seed(); const sent = [];
-  const tg = { sendMessage: async (_c, t) => { sent.push(t); } };
+test('sendSummary через Telegram: HTML и кнопки, обновляет last_summary_at', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'fix-x'); requestApproval(listChanges(p.openspecChanges)[0]);
+  const sent = [];
+  const tg = { sendMessage: async (_c, t, opts) => { sent.push({ t, opts }); } };
   process.env.TOK = 'x';
-  const r = await sendSummary(p, { ...cfg, telegram: { chat_id: '1', token_env: 'TOK' } }, { telegram: tg, now: new Date(2026, 8, 29, 8, 0), log: () => {} });
-  assert.equal(r.sent, true); assert.equal(sent.length, 1); assert.ok(loadState(p).last_summary_at);
+  const r = await sendSummary(p, { ...cfg, telegram: { chat_id: '1', token_env: 'TOK' } }, { telegram: tg, now: NOW, log: () => {} });
+  assert.equal(r.sent, true); assert.equal(sent.length, 1);
+  assert.equal(sent[0].opts.html, true);
+  assert.equal(sent[0].opts.keyboard[0][0].callback_data, 'ap:fix-x');
+  assert.ok(loadState(p).last_summary_at);
 });
 
-test('composeSummary: прогон без доступа к API назван по-человечески', () => {
-  const dir = bareProject(); const p = paths(dir);
-  appendMetric(p, { type: 'run', id: '20261001-0200', slot: '02:00', mode: 'night', started_at: new Date(2026, 9, 1, 2, 0).toISOString(), status: 'network', duration_ms: 3000, turns: 1, note: '403 Request not allowed' });
-  const text = composeSummary(p, cfg, { now: new Date(2026, 9, 1, 10, 30), since: new Date(2026, 8, 30, 10, 30) });
-  assert.match(text, /02:00 — не выполнен: нет доступа к API \(VPN\?\)/);
-  assert.match(text, /прогонов 1 \(нет сети 1\)/);
+test('сводка: старый отчёт без раздела «Нужно от человека» — строки «От вас: …»', () => {
+  const p = paths(bareProject());
+  run(p, { id: '20261001-0926', slot: null, mode: 'day', started_at: new Date(2026, 9, 1, 9, 26).toISOString(), status: 'ok' });
+  report(p, '20261001-0926', '# Прогон\n## Сделано\n- x\n## Блокеры и вопросы\n- От вас: реальный `eval 1.2.0`, чтобы утвердить стиль.\n');
+  assert.match(compose(p), /1\. реальный <code>eval 1\.2\.0<\/code>, чтобы утвердить стиль\./);
 });
