@@ -16,3 +16,12 @@ test('манифест, агенты, скиллы и хук на месте', (
   assert.ok(hooks.hooks.SessionStart);
   for (const c of ['run', 'status']) assert.match(fs.readFileSync(path.join(MCFLY_ROOT, 'commands', `${c}.md`), 'utf8'), /^---\ndescription: /);
 });
+
+test('навыки передачи смены: take-shift и hand-shift с name и description', () => {
+  for (const name of ['take-shift', 'hand-shift']) {
+    const text = fs.readFileSync(path.join(MCFLY_ROOT, 'skills', name, 'SKILL.md'), 'utf8');
+    assert.match(text, new RegExp(`^---\\nname: ${name}\\ndescription: .+\\n---\\n`));
+    assert.match(text, /mcfly shift/);
+  }
+  assert.match(fs.readFileSync(path.join(MCFLY_ROOT, 'skills', 'mcfly-process', 'SKILL.md'), 'utf8'), /## Передача смены/);
+});
