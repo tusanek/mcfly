@@ -25,3 +25,9 @@ test('навыки передачи смены: take-shift и hand-shift с name
   }
   assert.match(fs.readFileSync(path.join(MCFLY_ROOT, 'skills', 'mcfly-process', 'SKILL.md'), 'utf8'), /## Передача смены/);
 });
+
+test('hand-shift: [x] в tasks.md отмечается до shift merge — после merge сессия в detached HEAD', () => {
+  const text = fs.readFileSync(path.join(MCFLY_ROOT, 'skills', 'hand-shift', 'SKILL.md'), 'utf8');
+  assert.ok(text.indexOf('[x]') < text.indexOf('mcfly shift merge'), 'отметка задач раньше слияния');
+  assert.match(text, /после merge .*не коммить/i);
+});

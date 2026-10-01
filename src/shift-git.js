@@ -30,7 +30,10 @@ function guard(sessionDir) {
 }
 export function shiftStart({ sessionDir, change, now = new Date() }) {
   const g = guard(sessionDir); if (g.error) return fail(g.error);
+  if (!change) return fail('укажите изменение: mcfly shift start <изменение>');
   if (dirtyFiles(g.session).length) return fail('в worktree сессии есть незакоммиченные изменения — закоммитьте их');
+  const known = ok(g.main, ['rev-parse', '--verify', '-q', `refs/heads/change/${change}`]) || fs.existsSync(path.join(g.main, 'openspec', 'changes', change));
+  if (!known) return fail(`изменение ${change} не найдено: нет ни ветки change/${change}, ни openspec/changes/${change}`);
   if (!ok(g.main, ['rev-parse', '--verify', '-q', `refs/heads/change/${change}`]) && !ok(g.main, ['branch', `change/${change}`, 'main'])) {
     return fail(`не удалось создать ветку change/${change} от main`);
   }

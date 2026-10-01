@@ -24,6 +24,7 @@ test('shift start: ветка shift/<имя>-<время> от change/<имя> �
 });
 test('shift start: нет change/<имя> — ветка изменения создаётся от main', () => {
   const { dir, sess } = projectWithSession();
+  fs.mkdirSync(path.join(dir, 'openspec', 'changes', 'new-x'), { recursive: true });
   const r = shiftStart({ sessionDir: sess, change: 'new-x', now: new Date(2026, 9, 1, 9, 30) });
   assert.equal(r.ok, true);
   assert.equal(git(dir, 'rev-parse', 'change/new-x'), git(dir, 'rev-parse', 'main'));
@@ -117,4 +118,11 @@ test('shift write: без обязательных заголовков не п�
 test('handoffLine: решения нужны — число пунктов', () => {
   const t = HANDOFF.replace('## Нужны решения человека\n- нет', '## Нужны решения человека\n- одобрить X\n- ответить на Q2');
   assert.equal(handoffLine(t, new Date(2026, 9, 1, 18, 30)), '🌙 Смена сдана 18:30: ночью llm-adaptation → page-map-seed; ждёт ваших решений: 2');
+});
+
+test('shift start: без имени и с неизвестным изменением — отказ, мусорных веток нет', () => {
+  const { dir, sess } = projectWithSession();
+  assert.match(shiftStart({ sessionDir: sess, change: undefined, now: new Date() }).error, /укажите изменение/);
+  assert.match(shiftStart({ sessionDir: sess, change: 'dmm', now: new Date() }).error, /изменение dmm не найдено/);
+  assert.equal(git(dir, 'branch', '--list', 'change/dmm', 'change/undefined', 'shift/*'), '');
 });

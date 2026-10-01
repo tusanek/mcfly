@@ -5,7 +5,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { paths } from './state.js';
 import { loadConfig } from './config.js';
 import { loadEnv } from './env.js';
-import { matchSlot } from './window.js';
+import { matchSlot, parseSlot } from './window.js';
 import { buildClaudeArgs, runProcess, parseResult, cleanEnv, summarizeEvent, maskSecrets } from './claude.js';
 import { buildContext } from './context.js';
 import { buildLeadPrompt, MCFLY_ROOT } from './prompt.js';
@@ -176,6 +176,21 @@ export function alertText(cfg, record) {
   return `⚠️ mcfly ${cfg.project}: ${when} завершился ошибкой${reason ? `: ${reason}` : ''}. Подробности — mcfly/runs/${record.id}/events.log.`;
 }
 
+/** Ночь закончилась без ночной передачи (репортёр не написал, прогон пропущен) — собрать её по фактам. Ссылки — прогоны после дневной передачи. */
+export function ensureNightHandoff(p, now = new Date()) {
+  const night = latestShift(p, 'night'); const day = latestShift(p, 'day');
+  if (night && (!day || night.at >= day.at)) return null;
+  const since = day ? day.at : '';
+  const runs = readMetrics(p).filter((r) => r.type === 'run' && r.mode === 'night' && r.status !== 'missed' && r.id >= since).map((r) => r.id);
+  return writeShift(p, 'night', renderAutoHandoff(p, 'night', now, { runs }), now);
+}
+/** Сейчас позже последнего слота ночи (в пределах 12 часов после него). */
+export function afterLastSlot(now, slots) {
+  const last = parseSlot([...slots].sort().at(-1));
+  const min = now.getHours() * 60 + now.getMinutes();
+  return min >= last && min < last + 12 * 60;
+}
+
 /** Прогон команды. mode: night (с проверкой окна слота) | day. */
 export async function run({ projectDir, mode = 'day', dryRun = false, now = new Date(), log = console.log, sleep = realSleep, notify = null, beforeAttempt = null }) {
   const p = paths(projectDir);
@@ -187,6 +202,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
   if (mode === 'night') {
     slot = matchSlot(now, cfg.schedule.slots, cfg.schedule.tolerance_minutes);
     if (!slot) {
+      if (afterLastSlot(now, cfg.schedule.slots)) ensureNightHandoff(p, now); // последний слот проспали — утру всё равно нужна передача
       recordRun(p, { id, mode, slot: null, started_at: now.toISOString(), ended_at: now.toISOString(), status: 'missed', note: `вне окна запуска (слоты ${cfg.schedule.slots.join(', ')} +${cfg.schedule.tolerance_minutes} мин): Mac был выключен или спал` });
       commitRunState(projectDir, id, log);
       log(`Прогон ${id}: вне окна, записан как пропущенный.`);
@@ -213,7 +229,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const lastSlot = mode === 'night' && slot === cfg.schedule.slots.at(-1);
     const nightFile = lastSlot ? `mcfly/shifts/${shiftFileName('night', now)}` : '';
     const nightHandoff = lastSlot ? `Это последний прогон ночи: репортёр также пишет ${nightFile} — передачу «ночь → день» по формату скилла mcfly-process (раздел «Передача смены»), со ссылками на прогоны ночи.` : '';
-    const prompt = buildLeadPrompt({ cfg, p, runId: id, mode, deadline, context: buildContext(p, cfg), nightHandoff });
+    const prompt = buildLeadPrompt({ cfg, p, runId: id, mode, deadline, context: buildContext(p, cfg, { handoff: true }), nightHandoff });
     const args = buildClaudeArgs({ prompt, cfg, pluginDir: MCFLY_ROOT });
     if (dryRun) {
       // Сухой прогон не оставляет следов в mcfly/runs: промпт кладём в logs (вне git).
@@ -276,14 +292,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     };
     recordRun(p, record);
     // Последний слот ночи: репортёр не оставил ночную передачу — собрать по фактам.
-    if (lastSlot) {
-      const night = latestShift(p, 'night'); const day = latestShift(p, 'day');
-      if (!night || (day && night.at < day.at)) {
-        const since = day ? day.at : '';
-        const runs = readMetrics(p).filter((r) => r.type === 'run' && r.mode === 'night' && r.id >= since.replace(/-\d{4}$/, '') ).map((r) => r.id);
-        writeShift(p, 'night', renderAutoHandoff(p, 'night', new Date(), { runs }), new Date());
-      }
-    }
+    if (lastSlot) ensureNightHandoff(p, now);
     commitRunState(projectDir, id, log);
     // Итог любого прогона — сразу в Telegram: дневной прогон иначе молчит до утренней сводки.
     try { await (notify || telegramNotifier(cfg))(finishText(cfg, record, approvedProgress(projectDir, p))); } catch (e) { log(`Сообщение в Telegram не отправлено: ${e.message}`); }

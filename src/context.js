@@ -7,11 +7,11 @@ import { activeDayHandoff, validateHandoff } from './shift-files.js';
 
 export function isMcflyProject(p) { return exists(p.config); }
 
-export function buildContext(p, cfg, { progressLines = 15 } = {}) {
+export function buildContext(p, cfg, { progressLines = 15, handoff = false } = {}) {
   const L = [];
   const H_LIMIT = 6000;
-  const h = activeDayHandoff(p);
-  if (h) {
+  const h = handoff ? activeDayHandoff(p) : null;
+  if (!handoff) { /* хук SessionStart дневной сессии: передача адресована ночи */ } else if (h) {
     const missing = validateHandoff(h.text);
     L.push(`## Передача смены (mcfly/shifts/${h.file}) — действуй по ней в рамках одобренного: неодобренное не трогай, при расхождении правы одобрения и спецификации${missing.length ? `; формат нарушен: нет разделов ${missing.join(', ')}` : ''}`);
     L.push(h.text.length > H_LIMIT ? `${h.text.slice(0, H_LIMIT)}\n…передача обрезана, полный текст — в файле` : h.text.trim(), '');

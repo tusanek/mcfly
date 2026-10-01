@@ -309,7 +309,7 @@ test('currentRun: идущий прогон — id из лока и послед
   assert.equal(currentRun(p), null);
 });
 
-import { listShifts } from '../src/shift-files.js';
+import { listShifts, writeShift } from '../src/shift-files.js';
 test('ночной прогон без сданной смены пишет авто-передачу до запуска claude', async () => {
   const dir = bareProject(); const p = paths(dir);
   const { envFile } = fakeClaude(dir, { lines: [resultEvent()] });
@@ -333,4 +333,29 @@ test('дневной прогон авто-передач не пишет', asyn
   fakeClaude(dir, { lines: [resultEvent()] });
   await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async () => {}, notify: async () => {} });
   assert.deepEqual(listShifts(p), []);
+});
+
+test('последний слот ночи пропущен (Mac спал) — авто-ночная передача всё равно пишется', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  fakeClaude(dir, { lines: [resultEvent()] });
+  await run({ projectDir: dir, mode: 'night', now: new Date(2026, 8, 29, 0, 5), log: () => {}, sleep: async () => {}, notify: async () => {} });
+  const r = await run({ projectDir: dir, mode: 'night', now: new Date(2026, 8, 29, 7, 40), log: () => {}, sleep: async () => {}, notify: async () => {} });
+  assert.equal(r.status, 'missed');
+  assert.deepEqual(listShifts(p).map((s) => s.kind), ['day', 'night']);
+});
+test('пропуск раннего слота до последнего ночную передачу не пишет', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  fakeClaude(dir, { lines: [resultEvent()] });
+  await run({ projectDir: dir, mode: 'night', now: new Date(2026, 8, 29, 2, 30), log: () => {}, sleep: async () => {}, notify: async () => {} });
+  assert.deepEqual(listShifts(p), []);
+});
+test('ссылки ночной авто-передачи — только прогоны после сдачи смены, без прошлой ночи', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  fakeClaude(dir, { lines: [resultEvent()] });
+  const opts = { projectDir: dir, mode: 'night', log: () => {}, sleep: async () => {}, notify: async () => {} };
+  await run({ ...opts, now: new Date(2026, 8, 29, 0, 5) }); await run({ ...opts, now: new Date(2026, 8, 29, 4, 5) });
+  writeShift(p, 'day', '# Смена: день → ночь, x (источник: человек)\n## Изменения\n## Порядок\n## Нужны решения человека\n## Заметки\n', new Date(2026, 8, 29, 18, 30));
+  await run({ ...opts, now: new Date(2026, 8, 30, 0, 5) }); await run({ ...opts, now: new Date(2026, 8, 30, 4, 5) });
+  const night = listShifts(p).filter((s) => s.kind === 'night').at(-1);
+  assert.match(fs.readFileSync(night.path, 'utf8'), /\nПрогоны: runs\/20260930-0005, runs\/20260930-0405\n/);
 });
