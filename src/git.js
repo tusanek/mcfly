@@ -65,3 +65,18 @@ export function branchProgress(projectDir, name) {
   const tasks = git(projectDir, ['show', `change/${name}:openspec/changes/${name}/tasks.md`]);
   return tasks === null ? null : countTasks(tasks);
 }
+
+/** Дневная работа: ветки shift/<изменение>-…, коммиты сверх change/<изменение> и незакоммиченное в их worktree. */
+export function shiftBranches(projectDir) {
+  const out = git(projectDir, ['branch', '--list', 'shift/*', '--format=%(refname:short)']);
+  if (!out) return [];
+  const wts = teamWorktrees(projectDir);
+  return out.split('\n').filter(Boolean).map((branch) => {
+    const change = /^shift\/(.+)-\d{8}-\d{4}$/.exec(branch)?.[1] || '';
+    const ahead = Number((git(projectDir, ['rev-list', '--count', `change/${change}..${branch}`]) || '0').trim());
+    const wt = wts.find((w) => w.branch === branch);
+    return { branch, change, ahead, dirty: wt ? wt.dirty : 0 };
+  });
+}
+/** Короткий sha ветки или null. */
+export function branchSha(projectDir, branch) { return git(projectDir, ['rev-parse', '--short=7', branch])?.trim() || null; }

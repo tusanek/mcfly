@@ -49,3 +49,43 @@ test('validateHandoff: полный файл без замечаний; назы
 test('mentionedChanges: из заголовков изменений и раздела «Порядок»', () => {
   assert.deepEqual(mentionedChanges(HANDOFF), ['llm-adaptation', 'page-map-seed']);
 });
+
+import { renderAutoHandoff } from '../src/shift-files.js';
+import { shiftBranches } from '../src/git.js';
+import { addChange, git, gitRepo, changeBranch, tmpDir } from './helpers.js';
+import { listChanges, requestApproval, setApproval } from '../src/approvals.js';
+
+function projectWithChange() {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'ddm', { tasks: '- [ ] 1.1 a\n- [ ] 1.2 b\n' });
+  const [c] = listChanges(p.openspecChanges); requestApproval(c); setApproval(c, 'approved', 'human', '', new Date(), { priority: 3 });
+  gitRepo(dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'проект');
+  changeBranch(dir, 'ddm', '- [x] 1.1 a\n- [ ] 1.2 b\n');
+  return { dir, p };
+}
+test('shiftBranches: несданная дневная ветка — коммиты сверх change/<имя> и грязный worktree', () => {
+  const { dir } = projectWithChange();
+  const wt = path.join(tmpDir(), 'sess');
+  git(dir, 'worktree', 'add', '-q', '-b', 'shift/ddm-20261001-1000', wt, 'change/ddm');
+  fs.writeFileSync(path.join(wt, 'a.txt'), 'x'); git(wt, 'add', '.'); git(wt, 'commit', '-q', '-m', 'wip(ddm): a');
+  fs.writeFileSync(path.join(wt, 'b.txt'), 'y');
+  assert.deepEqual(shiftBranches(dir), [{ branch: 'shift/ddm-20261001-1000', change: 'ddm', ahead: 1, dirty: 1 }]);
+});
+test('renderAutoHandoff day: прогресс по ветке, порядок по приоритету, несданное — не трогать', () => {
+  const { dir, p } = projectWithChange();
+  git(dir, 'branch', 'shift/ddm-20261001-1000', 'change/ddm');
+  git(dir, 'checkout', '-q', 'shift/ddm-20261001-1000'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'wip(ddm): x'); git(dir, 'checkout', '-q', 'main');
+  const text = renderAutoHandoff(p, 'day', new Date(2026, 9, 1, 2, 0));
+  assert.deepEqual(validateHandoff(text), []);
+  assert.match(text, /^# Смена: день → ночь, 2026-10-01 02:00 \(источник: авто\)/);
+  assert.match(text, /### ddm — ветка change\/ddm @ [0-9a-f]{7}, задач 1\/2/);
+  assert.match(text, /Не трогать: shift\/ddm-20261001-1000 — не сдано днём \(коммитов 1\), не повторять эту работу/);
+  assert.match(text, /## Порядок\n1\. ddm/);
+});
+test('renderAutoHandoff night: шапка ночь → день, ссылки на прогоны, «Предложение на день»', () => {
+  const { p } = projectWithChange();
+  const text = renderAutoHandoff(p, 'night', new Date(2026, 9, 2, 6, 40), { runs: ['20261002-0200', '20261002-0600'] });
+  assert.deepEqual(validateHandoff(text), []);
+  assert.match(text, /^# Смена: ночь → день, 2026-10-02 06:40 \(источник: авто\)\nПрогоны: runs\/20261002-0200, runs\/20261002-0600/);
+  assert.match(text, /## Предложение на день\n1\. ddm/);
+});
