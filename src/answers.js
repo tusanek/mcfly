@@ -14,7 +14,7 @@ export function parseMessage(text) {
 }
 
 /** Применяет сообщения человека к состоянию проекта; возвращает строки-подтверждения для ответа в чат. */
-export function applyMessages(p, messages, { now = new Date(), by = 'human' } = {}) {
+export function applyMessages(p, messages, { now = new Date(), by = 'human', onRun = null } = {}) {
   const acks = [];
   const qdata = loadQuestions(p);
   const changes = listChanges(p.openspecChanges);
@@ -42,7 +42,7 @@ export function applyMessages(p, messages, { now = new Date(), by = 'human' } = 
       }
       case 'run':
         appendText(p.answers, `\n## ${stamp} — запрос ручного запуска\n${parsed.text}\n`);
-        acks.push('▶️ Запрос записан. Запуск с ноутбука: mcfly run --mode day');
+        acks.push(onRun ? onRun() : '▶️ Запрос записан. Запуск с ноутбука: mcfly run --mode day');
         break;
       case 'ignore': break;
       default:

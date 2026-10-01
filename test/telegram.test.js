@@ -74,3 +74,34 @@ test('pullAnswers отвечает на нажатие кнопки', async () =
   assert.equal(loadQuestions(p).questions[0].answer, 'y', 'кнопка «по умолчанию» отвечает текстом по умолчанию');
   assert.ok(f.calls.some((c) => c.url.endsWith('/answerCallbackQuery') && c.body.callback_query_id === 'cb9'));
 });
+
+import fs from 'node:fs'; import path from 'node:path';
+import { spawn } from 'node:child_process';
+const startMsg = (id) => ({ update_id: id, message: { message_id: id, chat: { id: 42 }, text: 'запусти', date: 1700000000 } });
+const tgCfg = (extra = {}) => ({ ...cfg, telegram: { chat_id: '42', token_env: 'X' }, run: { ...cfg.run, ...extra } });
+test('0.5.2: «запусти» из Telegram стартует дневной прогон и сразу отвечает', async () => {
+  const dir = bareProject(); const p = paths(dir); process.env.X = 'T';
+  const f = fakeFetch({ getUpdates: [startMsg(30)], sendMessage: {} });
+  const started = [];
+  await pullAnswers({ projectDir: dir, cfg: tgCfg(), p, telegram: createTelegram({ token: 'T', fetchImpl: f }), log: () => {}, startRun: (d) => started.push(d) });
+  assert.deepEqual(started, [dir]);
+  assert.match(f.calls.find((c) => c.url.endsWith('/sendMessage')).body.text, /▶️ Запускаю дневной прогон/);
+});
+test('0.5.2: «запусти» во время прогона — ответ «идёт прогон», второй не стартует', async () => {
+  const dir = bareProject(); const p = paths(dir); process.env.X = 'T';
+  const runner = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)', 'mcfly', 'run'], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(dir, 'mcfly', '.lock'), JSON.stringify({ pid: runner.pid, at: new Date(2026, 9, 1, 17, 53).toISOString(), id: '20261001-1753' }));
+  const f = fakeFetch({ getUpdates: [startMsg(31)], sendMessage: {} });
+  const started = [];
+  try { await pullAnswers({ projectDir: dir, cfg: tgCfg(), p, telegram: createTelegram({ token: 'T', fetchImpl: f }), log: () => {}, startRun: (d) => started.push(d) }); } finally { runner.kill(); }
+  assert.deepEqual(started, []);
+  assert.match(f.calls.find((c) => c.url.endsWith('/sendMessage')).body.text, /⏳ Идёт прогон 20261001-1753 с 17:53/);
+});
+test('0.5.2: run.telegram_start: false — «запусти» только записывается, как раньше', async () => {
+  const dir = bareProject(); const p = paths(dir); process.env.X = 'T';
+  const f = fakeFetch({ getUpdates: [startMsg(32)], sendMessage: {} });
+  const started = [];
+  await pullAnswers({ projectDir: dir, cfg: tgCfg({ telegram_start: false }), p, telegram: createTelegram({ token: 'T', fetchImpl: f }), log: () => {}, startRun: (d) => started.push(d) });
+  assert.deepEqual(started, []);
+  assert.match(f.calls.find((c) => c.url.endsWith('/sendMessage')).body.text, /Запрос записан/);
+});

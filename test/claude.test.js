@@ -69,3 +69,14 @@ test('summarizeEvent даёт краткие строки для инструм�
 test('summarizeEvent округляет стоимость до центов', () => {
   assert.equal(summarizeEvent(JSON.stringify({ type: 'result', is_error: true, num_turns: 33, total_cost_usd: 8.002524000000001 })), '■ результат: ошибка, ходов 33, ~$8.00');
 });
+
+import { permissionDenial } from '../src/claude.js';
+const toolResult = (text, isError = true) => JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', is_error: isError, content: [{ type: 'text', text }] }] } });
+test('0.5.2: отказ разрешения распознаётся в результате инструмента и попадает в журнал событий', () => {
+  const line = toolResult('Permission to use Bash with command cat <<EOF > x && git add x has been denied.');
+  assert.match(permissionDenial(line), /^Permission to use Bash/);
+  assert.match(summarizeEvent(line), /^⛔ отказ разрешения: Permission to use Bash/);
+  assert.match(permissionDenial(toolResult('Permission for this action was denied by the Claude Code auto mode classifier.')), /classifier/);
+  assert.equal(permissionDenial(toolResult('Error: file not found')), null, 'обычная ошибка инструмента — не отказ');
+  assert.equal(permissionDenial(toolResult('Permission ... denied', false)), null, 'без is_error — не отказ');
+});

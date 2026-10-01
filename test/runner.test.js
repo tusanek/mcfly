@@ -367,3 +367,14 @@ test('0.5.1: последний слот — по времени, а не по �
   await run({ projectDir: dir, mode: 'night', now: new Date(2026, 8, 29, 4, 5), log: () => {}, sleep: async () => {}, notify: async () => {} });
   assert.deepEqual(listShifts(p).map((s) => s.kind), ['day', 'night']);
 });
+
+test('0.5.2: отказы разрешений считаются в result.json и заметке прогона', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  const denial = { type: 'user', message: { content: [{ type: 'tool_result', is_error: true, content: 'Permission to use Bash with command rm x has been denied.' }] } };
+  fakeClaude(dir, { lines: [denial, denial, resultEvent()] });
+  const r = await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async () => {}, notify: async () => {} });
+  const rec = readRecord(p, r.id);
+  assert.equal(rec.permission_denials, 2);
+  assert.match(rec.note, /отказов разрешений: 2/);
+  assert.match(fs.readFileSync(path.join(p.runs, r.id, 'events.log'), 'utf8'), /⛔ отказ разрешения: Permission to use Bash/);
+});

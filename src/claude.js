@@ -86,8 +86,23 @@ export function parseResult({ exitCode, stdout, stderr, timedOut }) {
   };
 }
 
+const DENIAL_RE = /permission[^\n]{0,200}(denied|отклон)|denied by the claude code|auto mode classifier/i;
+/** Текст отказа разрешения из результата инструмента (tool_result с is_error) или null. */
+export function permissionDenial(line) {
+  let ev; try { ev = JSON.parse(line); } catch { return null; }
+  if (ev.type !== 'user') return null;
+  for (const c of ev.message?.content || []) {
+    if (c.type !== 'tool_result' || c.is_error !== true) continue;
+    const text = typeof c.content === 'string' ? c.content : (c.content || []).map((x) => x.text || '').join(' ');
+    if (DENIAL_RE.test(text)) return maskSecrets(text).replace(/\s+/g, ' ').trim().slice(0, 200);
+  }
+  return null;
+}
+
 /** Краткая человекочитаемая строка по событию stream-json (или null, если событие неинтересно). */
 export function summarizeEvent(line) {
+  const denial = permissionDenial(line);
+  if (denial) return `⛔ отказ разрешения: ${denial}`;
   let ev; try { ev = JSON.parse(line); } catch { return null; }
   const short = (t) => maskSecrets(t).replace(/\s+/g, ' ').trim().slice(0, 160); // маска — до обрезки строки
   if (ev.type === 'assistant') {
