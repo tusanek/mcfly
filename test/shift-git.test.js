@@ -37,3 +37,53 @@ test('shift start отказывает: незакоммиченное в сес
   fs.writeFileSync(path.join(dir, 'mcfly', '.lock'), JSON.stringify({ pid: process.pid, at: new Date().toISOString(), id: 'r' }));
   assert.match(shiftStart({ sessionDir: sess, change: 'ddm', now: new Date() }).error, /идёт прогон/);
 });
+
+import { shiftMerge } from '../src/shift-git.js';
+const commit = (dir, file, text) => { fs.writeFileSync(path.join(dir, file), text); git(dir, 'add', file); git(dir, 'commit', '-q', '-m', `feat(ddm): ${file}`); };
+
+test('shift merge: fast-forward ветки изменения без worktree команды, ветка shift удалена', () => {
+  const { dir, sess } = projectWithSession();
+  shiftStart({ sessionDir: sess, change: 'ddm', now: new Date(2026, 9, 1, 9, 30) });
+  commit(sess, 'a.txt', 'a');
+  const head = git(sess, 'rev-parse', 'HEAD');
+  const r = shiftMerge({ sessionDir: sess });
+  assert.equal(r.ok, true); assert.equal(r.merged, true);
+  assert.equal(git(dir, 'rev-parse', 'change/ddm'), head);
+  assert.equal(git(dir, 'branch', '--list', 'shift/*'), '');
+});
+test('shift merge: ветка изменения выведена в worktree команды — fast-forward там', () => {
+  const { dir, sess } = projectWithSession();
+  const team = path.join(tmpDir(), 'team'); git(dir, 'worktree', 'add', '-q', team, 'change/ddm');
+  shiftStart({ sessionDir: sess, change: 'ddm', now: new Date(2026, 9, 1, 9, 30) });
+  commit(sess, 'a.txt', 'a');
+  assert.equal(shiftMerge({ sessionDir: sess }).ok, true);
+  assert.equal(git(team, 'rev-parse', 'HEAD'), git(dir, 'rev-parse', 'change/ddm'));
+  assert.ok(fs.existsSync(path.join(team, 'a.txt')));
+});
+test('shift merge: change ушла вперёд — сначала влить её в сессию', () => {
+  const { dir, sess } = projectWithSession();
+  shiftStart({ sessionDir: sess, change: 'ddm', now: new Date(2026, 9, 1, 9, 30) });
+  commit(sess, 'a.txt', 'a');
+  const team = path.join(tmpDir(), 'team'); git(dir, 'worktree', 'add', '-q', team, 'change/ddm'); commit(team, 'b.txt', 'b');
+  assert.equal(shiftMerge({ sessionDir: sess }).ok, true);
+  assert.ok(fs.existsSync(path.join(team, 'a.txt')) && fs.existsSync(path.join(team, 'b.txt')));
+});
+test('shift merge: нечего вливать — сообщение, без ошибки', () => {
+  const { sess } = projectWithSession();
+  shiftStart({ sessionDir: sess, change: 'ddm', now: new Date(2026, 9, 1, 9, 30) });
+  const r = shiftMerge({ sessionDir: sess });
+  assert.equal(r.ok, true); assert.equal(r.merged, false); assert.match(r.message, /нечего вливать/);
+});
+test('shift merge отказывает: конфликт (merge отменён), грязный worktree команды, не ветка shift/', () => {
+  const { dir, sess } = projectWithSession();
+  shiftStart({ sessionDir: sess, change: 'ddm', now: new Date(2026, 9, 1, 9, 30) });
+  commit(sess, 'a.txt', 'день');
+  const team = path.join(tmpDir(), 'team'); git(dir, 'worktree', 'add', '-q', team, 'change/ddm'); commit(team, 'a.txt', 'ночь');
+  const c = shiftMerge({ sessionDir: sess });
+  assert.equal(c.ok, false); assert.match(c.error, /конфликт/);
+  assert.equal(git(sess, 'status', '--porcelain'), '', 'merge отменён');
+  fs.writeFileSync(path.join(team, 'dirty.txt'), 'x');
+  assert.match(shiftMerge({ sessionDir: sess }).error, /незакоммиченн/);
+  git(sess, 'switch', '-q', 'claude/sess');
+  assert.match(shiftMerge({ sessionDir: sess }).error, /ветк[аи] shift\//);
+});
