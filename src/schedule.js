@@ -10,7 +10,7 @@ export function labelFor(project, job) { return `com.mcfly.${project}.${job}`; }
 export const jobWhen = (j) => (j.interval ? `каждые ${Math.round(j.interval / 60)} мин` : `${pad2(j.hour)}:${pad2(j.minute)}`);
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-export function buildPlist({ label, node, mcflyBin, args, projectDir, hour, minute, interval, logPath, pathEnv, home }) {
+export function buildPlist({ label, node, mcflyBin, args, projectDir, hour, minute, interval, logPath, pathEnv, home, abandonGroup = false }) {
   const when = interval
     ? `  <key>StartInterval</key><integer>${interval}</integer>`
     : `  <key>StartCalendarInterval</key>
@@ -33,7 +33,7 @@ ${arr}
     <key>LANG</key><string>ru_RU.UTF-8</string>
   </dict>
 ${when}
-  <key>StandardOutPath</key><string>${esc(logPath)}</string>
+${abandonGroup ? '  <key>AbandonProcessGroup</key><true/>\n' : ''}  <key>StandardOutPath</key><string>${esc(logPath)}</string>
   <key>StandardErrorPath</key><string>${esc(logPath)}</string>
 </dict>
 </plist>
@@ -45,7 +45,7 @@ export function planJobs(cfg, { projectDir, node, mcflyBin, logsDir, pathEnv, ho
   const s = parseSlot(cfg.schedule.summary_at);
   jobs.push({ label: labelFor(cfg.project, 'summary'), hour: Math.floor(s / 60), minute: s % 60, args: ['summary', '--send', '--project', projectDir] });
   // Опрос ответов и нажатий кнопок из Telegram: иначе ответ на сводку применится только к ночному прогону.
-  if (cfg.schedule.answers_every_minutes > 0) jobs.push({ label: labelFor(cfg.project, 'answers'), interval: cfg.schedule.answers_every_minutes * 60, args: ['answers', '--project', projectDir] });
+  if (cfg.schedule.answers_every_minutes > 0) jobs.push({ label: labelFor(cfg.project, 'answers'), interval: cfg.schedule.answers_every_minutes * 60, args: ['answers', '--project', projectDir], abandonGroup: true }); // «запусти» стартует прогон, который должен пережить задание
   return jobs.map((j) => ({ ...j, plist: buildPlist({ ...j, node, mcflyBin, projectDir, logPath: path.join(logsDir, `${j.label}.log`), pathEnv, home }) }));
 }
 

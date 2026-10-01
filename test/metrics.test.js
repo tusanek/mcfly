@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { paths } from '../src/state.js';
-import { appendMetric, readMetrics, aggregate, formatEvents } from '../src/metrics.js';
+import { appendMetric, readMetrics, aggregate, formatEvents, runStats } from '../src/metrics.js';
 import { bareProject } from './helpers.js';
 
 test('append/read/aggregate', () => {
@@ -16,4 +16,9 @@ test('append/read/aggregate', () => {
   assert.equal(night.events.tasks_done, 3);
   assert.equal(formatEvents({ tasks_done: 3, x: 1 }), '3 задач закрыто, 1 x');
   assert.equal(formatEvents({}), 'нет событий');
+});
+
+test('0.5.2: строка прогона показывает отказы разрешений', () => {
+  assert.match(runStats({ turns: 3, permission_denials: 4 }), /, отказов разрешений 4/);
+  assert.doesNotMatch(runStats({ turns: 3, permission_denials: 0 }), /отказов/);
 });

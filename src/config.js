@@ -4,7 +4,7 @@ import { readText } from './util.js';
 export const DEFAULT_CONFIG = {
   project: 'project',
   schedule: { slots: ['00:00', '04:00'], tolerance_minutes: 30, summary_at: '08:00', answers_every_minutes: 10 },
-  run: { max_minutes: 180, permission_mode: 'auto', model: '', max_budget_usd: 0, claude_bin: 'claude', lead_agent: 'mcfly:lead', extra_args: [], network_retries: 6, network_retry_minutes: 10, vpn_service: '', scutil_bin: 'scutil' },
+  run: { max_minutes: 180, permission_mode: 'auto', model: '', max_budget_usd: 0, claude_bin: 'claude', lead_agent: 'mcfly:lead', extra_args: [], network_retries: 6, network_retry_minutes: 10, vpn_service: '', scutil_bin: 'scutil', telegram_start: true },
   escalation: {
     answer_deadline_hours: 24,
     approval_deadline_hours: 24,

@@ -25,6 +25,7 @@ export function runStats(r) {
     const odd = [['фоном', s.background], ['упало', s.failed], ['убито', s.killed]].filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`);
     parts.push(`субагентов ${s.spawned}${odd.length ? ` (${odd.join(', ')})` : ''}`);
   }
+  if (r.permission_denials > 0) parts.push(`отказов разрешений ${r.permission_denials}`);
   return parts.map((x) => `, ${x}`).join('');
 }
 export const EVENT_LABELS = { tasks_done: 'задач закрыто', escalations: 'эскалаций', review_rejections: 'возвратов с ревью', changes_proposed: 'изменений предложено', changes_archived: 'изменений завершено', tests_failed: 'падений тестов' };

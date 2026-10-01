@@ -6,7 +6,7 @@ import { paths } from './state.js';
 import { loadConfig } from './config.js';
 import { loadEnv } from './env.js';
 import { matchSlot, parseSlot } from './window.js';
-import { buildClaudeArgs, runProcess, parseResult, cleanEnv, summarizeEvent, maskSecrets } from './claude.js';
+import { buildClaudeArgs, runProcess, parseResult, cleanEnv, summarizeEvent, maskSecrets, permissionDenial } from './claude.js';
 import { buildContext } from './context.js';
 import { buildLeadPrompt, MCFLY_ROOT } from './prompt.js';
 import { appendMetric, runStats, readMetrics } from './metrics.js';
@@ -245,7 +245,8 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const logStream = fs.createWriteStream(path.join(runDir, 'stdout.log'));
     const eventsStream = fs.createWriteStream(path.join(runDir, 'events.log'));
     const event = (s) => eventsStream.write(`${fmtLocal(new Date())} ${s}\n`);
-    const stdoutLines = lineSplitter((line) => { const s = summarizeEvent(line); if (s) event(s); });
+    let denials = 0; // отказы разрешений субагентам и лиду: иначе о них узнаём только из отчёта
+    const stdoutLines = lineSplitter((line) => { if (permissionDenial(line)) denials += 1; const s = summarizeEvent(line); if (s) event(s); });
     const stderrLines = lineSplitter((line) => event(`⚠ ${maskSecrets(line).trim().slice(0, 300)}`));
     const started = new Date();
     log(`Прогон ${id} (${mode}${slot ? ', слот ' + slot : ''}) запущен, лимит ${cfg.run.max_minutes} мин.`);
@@ -286,8 +287,8 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const unfinished = unfinishedWork(projectDir);
     const record = {
       id, mode, slot, started_at: started.toISOString(), ended_at: new Date().toISOString(), status: parsed.status, attempts, duration_ms: Date.now() - started.getTime(), exit_code: result.exitCode,
-      cost_usd: costUsd, turns, subagents: parsed.subagents, session_id: parsed.sessionId, validate_ok: validate.ok, dirty_files: dirty, error: parsed.errorText,
-      note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', ...new Set(vpnNotes), fallback ? 'репортёр не написал отчёт, записана авто-сводка' : '', validate.available && validate.ok === false ? 'openspec validate: есть ошибки' : '',
+      cost_usd: costUsd, turns, permission_denials: denials, subagents: parsed.subagents, session_id: parsed.sessionId, validate_ok: validate.ok, dirty_files: dirty, error: parsed.errorText,
+      note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', ...new Set(vpnNotes), denials ? `отказов разрешений: ${denials}` : '', fallback ? 'репортёр не написал отчёт, записана авто-сводка' : '', validate.available && validate.ok === false ? 'openspec validate: есть ошибки' : '',
         dirty ? `незакоммиченных файлов: ${dirty}` : '', unfinished.length ? `незакоммиченная работа в worktree: ${unfinished.map(describeWorktree).join(', ')}` : ''].filter(Boolean).join('; '),
     };
     recordRun(p, record);

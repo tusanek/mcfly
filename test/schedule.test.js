@@ -43,3 +43,10 @@ test('jobWhen: время задания по часам или интервал
   assert.equal(jobWhen({ hour: 2, minute: 0 }), '02:00');
   assert.equal(jobWhen({ interval: 600 }), 'каждые 10 мин');
 });
+
+test('0.5.2: задание answers не убивает запущенный из Telegram прогон (AbandonProcessGroup)', () => {
+  const opts = { projectDir: '/p', node: '/n', mcflyBin: '/m', logsDir: '/l', pathEnv: '/x', home: '/h' };
+  const jobs = planJobs(cfg, opts);
+  assert.match(jobs.find((j) => j.label.endsWith('.answers')).plist, /<key>AbandonProcessGroup<\/key><true\/>/);
+  assert.doesNotMatch(jobs.find((j) => j.label.endsWith('.summary')).plist, /AbandonProcessGroup/);
+});
