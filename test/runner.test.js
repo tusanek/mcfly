@@ -214,6 +214,7 @@ test('нет доступа к API: прогон повторяется чере
   assert.deepEqual(waits, [10 * 60_000]);
   const rec = readRecord(p, r.id);
   assert.equal(rec.attempts, 2);
+  assert.equal(rec.turns, 2, 'ходы — сумма по попыткам'); assert.equal(rec.cost_usd, 0.2, 'стоимость — сумма по попыткам');
   assert.match(fs.readFileSync(path.join(p.runs, r.id, 'events.log'), 'utf8'), /↻ нет доступа к API.*повтор через 10 мин \(попытка 2 из 7\)/);
   assert.equal(notes.length, 1); assert.match(notes[0], /^✅/, 'доступ появился — итог без тревоги');
 });

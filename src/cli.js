@@ -5,7 +5,7 @@ import { paths, loadState, saveState } from './state.js';
 import { loadConfig, autoDefault, isCategory } from './config.js';
 import { loadEnv } from './env.js';
 import { run, currentRun } from './runner.js';
-import { composeSummary, sendSummary } from './summary.js';
+import { composeSummary, sendSummary, htmlToPlain } from './summary.js';
 import { pullAnswers } from './pull.js';
 import { buildContext, isMcflyProject } from './context.js';
 import { loadQuestions, saveQuestions, addQuestion, expireQuestions, openQuestions } from './questions.js';
@@ -59,8 +59,12 @@ export async function main(argv) {
   const runIdEnv = process.env.MCFLY_RUN_ID || '';
   switch (cmd) {
     case 'run': { const r = await run({ projectDir, mode: values.mode || 'day', dryRun: !!values['dry-run'], now, log }); return ['ok', 'dry-run', 'missed'].includes(r.status) ? 0 : 1; }
-    case 'summary': { if (values.send) await sendSummary(p, cfg, { now, log }); else log(composeSummary(p, cfg, { now, since: new Date(now.getTime() - 24 * 3600_000) })); return 0; }
-    case 'answers': { await pullAnswers({ projectDir, cfg, p, log, now }); return 0; }
+    case 'summary': { if (values.send) await sendSummary(p, cfg, { now, log }); else log(htmlToPlain(composeSummary(p, cfg, { now, since: new Date(now.getTime() - 24 * 3600_000) }))); return 0; }
+    case 'answers': {
+      // Во время прогона ответы забирает сам прогон (в начале) и следующий опрос после него: два чтения одного offset дали бы двойное применение.
+      if (currentRun(p)) { log('Сейчас идёт прогон — ответы из Telegram заберу после него.'); return 0; }
+      await pullAnswers({ projectDir, cfg, p, log, now }); return 0;
+    }
     case 'status': {
       const changes = listChanges(p.openspecChanges); const q = openQuestions(loadQuestions(p)); const agg = aggregate(readMetrics(p));
       const cur = currentRun(p);

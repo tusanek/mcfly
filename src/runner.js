@@ -230,7 +230,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     // Нет доступа к API (упал VPN или сеть) — claude падает за секунды, работы не сделано: ждём и повторяем в пределах лимита прогона.
     const runDeadline = started.getTime() + cfg.run.max_minutes * 60_000;
     const retryMs = cfg.run.network_retry_minutes * 60_000;
-    let result, parsed, attempts = 0;
+    let result, parsed, attempts = 0, costUsd = null, turns = null;
     const vpnNotes = [];
     const checkVpn = async () => {
       const v = await ensureVpn(cfg.run.vpn_service, { scutil: cfg.run.scutil_bin, sleep });
@@ -245,6 +245,9 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
         onStdout: (chunk) => { logStream.write(chunk); stdoutLines.push(chunk); }, onStderr: (chunk) => { logStream.write(chunk); stderrLines.push(chunk); } });
       stdoutLines.flush(); stderrLines.flush();
       parsed = parseResult(result);
+      // Стоимость и ходы — сумма по попыткам: прерванная попытка тоже тратила квоту.
+      if (parsed.costUsd != null) costUsd = Math.round(((costUsd || 0) + parsed.costUsd) * 1e6) / 1e6;
+      if (parsed.turns != null) turns = (turns || 0) + parsed.turns;
       if (parsed.status !== 'network' || attempts > cfg.run.network_retries || Date.now() + retryMs >= runDeadline) break;
       // VPN переподключён — повторяем сразу; иначе ждём, пока вернётся сеть.
       const reconnected = (await checkVpn()).action === 'reconnected';
@@ -261,7 +264,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const unfinished = unfinishedWork(projectDir);
     const record = {
       id, mode, slot, started_at: started.toISOString(), ended_at: new Date().toISOString(), status: parsed.status, attempts, duration_ms: Date.now() - started.getTime(), exit_code: result.exitCode,
-      cost_usd: parsed.costUsd, turns: parsed.turns, subagents: parsed.subagents, session_id: parsed.sessionId, validate_ok: validate.ok, dirty_files: dirty, error: parsed.errorText,
+      cost_usd: costUsd, turns, subagents: parsed.subagents, session_id: parsed.sessionId, validate_ok: validate.ok, dirty_files: dirty, error: parsed.errorText,
       note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', ...new Set(vpnNotes), fallback ? 'репортёр не написал отчёт, записана авто-сводка' : '', validate.available && validate.ok === false ? 'openspec validate: есть ошибки' : '',
         dirty ? `незакоммиченных файлов: ${dirty}` : '', unfinished.length ? `незакоммиченная работа в worktree: ${unfinished.map(describeWorktree).join(', ')}` : ''].filter(Boolean).join('; '),
     };
