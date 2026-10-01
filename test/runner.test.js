@@ -7,7 +7,7 @@ import { paths } from '../src/state.js';
 import { readMetrics } from '../src/metrics.js';
 import { ensureGitignore, GITIGNORE_ENTRIES } from '../src/init.js';
 import { listChanges, requestApproval } from '../src/approvals.js';
-import { bareProject, fakeClaude, fakeClaudeSeq, tmpDir, git, gitRepo, addChange } from './helpers.js';
+import { bareProject, fakeClaude, fakeClaudeSeq, fakeScutil, tmpDir, git, gitRepo, addChange } from './helpers.js';
 
 const resultEvent = (over = {}) => ({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, total_cost_usd: 0.1, session_id: 's', result: 'готово', ...over });
 const readRecord = (p, id) => JSON.parse(fs.readFileSync(path.join(p.runs, id, 'result.json'), 'utf8'));
@@ -253,4 +253,36 @@ test('сбой отправки тревоги не роняет прогон', 
   const r = await run({ projectDir: dir, mode: 'day', log: (s) => logs.push(s), sleep: async () => {}, notify: async () => { throw new Error('Telegram недоступен'); } });
   assert.equal(r.status, 'error');
   assert.ok(logs.some((s) => /Telegram недоступен/.test(s)));
+});
+
+const vpnConfig = (f) => `  vpn_service: ${f.service}\n  scutil_bin: ${f.script}\n`;
+test('VPN отключён перед прогоном: runner переподключает его и пишет об этом', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  const vpn = fakeScutil({ state: 'Disconnected' });
+  fakeClaudeSeq(dir, [{ lines: [resultEvent()] }], { config: vpnConfig(vpn) });
+  const r = await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async () => {}, notify: async () => {} });
+  assert.equal(r.status, 'ok');
+  assert.ok(vpn.calls().includes(`start ${vpn.service}`));
+  assert.match(fs.readFileSync(path.join(p.runs, r.id, 'events.log'), 'utf8'), /VPN «Test VPN» был отключён — переподключил/);
+  assert.match(readRecord(p, r.id).note, /VPN «Test VPN» был отключён — переподключил/);
+});
+test('нет доступа к API и VPN упал: переподключение и повтор без паузы', async () => {
+  const dir = bareProject();
+  const vpn = fakeScutil();
+  const fake = fakeClaudeSeq(dir, [noAccess, { lines: [resultEvent()] }], { config: vpnConfig(vpn) });
+  const waits = [];
+  // VPN падает после проверки перед прогоном — во время первой попытки.
+  const r = await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async (ms) => { waits.push(ms); }, notify: async () => {},
+    beforeAttempt: (n) => { if (n === 1) vpn.setState('Disconnected'); } });
+  assert.equal(r.status, 'ok'); assert.equal(fake.calls(), 2);
+  assert.deepEqual(waits, [], 'VPN переподключён — ждать 10 минут незачем');
+});
+test('нет доступа к API, VPN не поднимается: тревога говорит о VPN', async () => {
+  const dir = bareProject();
+  const vpn = fakeScutil({ state: 'Disconnected', stuck: true });
+  fakeClaudeSeq(dir, Array(3).fill(noAccess), { config: vpnConfig(vpn) + '  network_retries: 2\n' });
+  const notes = [];
+  const r = await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async () => {}, notify: async (t) => { notes.push(t); } });
+  assert.equal(r.status, 'network');
+  assert.equal(notes.length, 1); assert.match(notes[0], /VPN «Test VPN» не подключился/);
 });

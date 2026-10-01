@@ -14,6 +14,7 @@ import { loadQuestions, saveQuestions, expireQuestions } from './questions.js';
 import { listChanges, expireApprovals } from './approvals.js';
 import { pullAnswers } from './pull.js';
 import { createTelegram } from './telegram.js';
+import { ensureVpn } from './vpn.js';
 import { dirtyFiles, teamWorktrees, branchProgress, changedTrackedFiles } from './git.js';
 import { ensureDir, writeJson, appendText, readJson, runId as makeRunId, fmtLocal } from './util.js';
 
@@ -142,13 +143,14 @@ export function alertText(cfg, record) {
   const when = record.slot ? `прогон ${record.slot}` : `прогон ${record.id}`;
   const reason = record.error ? record.error.split('\n')[0].slice(0, 200) : '';
   if (record.status === 'network') {
-    return `⚠️ mcfly ${cfg.project}: ${when} не выполнен — нет доступа к API${reason ? ` (${reason})` : ''}, ${record.attempts} попыт${record.attempts === 1 ? 'ка' : record.attempts < 5 ? 'ки' : 'ок'}. Проверь VPN и интернет; следующий прогон — по расписанию.`;
+    const vpn = (record.note || '').split('; ').filter((n) => n.startsWith('VPN «')).join('; ');
+    return `⚠️ mcfly ${cfg.project}: ${when} не выполнен — нет доступа к API${reason ? ` (${reason})` : ''}, ${record.attempts} попыт${record.attempts === 1 ? 'ка' : record.attempts < 5 ? 'ки' : 'ок'}.${vpn ? ` ${vpn}.` : ''} Проверь VPN и интернет; следующий прогон — по расписанию.`;
   }
   return `⚠️ mcfly ${cfg.project}: ${when} завершился ошибкой${reason ? `: ${reason}` : ''}. Подробности — mcfly/runs/${record.id}/events.log.`;
 }
 
 /** Прогон команды. mode: night (с проверкой окна слота) | day. */
-export async function run({ projectDir, mode = 'day', dryRun = false, now = new Date(), log = console.log, sleep = realSleep, notify = null }) {
+export async function run({ projectDir, mode = 'day', dryRun = false, now = new Date(), log = console.log, sleep = realSleep, notify = null, beforeAttempt = null }) {
   const p = paths(projectDir);
   loadEnv(projectDir);
   const cfg = loadConfig(p.config);
@@ -203,15 +205,25 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const runDeadline = started.getTime() + cfg.run.max_minutes * 60_000;
     const retryMs = cfg.run.network_retry_minutes * 60_000;
     let result, parsed, attempts = 0;
+    const vpnNotes = [];
+    const checkVpn = async () => {
+      const v = await ensureVpn(cfg.run.vpn_service, { scutil: cfg.run.scutil_bin, sleep });
+      if (v.message) { event(`🔌 ${v.message}`); vpnNotes.push(v.message); }
+      return v;
+    };
+    await checkVpn();
     for (;;) {
       attempts += 1;
+      beforeAttempt?.(attempts);
       result = await runProcess({ bin: cfg.run.claude_bin, args, cwd: projectDir, env, timeoutMs: Math.max(60_000, runDeadline - Date.now()),
         onStdout: (chunk) => { logStream.write(chunk); stdoutLines.push(chunk); }, onStderr: (chunk) => { logStream.write(chunk); stderrLines.push(chunk); } });
       stdoutLines.flush(); stderrLines.flush();
       parsed = parseResult(result);
       if (parsed.status !== 'network' || attempts > cfg.run.network_retries || Date.now() + retryMs >= runDeadline) break;
-      event(`↻ нет доступа к API (${parsed.errorText.split('\n')[0].slice(0, 120)}), повтор через ${cfg.run.network_retry_minutes} мин (попытка ${attempts + 1} из ${cfg.run.network_retries + 1})`);
-      await sleep(retryMs);
+      // VPN переподключён — повторяем сразу; иначе ждём, пока вернётся сеть.
+      const reconnected = (await checkVpn()).action === 'reconnected';
+      event(`↻ нет доступа к API (${parsed.errorText.split('\n')[0].slice(0, 120)}), повтор ${reconnected ? 'сразу' : `через ${cfg.run.network_retry_minutes} мин`} (попытка ${attempts + 1} из ${cfg.run.network_retries + 1})`);
+      if (!reconnected) await sleep(retryMs);
     }
     logStream.end(); eventsStream.end();
     const fallback = writeFallbackSummary({ projectDir, runDir, id, started, resultText: parsed.resultText || parsed.errorText });
@@ -224,7 +236,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const record = {
       id, mode, slot, started_at: started.toISOString(), ended_at: new Date().toISOString(), status: parsed.status, attempts, duration_ms: Date.now() - started.getTime(), exit_code: result.exitCode,
       cost_usd: parsed.costUsd, turns: parsed.turns, subagents: parsed.subagents, session_id: parsed.sessionId, validate_ok: validate.ok, dirty_files: dirty, error: parsed.errorText,
-      note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', fallback ? 'репортёр не написал отчёт, записана авто-сводка' : '', validate.available && validate.ok === false ? 'openspec validate: есть ошибки' : '',
+      note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', ...new Set(vpnNotes), fallback ? 'репортёр не написал отчёт, записана авто-сводка' : '', validate.available && validate.ok === false ? 'openspec validate: есть ошибки' : '',
         dirty ? `незакоммиченных файлов: ${dirty}` : '', unfinished.length ? `незакоммиченная работа в worktree: ${unfinished.map(describeWorktree).join(', ')}` : ''].filter(Boolean).join('; '),
     };
     recordRun(p, record);

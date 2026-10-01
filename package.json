@@ -1,6 +1,6 @@
 {
   "name": "mcfly",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Комплект ИИ-команды разработки на Claude Code: роли, ночные прогоны, эскалации в Telegram, OpenSpec",
   "type": "module",
   "bin": {
