@@ -16,3 +16,18 @@ test('манифест, агенты, скиллы и хук на месте', (
   assert.ok(hooks.hooks.SessionStart);
   for (const c of ['run', 'status']) assert.match(fs.readFileSync(path.join(MCFLY_ROOT, 'commands', `${c}.md`), 'utf8'), /^---\ndescription: /);
 });
+
+test('навыки передачи смены: take-shift и hand-shift с name и description', () => {
+  for (const name of ['take-shift', 'hand-shift']) {
+    const text = fs.readFileSync(path.join(MCFLY_ROOT, 'skills', name, 'SKILL.md'), 'utf8');
+    assert.match(text, new RegExp(`^---\\nname: ${name}\\ndescription: .+\\n---\\n`));
+    assert.match(text, /mcfly shift/);
+  }
+  assert.match(fs.readFileSync(path.join(MCFLY_ROOT, 'skills', 'mcfly-process', 'SKILL.md'), 'utf8'), /## Передача смены/);
+});
+
+test('hand-shift: [x] в tasks.md отмечается до shift merge — после merge сессия в detached HEAD', () => {
+  const text = fs.readFileSync(path.join(MCFLY_ROOT, 'skills', 'hand-shift', 'SKILL.md'), 'utf8');
+  assert.ok(text.indexOf('[x]') < text.indexOf('mcfly shift merge'), 'отметка задач раньше слияния');
+  assert.match(text, /после merge .*не коммить/i);
+});

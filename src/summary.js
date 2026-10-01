@@ -8,6 +8,7 @@ import { loadState, saveState } from './state.js';
 import { createTelegram } from './telegram.js';
 import { branchProgress } from './git.js';
 import { autoDefault } from './config.js';
+import { latestShift } from './shift-files.js';
 
 export const STATUS_RU = { ok: 'ок', missed: 'пропущен', error: 'ошибка', timeout: 'остановлен по времени', quota: 'остановлен: лимит квоты', network: 'не выполнен: нет доступа к API (VPN?)', locked: 'не запущен (шёл другой прогон)' };
 
@@ -50,6 +51,16 @@ function reportSections(text) {
   }
   return out;
 }
+/** Строки раздела markdown-файла смены (без пустых), не больше n. */
+function shiftSection(file, title, n = 6) {
+  const text = readText(file, ''); const out = []; let on = false;
+  for (const line of text.split('\n')) {
+    if (/^##\s/.test(line)) { on = line.replace(/^##\s+/, '').trim() === title; continue; }
+    if (on && line.trim()) out.push(line.trim());
+  }
+  return out.slice(0, n);
+}
+const shiftTime = (s) => new Date(Number(s.at.slice(0, 4)), Number(s.at.slice(4, 6)) - 1, Number(s.at.slice(6, 8)), Number(s.at.slice(9, 11)), Number(s.at.slice(11, 13)));
 /** Пункты «от человека»: раздел «Нужно от человека», у старых отчётов — строки «От вас: …». */
 function humanItems(sec) {
   const items = sec['Нужно от человека'] || Object.values(sec).flat().filter((l) => /^от вас(?=[\s:—-])/i.test(l)).map((l) => l.replace(/^от вас\s*[:—-]?\s*/i, ''));
@@ -109,6 +120,12 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
     : pend.length ? `работы нет — одобрите ${pend.map((c) => escHtml(c.name)).join(', ')}`
     : 'работы нет — одобрите изменение или напишите команде заметку';
   L.push('', `<b>🗓 Следующий прогон:</b> ${next}`);
+  const night = latestShift(p, 'night'); const day = latestShift(p, 'day');
+  if (night && (!since || shiftTime(night) > since)) {
+    const lines = shiftSection(night.path, 'Предложение на день');
+    if (lines.length) L.push('', '<b>🌅 Предложение на день</b>', ...lines.map(inline));
+  }
+  if (day && (!since || shiftTime(day) > since) && /\(источник: авто\)/.test(readText(day.path, '').split('\n')[0])) L.push('⚠️ смену не сдали — ночь шла по авто-передаче');
 
   // 4. Подробности свёрнуты: отчёты команды и метрики.
   const total = aggregate(records);

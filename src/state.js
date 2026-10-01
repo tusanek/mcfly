@@ -15,6 +15,7 @@ export function paths(projectDir) {
     lock: path.join(root, '.lock'),
     runs: path.join(root, 'runs'),
     logs: path.join(root, 'logs'),
+    shifts: path.join(root, 'shifts'),
     openspecChanges: path.join(projectDir, 'openspec', 'changes'),
   };
 }

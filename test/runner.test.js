@@ -308,3 +308,54 @@ test('currentRun: идущий прогон — id из лока и послед
   releaseLock(p);
   assert.equal(currentRun(p), null);
 });
+
+import { listShifts, writeShift } from '../src/shift-files.js';
+test('ночной прогон без сданной смены пишет авто-передачу до запуска claude', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  const { envFile } = fakeClaude(dir, { lines: [resultEvent()] });
+  await run({ projectDir: dir, mode: 'night', now: new Date(2026, 8, 29, 0, 5), log: () => {}, sleep: async () => {}, notify: async () => {} });
+  const shifts = listShifts(p);
+  assert.equal(shifts[0].kind, 'day');
+  assert.match(fs.readFileSync(shifts[0].path, 'utf8'), /\(источник: авто\)/);
+  assert.match(fs.readFileSync(path.join(p.runs, fs.readdirSync(p.runs)[0], 'prompt.md'), 'utf8'), /## Передача смены \(mcfly\/shifts\/.*-day\.md\)/);
+});
+test('ночь: прогон не последнего слота ночную передачу не пишет; последний слот без отчёта — авто -night.md', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  fakeClaude(dir, { lines: [resultEvent()] }); // слоты по умолчанию 00:00 и 04:00
+  await run({ projectDir: dir, mode: 'night', now: new Date(2026, 8, 29, 0, 5), log: () => {}, sleep: async () => {}, notify: async () => {} });
+  assert.deepEqual(listShifts(p).map((s) => s.kind), ['day']);
+  await run({ projectDir: dir, mode: 'night', now: new Date(2026, 8, 29, 4, 5), log: () => {}, sleep: async () => {}, notify: async () => {} });
+  assert.deepEqual(listShifts(p).map((s) => s.kind), ['day', 'night'], '04:00 видит ту же дневную, после него — ночная');
+  assert.match(fs.readFileSync(listShifts(p)[1].path, 'utf8'), /^# Смена: ночь → день, .*\(источник: авто\)\nПрогоны: runs\/20260929-0005, runs\/20260929-0405/);
+});
+test('дневной прогон авто-передач не пишет', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  fakeClaude(dir, { lines: [resultEvent()] });
+  await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async () => {}, notify: async () => {} });
+  assert.deepEqual(listShifts(p), []);
+});
+
+test('последний слот ночи пропущен (Mac спал) — авто-ночная передача всё равно пишется', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  fakeClaude(dir, { lines: [resultEvent()] });
+  await run({ projectDir: dir, mode: 'night', now: new Date(2026, 8, 29, 0, 5), log: () => {}, sleep: async () => {}, notify: async () => {} });
+  const r = await run({ projectDir: dir, mode: 'night', now: new Date(2026, 8, 29, 7, 40), log: () => {}, sleep: async () => {}, notify: async () => {} });
+  assert.equal(r.status, 'missed');
+  assert.deepEqual(listShifts(p).map((s) => s.kind), ['day', 'night']);
+});
+test('пропуск раннего слота до последнего ночную передачу не пишет', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  fakeClaude(dir, { lines: [resultEvent()] });
+  await run({ projectDir: dir, mode: 'night', now: new Date(2026, 8, 29, 2, 30), log: () => {}, sleep: async () => {}, notify: async () => {} });
+  assert.deepEqual(listShifts(p), []);
+});
+test('ссылки ночной авто-передачи — только прогоны после сдачи смены, без прошлой ночи', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  fakeClaude(dir, { lines: [resultEvent()] });
+  const opts = { projectDir: dir, mode: 'night', log: () => {}, sleep: async () => {}, notify: async () => {} };
+  await run({ ...opts, now: new Date(2026, 8, 29, 0, 5) }); await run({ ...opts, now: new Date(2026, 8, 29, 4, 5) });
+  writeShift(p, 'day', '# Смена: день → ночь, x (источник: человек)\n## Изменения\n## Порядок\n## Нужны решения человека\n## Заметки\n', new Date(2026, 8, 29, 18, 30));
+  await run({ ...opts, now: new Date(2026, 8, 30, 0, 5) }); await run({ ...opts, now: new Date(2026, 8, 30, 4, 5) });
+  const night = listShifts(p).filter((s) => s.kind === 'night').at(-1);
+  assert.match(fs.readFileSync(night.path, 'utf8'), /\nПрогоны: runs\/20260930-0005, runs\/20260930-0405\n/);
+});

@@ -38,3 +38,25 @@ test('buildContext перечисляет изменения, вопросы, о
   assert.match(text, /Q1 \[deps\] Брать yaml\? — по умолчанию: да/);
   assert.match(text, /Журнал/);
 });
+
+import { writeShift } from '../src/shift-files.js';
+test('buildContext: действующая передача — первым блоком; нарушенный формат помечен; длинная обрезана', () => {
+  const dir = bareProject(); const p = paths(dir);
+  writeShift(p, 'day', '# Смена: день → ночь\nтолько шапка', new Date(2026, 9, 1, 18, 30));
+  const ctx = buildContext(p, cfg, { handoff: true });
+  assert.match(ctx, /^## Передача смены \(mcfly\/shifts\/20261001-1830-day\.md\) — действуй по ней в рамках одобренного/);
+  assert.match(ctx, /формат нарушен: нет разделов ## Изменения/);
+  writeShift(p, 'day', '# Смена:\n## Изменения\n## Порядок\n## Нужны решения человека\n## Заметки\n' + 'x'.repeat(10000), new Date(2026, 9, 1, 19, 0));
+  const long = buildContext(p, cfg, { handoff: true });
+  assert.match(long, /…передача обрезана, полный текст — в файле/);
+  assert.ok(long.length < 10000);
+});
+test('buildContext: без действующей передачи — строка об этом', () => {
+  assert.match(buildContext(paths(bareProject()), cfg, { handoff: true }), /^## Передача смены: нет — работай по приоритетам одобрений/);
+});
+
+test('buildContext без handoff (хук SessionStart дневной сессии): блока передачи нет', () => {
+  const dir = bareProject(); const p = paths(dir);
+  writeShift(p, 'day', '# Смена: день → ночь', new Date(2026, 9, 1, 18, 30));
+  assert.doesNotMatch(buildContext(p, cfg), /Передача смены/);
+});

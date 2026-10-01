@@ -35,7 +35,7 @@ export function init({ projectDir, name, withTracker = false, skipOpenspec = fal
   const project = name || path.basename(projectDir);
   const created = [];
   const put = (file, content) => { if (exists(file)) return; writeText(file, content); created.push(path.relative(projectDir, file)); };
-  ensureDir(p.runs); ensureDir(p.logs);
+  ensureDir(p.runs); ensureDir(p.logs); ensureDir(p.shifts);
   put(p.config, tpl('config.yaml').replaceAll('{{PROJECT}}', project));
   put(p.progress, tpl('progress.md'));
   put(p.questions, 'questions: []\n');

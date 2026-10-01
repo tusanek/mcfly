@@ -86,3 +86,18 @@ esac
 `, { mode: 0o755 });
   return { script, service, calls: () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n') : []), setState: (st) => fs.writeFileSync(stateFile, st + '\n') };
 }
+
+/** Образец передачи смены «день → ночь» со всеми обязательными разделами. */
+export const HANDOFF = `# Смена: день → ночь, 2026-10-01 18:30 (источник: человек)
+## Изменения
+### llm-adaptation — ветка change/llm-adaptation @ 1a2b3c4, задач 4/10
+- Где остановились: 2.3 наполовину
+- Дальше: 2.3 → 2.4
+## Порядок
+1. llm-adaptation
+2. page-map-seed
+## Нужны решения человека
+- нет
+## Заметки
+- нет
+`;

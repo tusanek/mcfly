@@ -90,3 +90,21 @@ test('answers во время прогона ничего не забирает:
   let out; try { out = cli(['answers'], dir); } finally { runner.kill(); }
   assert.equal(out.status, 0); assert.match(out.stdout, /идёт прогон/);
 });
+
+test('shift: start → merge → write из worktree сессии', () => {
+  const dir = tmpDir(); gitRepo(dir);
+  cli(['init', '--name', 'demo'], dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'init');
+  changeBranch(dir, 'ddm', '- [ ] 1.1 a\n');
+  const sess = path.join(tmpDir(), 'sess'); git(dir, 'worktree', 'add', '-q', '-b', 'claude/s', sess, 'main');
+  assert.match(cli(['shift', 'start', 'ddm'], sess).stdout, /shift\/ddm-\d{8}-\d{4}/);
+  fs.writeFileSync(path.join(sess, 'a.txt'), 'a'); git(sess, 'add', '.'); git(sess, 'commit', '-q', '-m', 'feat(ddm): a');
+  assert.match(cli(['shift', 'merge'], sess).stdout, /влито в change\/ddm: коммитов 1/);
+  const file = path.join(tmpDir(), 'h.md');
+  fs.writeFileSync(file, '# Смена: день → ночь, x (источник: человек)\n## Изменения\n### ddm — x\n## Порядок\n1. ddm\n## Нужны решения человека\n- нет\n## Заметки\n- нет\n');
+  const w = cli(['shift', 'write', '--file', file], sess);
+  assert.equal(w.status, 0, w.stderr); assert.match(w.stdout, /mcfly\/shifts\/\d{8}-\d{4}-day\.md/);
+  assert.match(w.stdout, /ddm: не одобрено или не найдено/);
+  assert.match(cli(['shift', 'auto'], dir).stdout, /^# Смена: день → ночь, .* \(источник: авто\)/m);
+  const bad = cli(['shift', 'merge'], dir);
+  assert.equal(bad.status, 1); assert.match(bad.stderr, /основном рабочем дереве/);
+});
