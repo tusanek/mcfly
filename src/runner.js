@@ -9,7 +9,8 @@ import { matchSlot } from './window.js';
 import { buildClaudeArgs, runProcess, parseResult, cleanEnv, summarizeEvent, maskSecrets } from './claude.js';
 import { buildContext } from './context.js';
 import { buildLeadPrompt, MCFLY_ROOT } from './prompt.js';
-import { appendMetric, runStats } from './metrics.js';
+import { appendMetric, runStats, readMetrics } from './metrics.js';
+import { activeDayHandoff, latestShift, renderAutoHandoff, writeShift, shiftFileName } from './shift-files.js';
 import { loadQuestions, saveQuestions, expireQuestions } from './questions.js';
 import { listChanges, expireApprovals } from './approvals.js';
 import { pullAnswers } from './pull.js';
@@ -84,7 +85,7 @@ export function recordRun(p, record) {
 }
 
 /** Служебные файлы команды, которые runner коммитит сам после прогона: журнал, метрики, вопросы, ответы и каталоги прогонов. */
-const STATE_PATHS = ['mcfly/progress.md', 'mcfly/metrics.jsonl', 'mcfly/questions.yaml', 'mcfly/answers.md', 'mcfly/runs'];
+const STATE_PATHS = ['mcfly/progress.md', 'mcfly/metrics.jsonl', 'mcfly/questions.yaml', 'mcfly/answers.md', 'mcfly/runs', 'mcfly/shifts'];
 const RAW_LOG = ':(exclude)mcfly/runs/*/stdout.log'; // сырой вывод claude не коммитится, даже если в .gitignore нет строки
 /** Метаданные одобрения изменений (.openspec.yaml), изменённые runner'ом (авто-одобрение по сроку, ответы из Telegram) или человеком. */
 const approvalMeta = (projectDir) => changedTrackedFiles(projectDir).filter((f) => /^openspec\/changes\/[^/]+\/\.openspec\.yaml$/.test(f));
@@ -205,9 +206,14 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
       const defaulted = expireQuestions(qdata, cfg, now); saveQuestions(p, qdata);
       for (const q of defaulted) appendText(p.answers, `\n## ${fmtLocal(now)} — ${q.id} закрыт по умолчанию (срок истёк)\n${q.default || '(ответа по умолчанию нет)'}\n`);
       for (const c of expireApprovals(listChanges(p.openspecChanges), cfg, now)) appendText(p.answers, `\n## ${fmtLocal(now)} — ${c.name} одобрено автоматически (срок истёк)\n`);
+      // Ночь без сданной смены — авто-передача по фактам (день работал, но смену не сдал).
+      if (mode === 'night' && !activeDayHandoff(p)) writeShift(p, 'day', renderAutoHandoff(p, 'day', now), now);
     }
     const deadline = new Date(now.getTime() + cfg.run.max_minutes * 60_000);
-    const prompt = buildLeadPrompt({ cfg, p, runId: id, mode, deadline, context: buildContext(p, cfg) });
+    const lastSlot = mode === 'night' && slot === cfg.schedule.slots.at(-1);
+    const nightFile = lastSlot ? `mcfly/shifts/${shiftFileName('night', now)}` : '';
+    const nightHandoff = lastSlot ? `Это последний прогон ночи: репортёр также пишет ${nightFile} — передачу «ночь → день» по формату скилла mcfly-process (раздел «Передача смены»), со ссылками на прогоны ночи.` : '';
+    const prompt = buildLeadPrompt({ cfg, p, runId: id, mode, deadline, context: buildContext(p, cfg), nightHandoff });
     const args = buildClaudeArgs({ prompt, cfg, pluginDir: MCFLY_ROOT });
     if (dryRun) {
       // Сухой прогон не оставляет следов в mcfly/runs: промпт кладём в logs (вне git).
@@ -269,6 +275,15 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
         dirty ? `незакоммиченных файлов: ${dirty}` : '', unfinished.length ? `незакоммиченная работа в worktree: ${unfinished.map(describeWorktree).join(', ')}` : ''].filter(Boolean).join('; '),
     };
     recordRun(p, record);
+    // Последний слот ночи: репортёр не оставил ночную передачу — собрать по фактам.
+    if (lastSlot) {
+      const night = latestShift(p, 'night'); const day = latestShift(p, 'day');
+      if (!night || (day && night.at < day.at)) {
+        const since = day ? day.at : '';
+        const runs = readMetrics(p).filter((r) => r.type === 'run' && r.mode === 'night' && r.id >= since.replace(/-\d{4}$/, '') ).map((r) => r.id);
+        writeShift(p, 'night', renderAutoHandoff(p, 'night', new Date(), { runs }), new Date());
+      }
+    }
     commitRunState(projectDir, id, log);
     // Итог любого прогона — сразу в Telegram: дневной прогон иначе молчит до утренней сводки.
     try { await (notify || telegramNotifier(cfg))(finishText(cfg, record, approvedProgress(projectDir, p))); } catch (e) { log(`Сообщение в Telegram не отправлено: ${e.message}`); }

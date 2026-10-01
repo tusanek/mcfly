@@ -3,11 +3,19 @@ import { loadQuestions, openQuestions } from './questions.js';
 import { listChanges, pendingApprovals, approvedWithWork, priorityOf } from './approvals.js';
 import { branchProgress, teamWorktrees } from './git.js';
 import { autoDefault } from './config.js';
+import { activeDayHandoff, validateHandoff } from './shift-files.js';
 
 export function isMcflyProject(p) { return exists(p.config); }
 
 export function buildContext(p, cfg, { progressLines = 15 } = {}) {
   const L = [];
+  const H_LIMIT = 6000;
+  const h = activeDayHandoff(p);
+  if (h) {
+    const missing = validateHandoff(h.text);
+    L.push(`## Передача смены (mcfly/shifts/${h.file}) — действуй по ней в рамках одобренного: неодобренное не трогай, при расхождении правы одобрения и спецификации${missing.length ? `; формат нарушен: нет разделов ${missing.join(', ')}` : ''}`);
+    L.push(h.text.length > H_LIMIT ? `${h.text.slice(0, H_LIMIT)}\n…передача обрезана, полный текст — в файле` : h.text.trim(), '');
+  } else L.push('## Передача смены: нет — работай по приоритетам одобрений', '');
   L.push(`Проект: ${cfg.project}. Каталог: ${p.projectDir}.`);
   L.push(`Лимиты: прогон ${cfg.run.max_minutes} мин, не больше ${cfg.limits.max_changes_per_run} изменений за прогон, не больше ${cfg.limits.max_tasks_per_change} задач на изменение.`);
   L.push(`Категории эскалации: ${Object.entries(cfg.escalation.categories).map(([k, v]) => `${k} (${v.label}${v.auto_default === false ? ', без ответа по умолчанию' : ''})`).join('; ')}.`);
