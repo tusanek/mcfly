@@ -76,3 +76,19 @@ test('renderAutoHandoff night: шапка ночь → день, ссылки н
   assert.match(text, /^# Смена: ночь → день, 2026-10-02 06:40 \(источник: авто\)\nПрогоны: runs\/20261002-0200, runs\/20261002-0600/);
   assert.match(text, /## Предложение на день\n1\. ddm/);
 });
+
+test('0.5.1: validateHandoff строг к заголовкам разделов — «## Порядок на ночь» не считается', () => {
+  assert.deepEqual(validateHandoff(HANDOFF.replace('## Порядок', '## Порядок на ночь')), ['## Порядок или ## Предложение на день']);
+});
+test('0.5.1: дневной и ночной файл одной минуты — ночной считается позже', () => {
+  const p = paths(bareProject()); const t = new Date(2026, 9, 1, 6, 0);
+  writeShift(p, 'night', 'н', t); writeShift(p, 'day', 'д', t);
+  assert.deepEqual(listShifts(p).map((s) => s.kind), ['day', 'night']);
+  assert.equal(activeDayHandoff(p), null);
+});
+test('0.5.1: авто-передача называет несданные ветки shift/* и у изменений вне работы', () => {
+  const { dir, p } = projectWithChange();
+  git(dir, 'branch', 'change/other', 'main'); git(dir, 'branch', 'shift/other-20261001-1000', 'change/other');
+  git(dir, 'checkout', '-q', 'shift/other-20261001-1000'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'wip(other): x'); git(dir, 'checkout', '-q', 'main');
+  assert.match(renderAutoHandoff(p, 'day', new Date(2026, 9, 1, 2, 0)), /## Заметки\n(.*\n)*- Не трогать: shift\/other-20261001-1000 — не сдано днём \(коммитов 1\)/);
+});

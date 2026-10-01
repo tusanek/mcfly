@@ -65,6 +65,7 @@ export async function main(argv) {
     if (sub === 'start') { const r = shiftStart({ sessionDir: projectDir, change: rest[0], now: at }); return done(r, r.ok ? `Ветка дневной работы: ${r.branch}` : ''); }
     if (sub === 'merge') { const r = shiftMerge({ sessionDir: projectDir }); return done(r, r.message); }
     if (sub === 'write') {
+      if (values.file && !fs.existsSync(values.file)) { console.error(`файл не найден: ${values.file}`); return 1; }
       const text = values.file ? readText(values.file, '') : fs.readFileSync(0, 'utf8');
       const { telegramNotifier } = await import('./runner.js');
       const r = await shiftWrite({ projectDir: main, text, now: at, notify: telegramNotifier(mcfg) });

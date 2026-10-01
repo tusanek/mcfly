@@ -108,3 +108,10 @@ test('shift: start → merge → write из worktree сессии', () => {
   const bad = cli(['shift', 'merge'], dir);
   assert.equal(bad.status, 1); assert.match(bad.stderr, /основном рабочем дереве/);
 });
+
+test('0.5.1: shift write --file на несуществующий файл — «файл не найден»', () => {
+  const dir = tmpDir(); gitRepo(dir); cli(['init', '--name', 'demo'], dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'init');
+  const sess = path.join(tmpDir(), 'sess'); git(dir, 'worktree', 'add', '-q', '-b', 'claude/s', sess, 'main');
+  const r = cli(['shift', 'write', '--file', path.join(tmpDir(), 'нет.md')], sess);
+  assert.equal(r.status, 1); assert.match(r.stderr, /файл не найден/);
+});

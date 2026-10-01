@@ -359,3 +359,11 @@ test('ссылки ночной авто-передачи — только пр�
   const night = listShifts(p).filter((s) => s.kind === 'night').at(-1);
   assert.match(fs.readFileSync(night.path, 'utf8'), /\nПрогоны: runs\/20260930-0005, runs\/20260930-0405\n/);
 });
+
+test('0.5.1: последний слот — по времени, а не по порядку в конфигурации; quota в последнем слоте — авто-ночная', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  fakeClaude(dir, { lines: [resultEvent({ is_error: true, result: "You've hit your weekly limit" })], exitCode: 1 });
+  fs.appendFileSync(path.join(dir, 'mcfly', 'config.yaml'), 'schedule:\n  slots: ["04:00", "00:00"]\n');
+  await run({ projectDir: dir, mode: 'night', now: new Date(2026, 8, 29, 4, 5), log: () => {}, sleep: async () => {}, notify: async () => {} });
+  assert.deepEqual(listShifts(p).map((s) => s.kind), ['day', 'night']);
+});
