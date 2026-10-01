@@ -6,6 +6,8 @@ import { parseSlot } from './window.js';
 import { ensureDir, writeText, exists, pad2 } from './util.js';
 
 export function labelFor(project, job) { return `com.mcfly.${project}.${job}`; }
+/** Когда запускается задание: «02:00» или «каждые 10 мин». */
+export const jobWhen = (j) => (j.interval ? `каждые ${Math.round(j.interval / 60)} мин` : `${pad2(j.hour)}:${pad2(j.minute)}`);
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 export function buildPlist({ label, node, mcflyBin, args, projectDir, hour, minute, interval, logPath, pathEnv, home }) {
@@ -84,11 +86,11 @@ export function install(cfg, { projectDir, mcflyBin, logsDir, dryRun = false, lo
   }
   for (const j of jobs) {
     const file = path.join(dir, `${j.label}.plist`);
-    if (dryRun) { log(`[dry-run] ${file} → ${pad2(j.hour)}:${pad2(j.minute)}`); continue; }
+    if (dryRun) { log(`[dry-run] ${file} → ${jobWhen(j)}`); continue; }
     if (exists(file)) spawnSync('launchctl', ['bootout', `gui/${uid}/${j.label}`], { encoding: 'utf8' });
     writeText(file, j.plist);
     const r = spawnSync('launchctl', ['bootstrap', `gui/${uid}`, file], { encoding: 'utf8' });
-    log(`${r.status === 0 ? '✓' : '✗'} ${j.label} → ${pad2(j.hour)}:${pad2(j.minute)}${r.status === 0 ? '' : ' ' + String(r.stderr || r.stdout).trim()}`);
+    log(`${r.status === 0 ? '✓' : '✗'} ${j.label} → ${jobWhen(j)}${r.status === 0 ? '' : ' ' + String(r.stderr || r.stdout).trim()}`);
   }
   return jobs;
 }

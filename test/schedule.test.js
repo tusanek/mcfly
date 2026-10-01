@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planJobs, buildPlist, labelFor, staleLabels, ownLabels } from '../src/schedule.js';
+import { planJobs, buildPlist, labelFor, staleLabels, ownLabels, jobWhen } from '../src/schedule.js';
 import { cfg } from './helpers.js';
 
 test('planJobs: прогоны по слотам и сводка', () => {
@@ -37,4 +37,9 @@ test('planJobs: опрос ответов из Telegram каждые N мину�
 });
 test('ownLabels: задание опроса ответов принадлежит проекту', () => {
   assert.deepEqual(ownLabels(['com.mcfly.demo.answers.plist', 'com.mcfly.demo.v2.answers.plist'], 'demo'), ['com.mcfly.demo.answers']);
+});
+
+test('jobWhen: время задания по часам или интервал', () => {
+  assert.equal(jobWhen({ hour: 2, minute: 0 }), '02:00');
+  assert.equal(jobWhen({ interval: 600 }), 'каждые 10 мин');
 });
