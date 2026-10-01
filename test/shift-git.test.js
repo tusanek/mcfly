@@ -87,3 +87,34 @@ test('shift merge отказывает: конфликт (merge отменён),
   git(sess, 'switch', '-q', 'claude/sess');
   assert.match(shiftMerge({ sessionDir: sess }).error, /ветк[аи] shift\//);
 });
+
+import { shiftWrite, handoffLine } from '../src/shift-git.js';
+import { HANDOFF } from './helpers.js';
+import { addChange } from './helpers.js';
+import { listChanges, requestApproval, setApproval } from '../src/approvals.js';
+import { paths } from '../src/state.js';
+
+test('shift write: файл в mcfly/shifts закоммичен один, строка в журнале и в Telegram', async () => {
+  const { dir } = projectWithSession();
+  addChange(dir, 'llm-adaptation'); const [c] = listChanges(paths(dir).openspecChanges); requestApproval(c); setApproval(c, 'approved', 'human');
+  git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'изменение');
+  fs.writeFileSync(path.join(dir, 'other.txt'), 'не коммитить'); git(dir, 'add', 'other.txt');
+  const notes = [];
+  const r = await shiftWrite({ projectDir: dir, text: HANDOFF, now: new Date(2026, 9, 1, 18, 30), notify: async (t) => notes.push(t) });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.warnings, ['page-map-seed: не одобрено или не найдено — ночь его не тронет']);
+  assert.deepEqual(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), ['mcfly/progress.md', 'mcfly/shifts/20261001-1830-day.md']);
+  assert.match(git(dir, 'status', '--porcelain'), /^A {2}other\.txt$/m, 'чужой индекс не тронут');
+  assert.match(fs.readFileSync(path.join(dir, 'mcfly', 'progress.md'), 'utf8'), /2026-10-01 18:30 смена сдана: llm-adaptation → page-map-seed/);
+  assert.deepEqual(notes, ['🌙 Смена сдана 18:30: ночью llm-adaptation → page-map-seed; решений не ждёт']);
+});
+test('shift write: без обязательных заголовков не пишет и называет недостающее', async () => {
+  const { dir } = projectWithSession();
+  const r = await shiftWrite({ projectDir: dir, text: '# Смена: x\n', now: new Date(), notify: async () => {} });
+  assert.equal(r.ok, false); assert.match(r.error, /## Изменения/);
+  assert.equal(fs.existsSync(path.join(dir, 'mcfly', 'shifts')), false);
+});
+test('handoffLine: решения нужны — число пунктов', () => {
+  const t = HANDOFF.replace('## Нужны решения человека\n- нет', '## Нужны решения человека\n- одобрить X\n- ответить на Q2');
+  assert.equal(handoffLine(t, new Date(2026, 9, 1, 18, 30)), '🌙 Смена сдана 18:30: ночью llm-adaptation → page-map-seed; ждёт ваших решений: 2');
+});

@@ -1,9 +1,12 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { paths } from './state.js';
 import { currentRun } from './runner.js';
-import { dirtyFiles, teamWorktrees } from './git.js';
-import { shiftFileName } from './shift-files.js';
+import { dirtyFiles, teamWorktrees, commitPaths } from './git.js';
+import { listChanges } from './approvals.js';
+import { appendText, fmtLocal, pad2 } from './util.js';
+import { shiftFileName, validateHandoff, mentionedChanges, writeShift } from './shift-files.js';
 
 const run = (dir, args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
 const ok = (dir, args) => run(dir, args).status === 0;
@@ -57,4 +60,37 @@ export function shiftMerge({ sessionDir }) {
   run(g.session, ['switch', '-q', '--detach', target]);
   run(g.session, ['branch', '-q', '-D', branch]); // коммиты уже в change/<имя> (или их не было)
   return { ok: true, change, merged: ahead > 0, message: ahead > 0 ? `влито в ${target}: коммитов ${ahead}` : `нечего вливать: в ${branch} нет новых коммитов` };
+}
+
+/** Порядок и число решений из текста передачи — для Telegram и журнала. */
+function handoffFacts(text) {
+  const order = []; const decisions = []; let sec = '';
+  for (const line of String(text).split('\n')) {
+    if (/^##\s/.test(line)) { sec = line.replace(/^##\s+/, '').trim(); continue; }
+    const item = /^\s*\d+\.\s+([\w.-]+)/.exec(line);
+    if ((sec === 'Порядок' || sec === 'Предложение на день') && item) order.push(item[1]);
+    const d = /^\s*-\s+(.+)$/.exec(line);
+    if (sec === 'Нужны решения человека' && d && !/^(нет|ничего)\.?$/i.test(d[1].trim())) decisions.push(d[1]);
+  }
+  return { order, decisions };
+}
+export function handoffLine(text, now) {
+  const { order, decisions } = handoffFacts(text);
+  return `🌙 Смена сдана ${pad2(now.getHours())}:${pad2(now.getMinutes())}: ${order.length ? `ночью ${order.join(' → ')}` : 'одобренной работы на ночь нет'}; ${decisions.length ? `ждёт ваших решений: ${decisions.length}` : 'решений не ждёт'}`;
+}
+export async function shiftWrite({ projectDir, text, kind = 'day', now = new Date(), notify = null }) {
+  const main = mainCheckout(projectDir); const p = paths(main);
+  if (currentRun(p)) return fail('идёт прогон команды (mcfly/.lock) — дождитесь его конца');
+  const missing = validateHandoff(text);
+  if (missing.length) return fail(`в передаче нет разделов: ${missing.join(', ')}`);
+  const approved = new Set(listChanges(p.openspecChanges).filter((c) => c.mcfly.approval === 'approved').map((c) => c.name));
+  const warnings = mentionedChanges(text).filter((n) => !approved.has(n)).map((n) => `${n}: не одобрено или не найдено — ночь его не тронет`);
+  const file = writeShift(p, kind, text, now);
+  appendText(p.progress, `- ${fmtLocal(now)} смена сдана: ${handoffFacts(text).order.join(' → ') || 'работы на ночь нет'} (${path.basename(file)})\n`);
+  const rel = (f) => path.relative(main, f);
+  run(main, ['add', '--', rel(file)]); // новый файл должен стать отслеживаемым для commit --only
+  const c = commitPaths(main, [rel(file), rel(p.progress)], `chore(mcfly): смена сдана — ${path.basename(file)}`);
+  if (!c.ok) return fail(`файл записан, но не закоммичен: ${c.error}`);
+  if (notify) { try { await notify(handoffLine(text, now)); } catch (e) { warnings.push(`Telegram: ${e.message}`); } }
+  return { ok: true, path: file, warnings };
 }

@@ -3,21 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs'; import path from 'node:path';
 import { paths } from '../src/state.js';
 import { shiftFileName, listShifts, latestShift, activeDayHandoff, validateHandoff, mentionedChanges, writeShift } from '../src/shift-files.js';
-import { bareProject } from './helpers.js';
+import { bareProject, HANDOFF } from './helpers.js';
 
-export const HANDOFF = `# Смена: день → ночь, 2026-10-01 18:30 (источник: человек)
-## Изменения
-### llm-adaptation — ветка change/llm-adaptation @ 1a2b3c4, задач 4/10
-- Где остановились: 2.3 наполовину
-- Дальше: 2.3 → 2.4
-## Порядок
-1. llm-adaptation
-2. page-map-seed
-## Нужны решения человека
-- нет
-## Заметки
-- нет
-`;
 
 test('shiftFileName: дата, время и вид', () => {
   assert.equal(shiftFileName('day', new Date(2026, 9, 1, 18, 30)), '20261001-1830-day.md');
