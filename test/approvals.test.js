@@ -46,3 +46,10 @@ test('приоритет задаёт порядок списка', () => {
   setApproval(a, 'approved', 'h', '', new Date(), { priority: 5 }); setApproval(b, 'approved', 'h', '', new Date(), { priority: 1 });
   assert.deepEqual(listChanges(p.openspecChanges).map((x) => x.name), ['b-first', 'a-late']);
 });
+
+test('0.5.3: proposalExcerpt пропускает заголовки markdown и пустые строки, берёт первый абзац', () => {
+  const change = { proposal: '# Proposal: слить «Репорт УПД»\n\n## Why\n\nИмпорт прошлой документации\nсоздал вторую страницу.\n\nВторой абзац.\n' };
+  assert.equal(proposalExcerpt(change), 'Импорт прошлой документации создал вторую страницу.');
+  assert.equal(proposalExcerpt({ proposal: '## Зачем\n\n' + 'а'.repeat(300) }, 160).length, 160);
+  assert.equal(proposalExcerpt({ proposal: '# Только заголовок\n' }), '');
+});
