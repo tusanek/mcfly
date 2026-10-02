@@ -7,11 +7,14 @@ import { ensureDir, writeText, exists, pad2 } from './util.js';
 
 export function labelFor(project, job) { return `com.mcfly.${project}.${job}`; }
 /** Когда запускается задание: «02:00» или «каждые 10 мин». */
-export const jobWhen = (j) => (j.interval ? `каждые ${Math.round(j.interval / 60)} мин` : `${pad2(j.hour)}:${pad2(j.minute)}`);
+export const jobWhen = (j) => (j.keepAlive ? `постоянно, цикл ${Math.round(j.window / 60)} мин` : j.interval ? `каждые ${Math.round(j.interval / 60)} мин` : `${pad2(j.hour)}:${pad2(j.minute)}`);
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-export function buildPlist({ label, node, mcflyBin, args, projectDir, hour, minute, interval, logPath, pathEnv, home, abandonGroup = false }) {
-  const when = interval
+export function buildPlist({ label, node, mcflyBin, args, projectDir, hour, minute, interval, keepAlive = false, logPath, pathEnv, home, abandonGroup = false }) {
+  // keepAlive: задание работает постоянно — launchd перезапускает его после выхода, но не чаще раза в минуту.
+  const when = keepAlive
+    ? `  <key>KeepAlive</key><true/>\n  <key>ThrottleInterval</key><integer>60</integer>`
+    : interval
     ? `  <key>StartInterval</key><integer>${interval}</integer>`
     : `  <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>${hour}</integer><key>Minute</key><integer>${minute}</integer></dict>`;
@@ -45,7 +48,10 @@ export function planJobs(cfg, { projectDir, node, mcflyBin, logsDir, pathEnv, ho
   const s = parseSlot(cfg.schedule.summary_at);
   jobs.push({ label: labelFor(cfg.project, 'summary'), hour: Math.floor(s / 60), minute: s % 60, args: ['summary', '--send', '--project', projectDir] });
   // Опрос ответов и нажатий кнопок из Telegram: иначе ответ на сводку применится только к ночному прогону.
-  if (cfg.schedule.answers_every_minutes > 0) jobs.push({ label: labelFor(cfg.project, 'answers'), interval: cfg.schedule.answers_every_minutes * 60, args: ['answers', '--project', projectDir], abandonGroup: true }); // «запусти» стартует прогон, который должен пережить задание
+  // Постоянное задание (KeepAlive): цикл длинного опроса answers_every_minutes минут, после выхода launchd сразу запускает новый.
+  // StartInterval не годится: на батарее таймер сдвигается, и запуск, пришедшийся на ещё живой цикл, пропадает (02.10 — 10 минут без опроса).
+  // Без chat_id опрашивать некого: постоянное задание выходило бы сразу и перезапускалось каждую минуту.
+  if (cfg.schedule.answers_every_minutes > 0 && cfg.telegram?.chat_id) jobs.push({ label: labelFor(cfg.project, 'answers'), keepAlive: true, window: cfg.schedule.answers_every_minutes * 60, args: ['answers', '--project', projectDir], abandonGroup: true }); // «запусти» стартует прогон, который должен пережить задание
   return jobs.map((j) => ({ ...j, plist: buildPlist({ ...j, node, mcflyBin, projectDir, logPath: path.join(logsDir, `${j.label}.log`), pathEnv, home }) }));
 }
 

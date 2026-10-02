@@ -86,7 +86,7 @@ export async function main(argv) {
       // Задание launchd (answers --project …) — длинный опрос почти до следующего запуска: ответ на «запусти» и кнопки за секунды.
       // Чтения одного offset исключает блокировка опроса (pull.js); прогон до 0.5.4 читает без неё — пока он идёт, не читаем.
       const every = cfg.schedule.answers_every_minutes;
-      if (!values.once && every > 0) { await pollAnswers({ projectDir, cfg, p, log, durationMs: Math.max(30, every * 60 - 30) * 1000 }); return 0; }
+      if (!values.once && every > 0) { await pollAnswers({ projectDir, cfg, p, log, durationMs: every * 60 * 1000 }); return 0; }
       const cur = currentRun(p);
       if (cur && !cur.pullLock) { log('Сейчас идёт прогон старой версии mcfly — ответы из Telegram заберу после него.'); return 0; }
       await pullAnswers({ projectDir, cfg, p, log, now, lockWaitMs: 45_000 }); return 0;
