@@ -13,7 +13,7 @@ import { appendMetric, runStats, readMetrics } from './metrics.js';
 import { activeDayHandoff, latestShift, renderAutoHandoff, writeShift, shiftFileName } from './shift-files.js';
 import { loadQuestions, saveQuestions, expireQuestions } from './questions.js';
 import { listChanges, expireApprovals } from './approvals.js';
-import { pullAnswers } from './pull.js';
+import { pullAnswers, errorLine } from './pull.js';
 import { createTelegram } from './telegram.js';
 import { ensureVpn } from './vpn.js';
 import { STATUS_RU } from './summary.js';
@@ -39,17 +39,21 @@ function lockHeld({ pid, at }, maxAgeMs) {
 export function acquireLock(p, { maxAgeMs = Infinity, id = null } = {}) {
   const existing = readJson(p.lock, null);
   if (existing?.pid && lockHeld(existing, maxAgeMs)) return false;
-  writeJson(p.lock, { pid: process.pid, at: new Date().toISOString(), ...(id ? { id } : {}) });
+  // pull_lock: этот прогон читает Telegram под блокировкой опроса (0.5.4) — задание answers может опрашивать и во время него.
+  writeJson(p.lock, { pid: process.pid, at: new Date().toISOString(), ...(id ? { id } : {}), pull_lock: true });
   return true;
 }
-/** Идущий прогон: id (из лока, у старых локов — самый новый каталог runs), время старта и последняя строка events.log; null — прогона нет. */
+/**
+ * Идущий прогон: id (из лока, у старых локов — самый новый каталог runs), время старта, последняя строка events.log
+ * и pullLock — читает ли он Telegram под блокировкой опроса (прогоны до 0.5.4 — нет); null — прогона нет.
+ */
 export function currentRun(p) {
   const lock = readJson(p.lock, null);
   if (!lock?.pid || !lockHeld(lock, Infinity)) return null;
   let id = lock.id;
   if (!id) { try { id = fs.readdirSync(p.runs).filter((d) => /^\d{8}-\d{4}$/.test(d)).sort().at(-1) || null; } catch { id = null; } }
   const lastEvent = id ? readText(path.join(p.runs, id, 'events.log'), '').trim().split('\n').filter(Boolean).at(-1) || '' : '';
-  return { id, since: new Date(lock.at), lastEvent };
+  return { id, since: new Date(lock.at), lastEvent, pullLock: lock.pull_lock === true };
 }
 /** Снимает только свой лок: прогон, наткнувшийся на чужой, лок идущего прогона не трогает. */
 export function releaseLock(p) { if (readJson(p.lock, null)?.pid === process.pid) { try { fs.unlinkSync(p.lock); } catch {} } }
@@ -217,7 +221,9 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
   }
   try {
     if (!dryRun) {
-      try { await pullAnswers({ projectDir, cfg, p, log, now }); } catch (e) { log(`Telegram недоступен: ${e.message}`); }
+      // Задание answers держит блокировку опроса на длинный опрос (до 25 с) и отпускает её между опросами — ждём её с запасом.
+      // Не дождались — ответы применяет само задание, сразу по приходу.
+      try { await pullAnswers({ projectDir, cfg, p, log, now, lockWaitMs: 45_000, sleep }); } catch (e) { log(`Telegram недоступен: ${errorLine(e)}`); }
       const qdata = loadQuestions(p);
       const defaulted = expireQuestions(qdata, cfg, now); saveQuestions(p, qdata);
       for (const q of defaulted) appendText(p.answers, `\n## ${fmtLocal(now)} — ${q.id} закрыт по умолчанию (срок истёк)\n${q.default || '(ответа по умолчанию нет)'}\n`);

@@ -8,13 +8,26 @@ export function chunk(text, max = 4000) {
   if (rest) out.push(rest);
   return out;
 }
-export function createTelegram({ token, fetchImpl = globalThis.fetch }) {
+/**
+ * timeoutMs — сколько ждать ответа сверх длинного опроса: getUpdates с timeout N с ждёт N с + timeoutMs, остальные запросы — timeoutMs.
+ * Без него зависшее соединение держало бы опрос до таймаута undici (5 минут).
+ */
+export function createTelegram({ token, fetchImpl = globalThis.fetch, timeoutMs = 15_000 }) {
   if (!token) throw new Error('Нет токена Telegram: задайте переменную окружения из telegram.token_env в mcfly/.env');
   const base = `https://api.telegram.org/bot${token}`;
   async function call(method, body) {
-    const res = await fetchImpl(`${base}/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    const data = await res.json();
-    if (!data.ok) throw new Error(`Telegram ${method}: ${data.description || res.status}`);
+    const ms = (method === 'getUpdates' ? (body.timeout || 0) * 1000 : 0) + timeoutMs;
+    let res;
+    try {
+      res = await fetchImpl(`${base}/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(ms) });
+    } catch (e) {
+      if (e?.name === 'TimeoutError' || e?.name === 'AbortError') throw new Error(`Telegram ${method}: нет ответа за ${Math.round(ms / 1000)} с`);
+      throw e;
+    }
+    let data;
+    // 502/504 от прокси приходят HTML-страницей: вместо «Unexpected token <» — код HTTP
+    try { data = await res.json(); } catch { throw new Error(`Telegram ${method}: HTTP ${res.status}${res.statusText ? ' ' + res.statusText : ''}`); }
+    if (!data?.ok) throw new Error(`Telegram ${method}: ${data?.description || res.status}`);
     return data.result;
   }
   return {

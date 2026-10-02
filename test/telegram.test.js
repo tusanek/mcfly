@@ -105,3 +105,20 @@ test('0.5.2: run.telegram_start: false — «запусти» только за�
   assert.deepEqual(started, []);
   assert.match(f.calls.find((c) => c.url.endsWith('/sendMessage')).body.text, /Запрос записан/);
 });
+
+test('0.5.4: HTTP-таймаут клиента больше длинного опроса; зависший запрос обрывается одной строкой', async () => {
+  let seen = null;
+  const hang = async (url, init) => { seen = init.signal; return new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))); };
+  const tg = createTelegram({ token: 'T', fetchImpl: hang, timeoutMs: 30 });
+  const t0 = Date.now();
+  await assert.rejects(tg.getUpdates(0, 0), /Telegram getUpdates: нет ответа за 0 с/);
+  assert.ok(seen, 'fetch получает signal');
+  assert.ok(Date.now() - t0 < 2000);
+  // длинный опрос 1 с: таймаут клиента = 1 с + запас, запрос не обрывается раньше ответа сервера
+  const slow = async () => new Promise((resolve) => setTimeout(() => resolve({ status: 200, json: async () => ({ ok: true, result: [] }) }), 200));
+  assert.deepEqual(await createTelegram({ token: 'T', fetchImpl: slow, timeoutMs: 30 }).getUpdates(0, 1), []);
+});
+test('0.5.4: ответ не JSON (504 Gateway Timeout от прокси) — понятная ошибка с кодом HTTP', async () => {
+  const f = async () => ({ status: 504, statusText: 'Gateway Timeout', json: async () => { throw new SyntaxError('Unexpected token <'); } });
+  await assert.rejects(createTelegram({ token: 'T', fetchImpl: f }).getUpdates(0, 25), /Telegram getUpdates: HTTP 504 Gateway Timeout/);
+});
