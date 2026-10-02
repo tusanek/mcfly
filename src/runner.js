@@ -234,7 +234,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const deadline = new Date(now.getTime() + cfg.run.max_minutes * 60_000);
     const lastSlot = mode === 'night' && slot === [...cfg.schedule.slots].sort().at(-1); // последний по времени, а не по порядку в конфигурации
     const nightFile = lastSlot ? `mcfly/shifts/${shiftFileName('night', now)}` : '';
-    const nightHandoff = lastSlot ? `Это последний прогон ночи: репортёр также пишет ${nightFile} — передачу «ночь → день» по формату скилла mcfly-process (раздел «Передача смены»), со ссылками на прогоны ночи.` : '';
+    const nightHandoff = lastSlot ? `Это последний прогон ночи: репортёр также готовит текст ${nightFile}, а ты записываешь его в этот файл — передачу «ночь → день» по формату скилла mcfly-process (раздел «Передача смены»), со ссылками на прогоны ночи.` : '';
     const prompt = buildLeadPrompt({ cfg, p, runId: id, mode, deadline, context: buildContext(p, cfg, { handoff: true }), nightHandoff });
     const args = buildClaudeArgs({ prompt, cfg, pluginDir: MCFLY_ROOT });
     if (dryRun) {

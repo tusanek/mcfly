@@ -1,6 +1,6 @@
 {
   "name": "mcfly",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "description": "ИИ-команда разработки: роли-субагенты, ночные прогоны, эскалации в Telegram, OpenSpec",
   "author": {
     "name": "Александр Сыч"
