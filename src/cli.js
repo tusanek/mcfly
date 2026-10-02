@@ -7,7 +7,7 @@ import { loadConfig, autoDefault, isCategory } from './config.js';
 import { loadEnv } from './env.js';
 import { run, currentRun } from './runner.js';
 import { composeSummary, sendSummary, htmlToPlain } from './summary.js';
-import { pullAnswers } from './pull.js';
+import { pullAnswers, pollAnswers } from './pull.js';
 import { buildContext, isMcflyProject } from './context.js';
 import { loadQuestions, saveQuestions, addQuestion, expireQuestions, openQuestions } from './questions.js';
 import { branchProgress, commitPaths } from './git.js';
@@ -27,7 +27,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   doctor [--probe]                                проверить окружение (--probe: реальный пробный запуск claude -p)
   run [--mode night|day] [--dry-run]              запустить прогон команды (night проверяет окно слота)
   summary [--send]                                собрать (и отправить в Telegram) утреннюю сводку
-  answers                                         забрать ответы из Telegram
+  answers [--once]                                забирать ответы из Telegram сразу по приходу ~answers_every_minutes мин (задание launchd); --once — один раз
   context                                         контекст состояния для агентов
   status                                          состояние проекта
   question add --category <c> --text <t> --default <d> [--hours <n>]   (--default обязателен, кроме prod)
@@ -46,7 +46,7 @@ export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
     project: { type: 'string' }, mode: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
-    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, priority: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
+    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
   const projectDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
   const p = paths(projectDir);
@@ -83,9 +83,13 @@ export async function main(argv) {
     case 'run': { const r = await run({ projectDir, mode: values.mode || 'day', dryRun: !!values['dry-run'], now, log }); return ['ok', 'dry-run', 'missed'].includes(r.status) ? 0 : 1; }
     case 'summary': { if (values.send) await sendSummary(p, cfg, { now, log }); else log(htmlToPlain(composeSummary(p, cfg, { now, since: new Date(now.getTime() - 24 * 3600_000) }))); return 0; }
     case 'answers': {
-      // Во время прогона ответы забирает сам прогон (в начале) и следующий опрос после него: два чтения одного offset дали бы двойное применение.
-      if (currentRun(p)) { log('Сейчас идёт прогон — ответы из Telegram заберу после него.'); return 0; }
-      await pullAnswers({ projectDir, cfg, p, log, now }); return 0;
+      // Задание launchd (answers --project …) — длинный опрос почти до следующего запуска: ответ на «запусти» и кнопки за секунды.
+      // Чтения одного offset исключает блокировка опроса (pull.js); прогон до 0.5.4 читает без неё — пока он идёт, не читаем.
+      const every = cfg.schedule.answers_every_minutes;
+      if (!values.once && every > 0) { await pollAnswers({ projectDir, cfg, p, log, durationMs: Math.max(30, every * 60 - 30) * 1000 }); return 0; }
+      const cur = currentRun(p);
+      if (cur && !cur.pullLock) { log('Сейчас идёт прогон старой версии mcfly — ответы из Telegram заберу после него.'); return 0; }
+      await pullAnswers({ projectDir, cfg, p, log, now, lockWaitMs: 45_000 }); return 0;
     }
     case 'status': {
       const changes = listChanges(p.openspecChanges); const q = openQuestions(loadQuestions(p)); const agg = aggregate(readMetrics(p));

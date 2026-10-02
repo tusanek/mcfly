@@ -82,13 +82,24 @@ test('status говорит, идёт ли прогон', () => {
   assert.match(out, /^Идёт прогон 20261001-0926 с 09:26; последнее: 2026-10-01 09:55 → Bash: mvn test/m);
 });
 
-test('answers во время прогона ничего не забирает: ответы заберёт сам прогон', () => {
+test('answers --once во время прогона старой версии ничего не забирает: тот читает без блокировки опроса', () => {
   const dir = tmpDir(); gitRepo(dir);
   cli(['init', '--name', 'demo'], dir);
   const runner = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)', 'mcfly', 'run'], { stdio: 'ignore' });
   fs.writeFileSync(path.join(dir, 'mcfly', '.lock'), JSON.stringify({ pid: runner.pid, at: new Date().toISOString(), id: '20261001-0926' }));
-  let out; try { out = cli(['answers'], dir); } finally { runner.kill(); }
-  assert.equal(out.status, 0); assert.match(out.stdout, /идёт прогон/);
+  let out, outNew; try {
+    out = cli(['answers', '--once'], dir);
+    fs.writeFileSync(path.join(dir, 'mcfly', '.lock'), JSON.stringify({ pid: runner.pid, at: new Date().toISOString(), id: '20261001-0926', pull_lock: true }));
+    outNew = cli(['answers', '--once'], dir);
+  } finally { runner.kill(); }
+  assert.equal(out.status, 0); assert.match(out.stdout, /идёт прогон старой версии/);
+  assert.match(outNew.stdout, /Telegram не настроен/, 'прогон 0.5.4 берёт блокировку опроса — читать можно');
+});
+test('0.5.4: answers без --once — цикл опроса; без Telegram сразу выходит', () => {
+  const dir = tmpDir(); gitRepo(dir);
+  cli(['init', '--name', 'demo'], dir);
+  const t0 = Date.now(); const out = cli(['answers'], dir);
+  assert.equal(out.status, 0); assert.match(out.stdout, /Telegram не настроен/); assert.ok(Date.now() - t0 < 10_000);
 });
 
 test('shift: start → merge → write из worktree сессии', () => {
