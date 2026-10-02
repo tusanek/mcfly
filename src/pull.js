@@ -103,7 +103,7 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
 }
 
 /**
- * Задание answers: длинный опрос Telegram в течение durationMs (запуск launchd раз в answers_every_minutes, окно — на 30 с короче),
+ * Задание answers: длинный опрос Telegram в течение durationMs (answers_every_minutes; задание launchd постоянное — после выхода сразу новый цикл),
  * чтобы «запусти» и кнопки получали ответ за секунды, а не к следующему запуску.
  * - каждое сообщение применяется сразу (pullAnswers под блокировкой опроса);
  * - сетевая ошибка — строка в журнал, пауза errorPauseMs и следующая попытка;
