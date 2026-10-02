@@ -31,7 +31,7 @@ export function createTelegram({ token, fetchImpl = globalThis.fetch, timeoutMs 
     return data.result;
   }
   return {
-    /** html — разметка Telegram HTML (сводка укладывается в одно сообщение); keyboard — кнопки под последним куском. */
+    /** html — разметка Telegram HTML (длинный HTML режет вызывающий, см. splitHtml); keyboard — кнопки под последним куском этого вызова. */
     async sendMessage(chatId, text, { html = false, keyboard = null } = {}) {
       const results = [];
       const parts = html ? [text] : chunk(text);

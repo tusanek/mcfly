@@ -249,3 +249,18 @@ test('0.5.3: выдержка одобрения — `код` моноширин
   addChange(dir, 'fix-x', { proposal: '## Зачем\n\nЗаметка в `mcfly/answers.md` & <тег>.\n' }); requestApproval(listChanges(p.openspecChanges)[0]);
   assert.match(compose(p), /Одобрить <b>fix-x<\/b>: Заметка в <code>mcfly\/answers\.md<\/code> &amp; &lt;тег&gt;\./);
 });
+test('0.5.6: пункт «одобрить …» без имени изменения остаётся, если он не про изменения (выкат, доступ)', () => {
+  const dir = bareProject(); const p = paths(dir);
+  run(p, { id: '20261001-0600', slot: '06:00', started_at: new Date(2026, 9, 1, 6, 0).toISOString(), status: 'ok' });
+  report(p, '20261001-0600', '## Сделано\n- x\n## Нужно от человека\n- Одобрить выкат 1.2.0 на прод\n- одобрения трёх изменений (в Telegram)\n');
+  const need = needBlock(compose(p));
+  assert.match(need, /Нужно от вас \(1\)/, need);
+  assert.match(need, /Одобрить выкат 1\.2\.0 на прод/);
+});
+test('0.5.6: повторы — «релиз 1.2» и «релиз 1.2.1» разные пункты', () => {
+  const dir = bareProject(); const p = paths(dir);
+  run(p, { id: '20261001-0600', slot: '06:00', started_at: new Date(2026, 9, 1, 6, 0).toISOString(), status: 'ok' });
+  report(p, '20261001-0600', '## Сделано\n- x\n## Нужно от человека\n- проверить демо-сайт на релизе 1.2\n- проверить демо-сайт на релизе 1.2.1\n');
+  const need = needBlock(compose(p));
+  assert.match(need, /Нужно от вас \(2\)/, need);
+});

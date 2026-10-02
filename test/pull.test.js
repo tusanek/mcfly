@@ -174,3 +174,16 @@ test('0.5.4: Telegram не настроен — цикл сразу выходи
   await pollAnswers({ projectDir: dir, cfg: { ...cfg, telegram: { chat_id: '', token_env: 'MCFLY_TEST_TG' } }, p, log: (s) => lines.push(s), clock, sleep: fakeSleep(clock), durationMs: 570_000 });
   assert.equal(clock(), t0); assert.match(lines[0], /не настроен/);
 });
+
+test('0.5.6: сбой применения сообщения — offset всё равно сохранён, повторного применения нет, человеку предупреждение', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  const data = loadQuestions(p); addQuestion(data, { category: 'spec', text: 'x', defaultAnswer: 'y' }, cfg); saveQuestions(p, data);
+  fs.rmSync(p.answers); fs.mkdirSync(p.answers); // запись в answers.md упадёт (EISDIR)
+  const tg = fakeTg({ updates: [msg(7, 'Q1: b')] });
+  const lines = [];
+  await pullAnswers({ projectDir: dir, cfg: tgCfg, p, telegram: tg, log: (s) => lines.push(s), startRun: () => {} });
+  assert.equal(loadState(p).telegram_offset, 8, 'offset сдвинут — сообщение не будет применяться каждые 12 с');
+  assert.match(tg.sent.join('\n'), /⚠️/, 'человек узнаёт, что сообщение не применено');
+  const again = await pullAnswers({ projectDir: dir, cfg: tgCfg, p, telegram: tg, log: () => {}, startRun: () => {} });
+  assert.equal(again.messages.length, 0);
+});

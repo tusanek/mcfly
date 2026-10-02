@@ -71,7 +71,8 @@ function humanItems(sec) {
   return items.filter((l) => !isNone(l));
 }
 /** Пункт для сравнения: регистр, «ё», `код`, <code>, пунктуация и пробелы не важны. */
-const normItem = (t) => String(t).toLowerCase().replace(/ё/g, 'е').replace(/<\/?code>|`/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+// Точка между цифрами — часть числа («1.2» и «1.2.1» — разные версии), остальная пунктуация не важна.
+const normItem = (t) => String(t).toLowerCase().replace(/ё/g, 'е').replace(/<\/?code>|`/g, '').replace(/(\d)\.(?=\d)/g, '$1d').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 /** Повтор — совпадение после нормализации или вхождение по словам (от 20 символов); остаётся более полный пункт на месте первого. */
 function dedupe(items) {
   const out = [];
@@ -89,7 +90,10 @@ const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  */
 function approvalCovered(item, changes) {
   if (!/^\s*одобр/i.test(item)) return false;
-  return changes.filter((c) => new RegExp(`(^|[^\\w-])${escRe(c.name)}($|[^\\w-])`).test(item)).every((c) => c.mcfly.approval);
+  const named = changes.filter((c) => new RegExp(`(^|[^\\w-])${escRe(c.name)}($|[^\\w-])`).test(item));
+  // Без имён лишний только пункт про изменения вообще; «одобрить выкат на прод» — настоящая просьба, остаётся.
+  if (!named.length) return /изменени/i.test(item);
+  return named.every((c) => c.mcfly.approval);
 }
 /** Разбивает HTML по строкам на куски не длиннее max, не разрывая <blockquote>; кусок длиннее max — простым текстом. */
 export function splitHtml(html, max = TG_MAX) {

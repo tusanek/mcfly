@@ -92,7 +92,10 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
       session.runStartedAt = Date.now(); startRun(projectDir);
       return '▶️ Запускаю дневной прогон — итог придёт сообщением';
     };
-    acks = applyMessages(p, messages, { now, onRun });
+    // Сбой применения (не сеть) не должен оставлять offset на месте: иначе цикл применял бы ту же пачку каждые 12 с
+    // (дубли в answers.md, повторные одобрения и «запусти»). Пачка пропускается, человек получает предупреждение.
+    try { acks = applyMessages(p, messages, { now, onRun }); }
+    catch (e) { log(`Сообщения из Telegram не применены: ${errorLine(e)}`); acks = [`⚠️ Не удалось применить сообщения (${messages.length}): ${errorLine(e)}. Повторите их позже.`]; }
     if (nextOffset) { state.telegram_offset = nextOffset; saveState(p, state); }
   } finally { releasePullLock(p, lock); }
   // Нажатие кнопки ждёт ответа, иначе Telegram крутит на ней индикатор; устаревшее нажатие API отклоняет — не страшно.
