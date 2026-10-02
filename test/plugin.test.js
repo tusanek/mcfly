@@ -31,3 +31,45 @@ test('hand-shift: [x] в tasks.md отмечается до shift merge — по
   assert.ok(text.indexOf('[x]') < text.indexOf('mcfly shift merge'), 'отметка задач раньше слияния');
   assert.match(text, /после merge .*не коммить/i);
 });
+
+const read = (...p) => fs.readFileSync(path.join(MCFLY_ROOT, ...p), 'utf8');
+/** Тексты, которые читают агенты прогона: роли, навыки, промпт прогона, слэш-команды. */
+function pluginTexts() {
+  const files = [];
+  for (const f of fs.readdirSync(path.join(MCFLY_ROOT, 'agents'))) files.push(['agents', f]);
+  for (const d of fs.readdirSync(path.join(MCFLY_ROOT, 'skills'))) files.push(['skills', d, 'SKILL.md']);
+  for (const f of fs.readdirSync(path.join(MCFLY_ROOT, 'prompts'))) files.push(['prompts', f]);
+  for (const f of fs.readdirSync(path.join(MCFLY_ROOT, 'commands'))) files.push(['commands', f]);
+  return files.filter((f) => f.at(-1).endsWith('.md')).map((f) => ({ name: f.join('/'), text: read(...f) }));
+}
+
+test('переключение и сброс веток упоминаются только как запрет — классификатор их отклоняет', () => {
+  for (const { name, text } of pluginTexts()) {
+    for (const line of text.split('\n')) {
+      if (/git (checkout|switch|reset)\b/.test(line)) {
+        assert.match(line, /запрещ|отклоня|не поручай/i, `${name}: ${line.slice(0, 120)}`);
+      }
+    }
+  }
+});
+
+test('схема веток: worktree разработчику создаёт Claude Code, он сливает change/<имя>, лид забирает fetch', () => {
+  const dev = read('agents', 'developer.md');
+  assert.match(dev, /^isolation: worktree$/m);
+  assert.match(dev, /git merge --ff-only change\/<имя>/);
+  assert.match(dev, /git merge --no-edit change\/<имя>/);
+  for (const f of [['skills', 'mcfly-process', 'SKILL.md'], ['prompts', 'run.md'], ['agents', 'lead.md']]) {
+    assert.match(read(...f), /git fetch \. worktree-agent-<id>:change\/<имя>/, f.join('/'));
+  }
+  assert.match(read('skills', 'mcfly-process', 'SKILL.md'), /## Рабочие копии и ветки/);
+});
+
+test('репортёр без Write и Edit возвращает тексты, файлы отчёта пишет лид', () => {
+  const rep = read('agents', 'reporter.md');
+  const tools = /^tools: (.+)$/m.exec(rep)?.[1] || '';
+  assert.ok(tools, 'у репортёра явный список инструментов');
+  assert.ok(!/\b(Write|Edit)\b/.test(tools), tools);
+  assert.match(rep, /^Файл: <путь>/m);
+  assert.match(read('skills', 'mcfly-process', 'SKILL.md'), /## Отчёт прогона/);
+  assert.match(read('prompts', 'run.md'), /файлы записываешь и коммитишь ты/);
+});
