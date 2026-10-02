@@ -48,6 +48,12 @@ export function expireApprovals(changes, cfg, now = new Date()) {
 }
 export const pendingApprovals = (changes) => changes.filter((c) => c.mcfly.approval === 'pending');
 export const approvedWithWork = (changes) => changes.filter((c) => c.mcfly.approval === 'approved' && c.tasksOpen > 0);
+/** Первый абзац текста proposal: заголовки markdown («# …», «## Why») и пустые строки пропускаются. */
 export function proposalExcerpt(change, n = 600) {
-  return truncate(change.proposal.replace(/^#[^\n]*\n?/m, '').trim(), n);
+  const para = [];
+  for (const line of String(change.proposal || '').split('\n')) {
+    if (/^\s*#/.test(line) || !line.trim()) { if (para.length) break; continue; }
+    para.push(line.trim());
+  }
+  return truncate(para.join(' '), n);
 }
