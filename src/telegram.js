@@ -47,10 +47,11 @@ export function createTelegram({ token, fetchImpl = globalThis.fetch, timeoutMs 
     answerCallbackQuery(id, text = '') { return call('answerCallbackQuery', { callback_query_id: id, text }); },
   };
 }
-/** Кнопка сводки → команда, как если бы человек написал её текстом: ap:имя, rj:имя, qd:Qn. */
+/** Кнопка сводки → команда, как если бы человек написал её текстом: ap:имя, rj:имя, qd:Qn, rn:day («запусти»). */
 export function callbackText(data) {
-  const m = /^(ap|rj|qd):(.+)$/.exec(String(data || ''));
+  const m = /^(ap|rj|qd|rn):(.+)$/.exec(String(data || ''));
   if (!m) return null;
+  if (m[1] === 'rn') return 'запусти';
   if (m[1] === 'ap') return `approve ${m[2]}`;
   if (m[1] === 'rj') return `reject ${m[2]} отклонено кнопкой в Telegram`;
   return `${m[2]}: по умолчанию`;

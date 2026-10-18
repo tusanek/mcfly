@@ -8,6 +8,9 @@ import { loadState, saveState } from './state.js';
 import { currentRun } from './runner.js';
 import { MCFLY_ROOT } from './prompt.js';
 import { ensureDir, readJson, pad2 } from './util.js';
+import { listChanges, approvedWithWork, pendingApprovals } from './approvals.js';
+import { summaryKeyboard } from './summary.js';
+import { enqueueNotice, flushNotices } from './notices.js';
 
 /** Дневной прогон отдельным процессом: опрос ответов не ждёт его конца. */
 export function spawnDayRun(projectDir) {
@@ -54,6 +57,8 @@ export function acquirePullLock(p) {
 export function ownsPullLock(p, token) { return !!token && readJson(pullLockPath(p), null)?.token === token; }
 export function releasePullLock(p, token) { if (ownsPullLock(p, token)) { try { fs.unlinkSync(pullLockPath(p)); } catch {} } }
 
+const FORCE_RE = /вс[её]\s+равно|\bforce\b/i;
+
 /** Сетевая ошибка одной строкой, без стека: «fetch failed (ECONNRESET)». */
 export function errorLine(e) {
   const code = e?.cause?.code || e?.cause?.name || '';
@@ -67,7 +72,7 @@ export function errorLine(e) {
  * Возвращает { applied, messages } и busy: true (блокировка занята) или disabled: true (Telegram не настроен).
  */
 export async function pullAnswers({ projectDir, cfg, p, log = console.log, telegram = null, now = new Date(), startRun = spawnDayRun,
-  timeoutSec = 0, lockWaitMs = 0, sleep = realSleep, quietEmpty = false, session = {} }) {
+  timeoutSec = 0, lockWaitMs = 0, sleep = realSleep, quietEmpty = false, session = {}, flush = false }) {
   const token = process.env[cfg.telegram.token_env];
   if (!token || !cfg.telegram.chat_id) { log('Telegram не настроен (нет токена или chat_id), опрос пропущен.'); return { applied: 0, messages: [], disabled: true }; }
   const tg = telegram || createTelegram({ token });
@@ -75,6 +80,7 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
   for (let waited = 0; !lock && waited < lockWaitMs; waited += 250) { await sleep(250); lock = acquirePullLock(p); }
   if (!lock) { if (!quietEmpty) log('Ответы из Telegram сейчас забирает другой процесс (mcfly/logs/.pull.lock).'); return { applied: 0, messages: [], busy: true }; }
   let messages, acks;
+  let wantKeyboard = false; let started = false;
   try {
     const state = loadState(p);
     const updates = await tg.getUpdates(state.telegram_offset || 0, timeoutSec);
@@ -84,12 +90,19 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
     messages = extracted.messages;
     const { nextOffset } = extracted;
     // «запусти» из Telegram: дневной прогон, если сейчас ничего не идёт (run.telegram_start: false — только запись, как раньше).
-    const onRun = cfg.run.telegram_start === false ? null : () => {
+    const onRun = cfg.run.telegram_start === false ? null : (text = '') => {
       const cur = currentRun(p);
       if (cur) return `⏳ Идёт прогон ${cur.id || ''} с ${pad2(cur.since.getHours())}:${pad2(cur.since.getMinutes())} — итог придёт сообщением`;
       // прогон стартовал в этом задании меньше минуты назад и ещё не взял лок
       if (session.runStartedAt && Date.now() - session.runStartedAt < 60_000) return '⏳ Дневной прогон уже запускается';
-      session.runStartedAt = Date.now(); startRun(projectDir);
+      // Работы нет, а изменение ждёт одобрения: прогон лишь повторит «одобрите X» и потратит квоту (18.10 — два таких прогона).
+      // «запусти всё равно» — запустить, например чтобы команда прочла заметку.
+      const changes = listChanges(p.openspecChanges); const pend = pendingApprovals(changes);
+      if (!FORCE_RE.test(text) && !approvedWithWork(changes).length && pend.length) {
+        wantKeyboard = true;
+        return `⏸ Прогон не запущен: работы нет, ждёт одобрения ${pend.map((c) => c.name).join(', ')}. Одобрите кнопкой ниже — запустить можно сразу; «запусти всё равно» — запуск без одобрения.`;
+      }
+      session.runStartedAt = Date.now(); startRun(projectDir); started = true;
       return '▶️ Запускаю дневной прогон — итог придёт сообщением';
     };
     // Сбой применения (не сеть) не должен оставлять offset на месте: иначе цикл применял бы ту же пачку каждые 12 с
@@ -100,7 +113,17 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
   } finally { releasePullLock(p, lock); }
   // Нажатие кнопки ждёт ответа, иначе Telegram крутит на ней индикатор; устаревшее нажатие API отклоняет — не страшно.
   for (const m of messages.filter((x) => x.callbackId)) { try { await tg.answerCallbackQuery(m.callbackId, 'Принято'); } catch {} }
-  if (acks.length) await tg.sendMessage(cfg.telegram.chat_id, acks.join('\n'));
+  // Кнопки под ответом: после одобрения — «Запустить», если прогон не идёт и не запущен этим же сообщением; после отказа в запуске — одобрения.
+  const approved = acks.some((a) => a.startsWith('✅ одобрено'));
+  const keyboard = wantKeyboard ? summaryKeyboard(p, cfg)
+    : approved && !started && !currentRun(p) && cfg.run.telegram_start !== false ? [[{ text: '▶️ Запустить дневной прогон', callback_data: 'rn:day' }]] : [];
+  if (acks.length) {
+    // Сообщения уже применены: не дошёл ответ — в очередь, а не «недоступен» с потерей подтверждения.
+    try { await tg.sendMessage(cfg.telegram.chat_id, acks.join('\n'), { keyboard }); }
+    catch (e) { log(`Ответ в Telegram не отправлен: ${errorLine(e)}; поставлен в очередь.`); enqueueNotice(p, { text: acks.join('\n'), keyboard }, now); }
+  }
+  // Связь есть — дошлём то, что не ушло раньше (итоги прогонов, тревоги). Только задание answers: один отправитель очереди.
+  if (flush) await flushNotices(p, (text, kb) => tg.sendMessage(cfg.telegram.chat_id, text, { keyboard: kb }), { now, log });
   if (messages.length || !quietEmpty) log(`Telegram: сообщений ${messages.length}, применено ${acks.length}.`);
   return { applied: acks.length, messages };
 }
@@ -130,7 +153,7 @@ export async function pollAnswers({ projectDir, cfg, p, log = console.log, teleg
     let r;
     try {
       stats.polls += 1;
-      r = await pullAnswers({ projectDir, cfg, p, log, telegram, now: new Date(clock()), startRun, session, quietEmpty: true,
+      r = await pullAnswers({ projectDir, cfg, p, log, telegram, now: new Date(clock()), startRun, session, quietEmpty: true, flush: true,
         timeoutSec: Math.max(1, Math.min(pollTimeoutSec, Math.floor(left() / 1000))) });
     } catch (e) {
       stats.errors += 1;

@@ -42,7 +42,7 @@ export function applyMessages(p, messages, { now = new Date(), by = 'human', onR
       }
       case 'run':
         appendText(p.answers, `\n## ${stamp} — запрос ручного запуска\n${parsed.text}\n`);
-        acks.push(onRun ? onRun() : '▶️ Запрос записан. Запуск с ноутбука: mcfly run --mode day');
+        acks.push(onRun ? onRun(parsed.text) : '▶️ Запрос записан. Запуск с ноутбука: mcfly run --mode day');
         break;
       case 'ignore': break;
       default:
