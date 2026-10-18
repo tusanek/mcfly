@@ -10,6 +10,7 @@ import { callbackText } from '../src/telegram.js';
 import { sendSummary } from '../src/summary.js';
 import { paths, saveState } from '../src/state.js';
 import { listChanges } from '../src/approvals.js';
+import { loadQuestions, addQuestion, saveQuestions } from '../src/questions.js';
 import { cfg, bareProject, fakeClaudeSeq, addChange, tmpDir } from './helpers.js';
 
 const resultEvent = (over = {}) => ({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, total_cost_usd: 0.1, session_id: 's', result: 'готово', ...over });
@@ -172,4 +173,29 @@ test('0.5.8: ответ не дошёл — в очередь; опрос зад
   assert.equal(tg2.sent.length, 0, 'без flush очередь не трогается');
   await pullAnswers({ projectDir: dir, cfg: tgCfg, p, telegram: tg2, log: () => {}, flush: true });
   assert.deepEqual(tg2.sent.map((s) => s.text.split('\n').slice(1).join('\n')), ['📝 Записал как заметку для команды', 'итог прогона']);
+});
+
+test('0.5.9: итог прогона — текст вопросов с ответом по умолчанию и сроком, выдержка ждущих одобрения; решения важнее «Сделано»', () => {
+  const dir = bareProject(); const p = paths(dir);
+  const data = loadQuestions(p);
+  addQuestion(data, { category: 'spec', text: 'Дата релиза при бэкфилле: дата обработки или resolvedAt?', defaultAnswer: 'Дата обработки' }, cfg);
+  addQuestion(data, { category: 'prod', text: 'Выкатить на сервер?' }, cfg);
+  saveQuestions(p, data);
+  addChange(dir, 'add-y', { proposal: '# Proposal\n\n## Why\n\nORB-405 теряет факты: лимит целей 15.\n', meta: pending('add-y') });
+  const m = finishMessage(cfg, record(), p);
+  assert.match(m.text, /Решить:\n❓ Q1: Дата релиза при бэкфилле: дата обработки или resolvedAt\?\n   По умолчанию: Дата обработки \(примется \d\d\.\d\d \d\d:\d\d\)/);
+  assert.match(m.text, /❓ Q2: Выкатить на сервер\?\n   Ответа по умолчанию нет — команда ждёт вас/);
+  assert.match(m.text, /📋 Одобрить add-y: ORB-405 теряет факты: лимит целей 15\. \(авто-одобрение \d\d\.\d\d \d\d:\d\d\)/);
+  assert.match(m.text, /Кнопки ниже; свой ответ — текстом/);
+  assert.ok(m.text.indexOf('Решить:') < m.text.indexOf('Дальше:'));
+  assert.deepEqual(m.keyboard.map((row) => row[0].callback_data), ['qd:Q1', 'ap:add-y']);
+  fs.mkdirSync(path.join(p.runs, 'r1'), { recursive: true });
+  fs.writeFileSync(path.join(p.runs, 'r1', 'summary.md'), `# Прогон\n## Сделано\n${Array.from({ length: 5 }, (_, i) => `- пункт ${i} ${'x'.repeat(400)}`).join('\n')}\n`);
+  const big = loadQuestions(p);
+  for (let i = 0; i < 4; i++) addQuestion(big, { category: 'spec', text: `вопрос ${i} ${'y'.repeat(500)}`, defaultAnswer: 'z'.repeat(300) }, cfg);
+  saveQuestions(p, big);
+  const long = finishMessage(cfg, record(), p);
+  assert.ok(long.text.length <= 3800);
+  assert.match(long.text, /❓ Q6:/, 'последний вопрос на месте'); assert.match(long.text, /Дальше:/);
+  assert.ok(long.text.split('\n').filter((l) => l.startsWith('• пункт')).length < 5, '«Сделано» урезано ради вопросов');
 });
