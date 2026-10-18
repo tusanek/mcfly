@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { paths } from './state.js';
-import { loadConfig } from './config.js';
+import { loadConfig, autoDefault } from './config.js';
 import { loadEnv } from './env.js';
 import { matchSlot, parseSlot } from './window.js';
 import { buildClaudeArgs, runProcess, parseResult, cleanEnv, summarizeEvent, maskSecrets, permissionDenial, apiRetryWatch } from './claude.js';
@@ -11,15 +11,15 @@ import { buildContext } from './context.js';
 import { buildLeadPrompt, MCFLY_ROOT } from './prompt.js';
 import { appendMetric, runStats, readMetrics } from './metrics.js';
 import { activeDayHandoff, latestShift, renderAutoHandoff, writeShift, shiftFileName } from './shift-files.js';
-import { loadQuestions, saveQuestions, expireQuestions } from './questions.js';
-import { listChanges, expireApprovals, approvedWithWork, pendingApprovals } from './approvals.js';
+import { loadQuestions, saveQuestions, expireQuestions, openQuestions } from './questions.js';
+import { listChanges, expireApprovals, approvedWithWork, pendingApprovals, proposalExcerpt, approvalDeadline, isAutoApprovable } from './approvals.js';
 import { pullAnswers, errorLine } from './pull.js';
 import { createTelegram } from './telegram.js';
 import { ensureVpn } from './vpn.js';
 import { STATUS_RU, reportSections, humanItems, approvalCovered, isNone, nextRunText, changeProgress, summaryKeyboard } from './summary.js';
 import { enqueueNotice } from './notices.js';
 import { dirtyFiles, teamWorktrees, branchProgress, changedTrackedFiles } from './git.js';
-import { ensureDir, writeJson, appendText, readJson, readText, runId as makeRunId, fmtLocal, fmtDuration, pad2, truncate } from './util.js';
+import { ensureDir, writeJson, appendText, readJson, readText, runId as makeRunId, fmtLocal, fmtShort, fmtDuration, pad2, truncate } from './util.js';
 
 /** Команда процесса по pid (ps) или null, если узнать не удалось. */
 function processCommand(pid) {
@@ -163,6 +163,25 @@ export function finishText(cfg, record) {
   return `${FINISH_ICON[record.status] || 'ℹ️'} mcfly ${cfg.project}: прогон ${when} завершён: ${STATUS_RU[record.status] || record.status}${runStats(record)}, ${fmtDuration(record.duration_ms || 0)}.`;
 }
 
+const QUESTION_MAX = 400; const EXCERPT_MAX = 200;
+/**
+ * Открытые вопросы и ждущие одобрения изменения — текстом, к кнопкам под сообщением: без него кнопка «Q4: по умолчанию»
+ * не говорила, о чём вопрос и что значит «по умолчанию» (18.10).
+ */
+function decisionLines(cfg, p, changes) {
+  const out = [];
+  for (const q of openQuestions(loadQuestions(p))) {
+    out.push(`❓ ${q.id}: ${truncate(String(q.text || '').replace(/\s+/g, ' ').trim(), QUESTION_MAX)}`);
+    out.push(autoDefault(cfg, q.category) && q.default
+      ? `   По умолчанию: ${truncate(String(q.default).replace(/\s+/g, ' ').trim(), QUESTION_MAX)} (примется ${fmtShort(new Date(q.deadline_at))})`
+      : '   Ответа по умолчанию нет — команда ждёт вас');
+  }
+  for (const c of pendingApprovals(changes)) {
+    out.push(`📋 Одобрить ${c.name}: ${proposalExcerpt(c, EXCERPT_MAX)}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
+  }
+  if (out.length) out.push('Кнопки ниже; свой ответ — текстом: «Q4: …»');
+  return out;
+}
 const DONE_MAX = 5; const NEED_MAX = 3; const ITEM_MAX = 220; const MESSAGE_MAX = 3800;
 /** Пункты списком «• …»: не больше n, каждый урезан; не влезшие — одной строкой со ссылкой на отчёт. */
 function bullets(items, n, id) {
@@ -177,15 +196,24 @@ function bullets(items, n, id) {
  */
 export function finishMessage(cfg, record, p) {
   if (['network', 'error'].includes(record.status)) return { text: alertText(cfg, record), keyboard: [] };
-  const lines = [finishText(cfg, record)];
   const sec = reportSections(readText(path.join(p.runs, record.id, 'summary.md'), '')) || {};
   const changes = listChanges(p.openspecChanges);
   const done = (sec['Сделано'] || []).filter((l) => !isNone(l));
-  if (done.length) lines.push('', 'Сделано:', ...bullets(done, DONE_MAX, record.id));
   const need = humanItems(sec).filter((l) => !approvalCovered(l, changes));
-  if (need.length) lines.push('', 'Нужно от вас:', ...bullets(need, NEED_MAX, record.id));
-  lines.push('', `Дальше: ${nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => changeProgress(p.projectDir, c))}`);
-  return { text: truncate(lines.join('\n'), MESSAGE_MAX), keyboard: summaryKeyboard(p, cfg) };
+  const decide = decisionLines(cfg, p, changes);
+  const next = `Дальше: ${nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => changeProgress(p.projectDir, c))}`;
+  // Решения — главное: если не влезает, урезается «Сделано», а не вопросы.
+  const assemble = (doneMax) => {
+    const lines = [finishText(cfg, record)];
+    if (done.length && doneMax) lines.push('', 'Сделано:', ...bullets(done, doneMax, record.id));
+    if (need.length) lines.push('', 'Нужно от вас:', ...bullets(need, NEED_MAX, record.id));
+    if (decide.length) lines.push('', 'Решить:', ...decide);
+    lines.push('', next);
+    return lines.join('\n');
+  };
+  let text = assemble(DONE_MAX);
+  for (let k = DONE_MAX - 1; text.length > MESSAGE_MAX && k >= 0; k--) text = assemble(k);
+  return { text: truncate(text, MESSAGE_MAX), keyboard: summaryKeyboard(p, cfg) };
 }
 
 /** Текст тревоги о прогоне, который не выполнил работу и требует внимания человека. */
