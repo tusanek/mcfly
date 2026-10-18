@@ -11,18 +11,27 @@ export function buildClaudeArgs({ prompt, cfg, pluginDir }) {
   return args;
 }
 
-/** Запуск дочернего процесса без оболочки (массив аргументов), с таймаутом. */
-export function runProcess({ bin, args, cwd, env, timeoutMs, onStdout, onStderr }) {
+/**
+ * Запуск дочернего процесса без оболочки (массив аргументов), с таймаутом.
+ * watchdog — { check, intervalMs }: check() раз в intervalMs; вернул причину — процесс прерывается, причина в aborted.
+ */
+export function runProcess({ bin, args, cwd, env, timeoutMs, onStdout, onStderr, watchdog = null }) {
   return new Promise((resolve) => {
     const started = Date.now();
-    let stdout = '', stderr = '', timedOut = false;
+    let stdout = '', stderr = '', timedOut = false, aborted = null;
     const child = spawn(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    const timer = setTimeout(() => { timedOut = true; child.kill('SIGTERM'); setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 30_000).unref(); }, timeoutMs);
+    const stop = () => { child.kill('SIGTERM'); setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 30_000).unref(); };
+    const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
+    const watch = watchdog ? setInterval(() => {
+      if (aborted || timedOut) return;
+      const reason = watchdog.check();
+      if (reason) { aborted = reason; stop(); }
+    }, watchdog.intervalMs ?? 30_000) : null;
     // Декодер потока склеивает многобайтовые символы, разрезанные границей куска (кириллица в выводе claude).
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
     child.stdout.on('data', (s) => { stdout += s; onStdout?.(s); });
     child.stderr.on('data', (s) => { stderr += s; onStderr?.(s); });
-    const done = (exitCode, extra = '') => { clearTimeout(timer); resolve({ exitCode, stdout, stderr: stderr + extra, timedOut, durationMs: Date.now() - started, pid: child.pid }); };
+    const done = (exitCode, extra = '') => { clearTimeout(timer); if (watch) clearInterval(watch); resolve({ exitCode, stdout, stderr: stderr + extra, timedOut, aborted, durationMs: Date.now() - started, pid: child.pid }); };
     child.on('error', (err) => done(-1, String(err)));
     child.on('close', (code) => done(code));
   });
@@ -61,7 +70,33 @@ function subagentsOf(stats) {
   return { spawned: stats.spawned ?? 0, background: stats.started_in_background ?? 0, failed: stats.failed ?? 0, killed };
 }
 
-export function parseResult({ exitCode, stdout, stderr, timedOut }) {
+/**
+ * Сторож зависания на повторах API. Без доступа к API (VPN упал, Mac уснул посреди запроса) claude -p сам повторяет запрос —
+ * события system/api_retry — и может висеть до лимита прогона: ночи 07–17.10 так теряли по 3–4 часа и занимали слот 06:00.
+ * check() возвращает причину, если идёт серия api_retry без ответа модели и вывода нет stallMs или серия длится spanMs.
+ * Любое событие модели (assistant, user, result) серию сбрасывает: обычные повторы при перегрузке API заканчиваются ответом.
+ */
+export function apiRetryWatch({ stallMs = 10 * 60_000, spanMs = 20 * 60_000, clock = Date.now } = {}) {
+  let streakAt = null; let retries = 0; let lastAt = clock();
+  const min = (ms) => Math.round(ms / 60_000);
+  return {
+    line(line) {
+      lastAt = clock();
+      let ev; try { ev = JSON.parse(line); } catch { return; }
+      if (ev?.type === 'system' && ev.subtype === 'api_retry') { if (streakAt === null) streakAt = lastAt; retries += 1; }
+      else if (['assistant', 'user', 'result'].includes(ev?.type)) { streakAt = null; retries = 0; }
+    },
+    check() {
+      if (streakAt === null) return null;
+      const now = clock();
+      if (now - lastAt >= stallMs) return `нет доступа к API: ${retries} повтор(ов) api_retry без ответа, потом тишина ${min(now - lastAt)} мин (сон Mac или обрыв сети)`;
+      if (now - streakAt >= spanMs) return `нет доступа к API: ${retries} повтор(ов) api_retry без ответа за ${min(now - streakAt)} мин`;
+      return null;
+    },
+  };
+}
+
+export function parseResult({ exitCode, stdout, stderr, timedOut, aborted = null }) {
   // stream-json: по объекту на строку; событий result столько, сколько ходов сделал лид (CLI будит его по готовности фоновых задач),
   // статус и стоимость — по последнему, ходы — сумма. json: один объект (возможно многострочный).
   const results = [];
@@ -76,13 +111,14 @@ export function parseResult({ exitCode, stdout, stderr, timedOut }) {
   const failed = exitCode !== 0 || json?.is_error === true;
   let status = 'ok';
   if (timedOut) status = 'timeout';
+  else if (aborted) status = 'network'; // прервал сторож зависания: работа не шла, повторяем как при обрыве сети
   else if (failed && LIMIT_RE.test(text)) status = 'quota';
   else if (failed && NETWORK_RE.test(text)) status = 'network';
   else if (failed) status = 'error';
   return {
     status, json, costUsd: json?.total_cost_usd ?? null, turns: turnCounts.length ? turnCounts.reduce((a, b) => a + b, 0) : null,
     subagents: subagentsOf(json?.subagent_stats), sessionId: json?.session_id ?? null, resultText: json?.result ?? '',
-    errorText: status === 'ok' ? '' : maskSecrets(json?.result || stderr || `exit ${exitCode}`).slice(0, 2000),
+    errorText: status === 'ok' ? '' : maskSecrets(aborted || json?.result || stderr || `exit ${exitCode}`).slice(0, 2000),
   };
 }
 

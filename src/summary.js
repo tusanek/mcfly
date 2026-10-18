@@ -9,6 +9,7 @@ import { createTelegram, chunk } from './telegram.js';
 import { branchProgress } from './git.js';
 import { autoDefault } from './config.js';
 import { latestShift } from './shift-files.js';
+import { enqueueNotice } from './notices.js';
 
 export const STATUS_RU = { ok: 'ок', missed: 'пропущен', error: 'ошибка', timeout: 'остановлен по времени', quota: 'остановлен: лимит квоты', network: 'не выполнен: нет доступа к API (VPN?)', locked: 'не запущен (шёл другой прогон)' };
 
@@ -43,7 +44,7 @@ function runLine(r) {
 }
 
 /** Разделы markdown-отчёта: { 'Сделано': [строки], … }; авто-сводки runner'а — null. */
-function reportSections(text) {
+export function reportSections(text) {
   if (!text.trim() || /авто-сводка/.test(text.split('\n')[0])) return null;
   const out = {}; let cur = '';
   for (const line of text.split('\n')) {
@@ -64,9 +65,9 @@ function shiftSection(file, title, n = 6) {
   return out.slice(0, n);
 }
 const shiftTime = (s) => new Date(Number(s.at.slice(0, 4)), Number(s.at.slice(4, 6)) - 1, Number(s.at.slice(6, 8)), Number(s.at.slice(9, 11)), Number(s.at.slice(11, 13)));
-const isNone = (l) => !l || /^(нет|ничего)\.?$/i.test(l);
+export const isNone = (l) => !l || /^(нет|ничего)\.?$/i.test(l);
 /** Пункты «от человека»: раздел «Нужно от человека», у старых отчётов — строки «От вас: …». */
-function humanItems(sec) {
+export function humanItems(sec) {
   const items = sec['Нужно от человека'] || Object.values(sec).flat().filter((l) => /^от вас(?=[\s:—-])/i.test(l)).map((l) => l.replace(/^от вас\s*[:—-]?\s*/i, ''));
   return items.filter((l) => !isNone(l));
 }
@@ -88,7 +89,7 @@ const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * «Одобрить X» лишний: X уже в списке одобрений сверху или решён. Пункт без имён открытых изменений («одобрения трёх изменений»)
  * тоже лишний — ждущие одобрения стоят сверху, а когда их нет, строка «Следующий прогон» сама подсказывает одобрить изменение.
  */
-function approvalCovered(item, changes) {
+export function approvalCovered(item, changes) {
   if (!/^\s*одобр/i.test(item)) return false;
   const named = changes.filter((c) => new RegExp(`(^|[^\\w-])${escRe(c.name)}($|[^\\w-])`).test(item));
   // Без имён лишний только пункт про изменения вообще; «одобрить выкат на прод» — настоящая просьба, остаётся.
@@ -122,6 +123,18 @@ function fit(lines, budget) {
   return out;
 }
 
+/** Прогресс изменения «1/2»: по ветке change/<имя>, если она есть, иначе по tasks.md в main. */
+export function changeProgress(projectDir, c) {
+  const x = branchProgress(projectDir, c.name) || { done: c.tasksDone, open: c.tasksOpen };
+  return `${x.done}/${x.done + x.open}`;
+}
+/** Что будет в следующем прогоне: какие изменения команда продолжит или чего ей не хватает. esc — экранирование имён для HTML. */
+export function nextRunText(work, pend, progress, esc = (t) => t) {
+  if (work.length) return `команда продолжит ${work.map((c) => `${esc(c.name)} (${progress(c)})`).join(', ')}`;
+  if (pend.length) return `работы нет — одобрите ${pend.map((c) => esc(c.name)).join(', ')}`;
+  return 'работы нет — одобрите изменение или напишите команде заметку';
+}
+
 export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) {
   const records = readMetrics(p);
   const runs = records.filter((r) => r.type === 'run' && (!since || new Date(r.started_at) > since));
@@ -129,7 +142,7 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   const questions = openQuestions(loadQuestions(p));
   const pend = pendingApprovals(changes);
   const work = approvedWithWork(changes);
-  const progress = (c) => { const b = branchProgress(p.projectDir, c.name); const x = b || { done: c.tasksDone, open: c.tasksOpen }; return `${x.done}/${x.done + x.open}`; };
+  const progress = (c) => changeProgress(p.projectDir, c);
   const reports = runs.filter((r) => !['missed', 'locked'].includes(r.status))
     .map((r) => ({ r, sec: reportSections(readText(path.join(p.runs, r.id || '', 'summary.md'), '')) })).filter((x) => x.sec)
     .sort((a, b) => new Date(a.r.started_at) - new Date(b.r.started_at));
@@ -172,10 +185,7 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   const done = [period.events.changes_archived ? `изменений ${period.events.changes_archived}` : '', period.events.tasks_done ? `задач ${period.events.tasks_done}` : ''].filter(Boolean);
   if (done.length) ch.push(`🏁 За период завершено: ${done.join(', ')}`);
   L.push(...(ch.length ? ch : ['Открытых изменений нет']));
-  const next = work.length ? `команда продолжит ${work.map((c) => `${escHtml(c.name)} (${progress(c)})`).join(', ')}`
-    : pend.length ? `работы нет — одобрите ${pend.map((c) => escHtml(c.name)).join(', ')}`
-    : 'работы нет — одобрите изменение или напишите команде заметку';
-  L.push('', `<b>🗓 Следующий прогон:</b> ${next}`);
+  L.push('', `<b>🗓 Следующий прогон:</b> ${nextRunText(work, pend, progress, escHtml)}`);
   if (nightNew) {
     const lines = shiftSection(nightNew.path, 'Предложение на день');
     if (lines.length) L.push('', '<b>🌅 Предложение на день</b>', ...lines.map(inline));
@@ -244,7 +254,7 @@ export async function sendSummary(p, cfg, { now = new Date(), telegram = null, l
   } catch (e) {
     // Короткая тревога простым текстом; last_summary_at не двигается — следующая сводка охватит и этот период. Ошибка — дальше, launchd увидит код 1.
     const alarm = `⚠️ mcfly ${cfg.project}: сводка не отправлена (${truncate(String(e?.message || e), 300)}), смотрите \`mcfly summary\``;
-    try { await tg.sendMessage(cfg.telegram.chat_id, alarm); } catch (e2) { log(`Тревога тоже не отправлена: ${e2?.message || e2}`); }
+    try { await tg.sendMessage(cfg.telegram.chat_id, alarm); } catch (e2) { log(`Тревога тоже не отправлена: ${e2?.message || e2}; поставлена в очередь.`); enqueueNotice(p, { text: alarm }, now); }
     throw e;
   }
   state.last_summary_at = now.toISOString(); saveState(p, state);

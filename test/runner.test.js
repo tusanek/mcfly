@@ -253,7 +253,7 @@ test('сообщение о завершении называет прогрес
   fakeClaudeSeq(dir, [{ lines: [resultEvent()] }]);
   const notes = [];
   await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async () => {}, notify: async (t) => { notes.push(t); } });
-  assert.match(notes[0], /add-x 1\/2/);
+  assert.match(notes[0], /Дальше: команда продолжит add-x \(1\/2\)/);
 });
 test('сбой отправки тревоги не роняет прогон', async () => {
   const dir = bareProject();

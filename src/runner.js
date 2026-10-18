@@ -6,19 +6,20 @@ import { paths } from './state.js';
 import { loadConfig } from './config.js';
 import { loadEnv } from './env.js';
 import { matchSlot, parseSlot } from './window.js';
-import { buildClaudeArgs, runProcess, parseResult, cleanEnv, summarizeEvent, maskSecrets, permissionDenial } from './claude.js';
+import { buildClaudeArgs, runProcess, parseResult, cleanEnv, summarizeEvent, maskSecrets, permissionDenial, apiRetryWatch } from './claude.js';
 import { buildContext } from './context.js';
 import { buildLeadPrompt, MCFLY_ROOT } from './prompt.js';
 import { appendMetric, runStats, readMetrics } from './metrics.js';
 import { activeDayHandoff, latestShift, renderAutoHandoff, writeShift, shiftFileName } from './shift-files.js';
 import { loadQuestions, saveQuestions, expireQuestions } from './questions.js';
-import { listChanges, expireApprovals } from './approvals.js';
+import { listChanges, expireApprovals, approvedWithWork, pendingApprovals } from './approvals.js';
 import { pullAnswers, errorLine } from './pull.js';
 import { createTelegram } from './telegram.js';
 import { ensureVpn } from './vpn.js';
-import { STATUS_RU } from './summary.js';
+import { STATUS_RU, reportSections, humanItems, approvalCovered, isNone, nextRunText, changeProgress, summaryKeyboard } from './summary.js';
+import { enqueueNotice } from './notices.js';
 import { dirtyFiles, teamWorktrees, branchProgress, changedTrackedFiles } from './git.js';
-import { ensureDir, writeJson, appendText, readJson, readText, runId as makeRunId, fmtLocal, fmtDuration, pad2 } from './util.js';
+import { ensureDir, writeJson, appendText, readJson, readText, runId as makeRunId, fmtLocal, fmtDuration, pad2, truncate } from './util.js';
 
 /** Команда процесса по pid (ps) или null, если узнать не удалось. */
 function processCommand(pid) {
@@ -144,29 +145,47 @@ export function runOpenspecValidate(projectDir) {
 
 const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Тревога в Telegram сразу, не дожидаясь утренней сводки. Без токена или chat_id — молча ничего. */
+/** Сообщение в Telegram сразу, не дожидаясь утренней сводки; keyboard — кнопки под ним. Без токена или chat_id — молча ничего. */
 export function telegramNotifier(cfg) {
-  return async (text) => {
+  return async (text, keyboard = null) => {
     const token = process.env[cfg.telegram.token_env];
     if (!token || !cfg.telegram.chat_id) return;
-    await createTelegram({ token }).sendMessage(cfg.telegram.chat_id, text);
+    await createTelegram({ token }).sendMessage(cfg.telegram.chat_id, text, { keyboard });
   };
 }
 
 const FINISH_ICON = { ok: '✅', quota: '⏸', timeout: '⏱' };
-/** Прогресс одобренных изменений: «add-x 1/2» — по ветке change/<имя>, если она есть, иначе по main. */
-function approvedProgress(projectDir, p) {
-  return listChanges(p.openspecChanges).filter((c) => c.mcfly.approval === 'approved').map((c) => {
-    const b = branchProgress(projectDir, c.name) || { done: c.tasksDone, open: c.tasksOpen };
-    return `${c.name} ${b.done}/${b.done + b.open}`;
-  }).join(', ');
-}
-/** Сообщение в Telegram по окончании прогона: тревога при network и error, иначе короткий итог. */
-export function finishText(cfg, record, progress = '') {
+/** Первая строка итога: статус, ходы, стоимость, длительность; при network и error — тревога. */
+export function finishText(cfg, record) {
   if (['network', 'error'].includes(record.status)) return alertText(cfg, record);
   const start = new Date(record.started_at);
   const when = record.slot || `${pad2(start.getHours())}:${pad2(start.getMinutes())}`;
-  return `${FINISH_ICON[record.status] || 'ℹ️'} mcfly ${cfg.project}: прогон ${when} завершён: ${STATUS_RU[record.status] || record.status}${runStats(record)}, ${fmtDuration(record.duration_ms || 0)}.${progress ? ` ${progress}.` : ''}`;
+  return `${FINISH_ICON[record.status] || 'ℹ️'} mcfly ${cfg.project}: прогон ${when} завершён: ${STATUS_RU[record.status] || record.status}${runStats(record)}, ${fmtDuration(record.duration_ms || 0)}.`;
+}
+
+const DONE_MAX = 5; const NEED_MAX = 3; const ITEM_MAX = 220; const MESSAGE_MAX = 3800;
+/** Пункты списком «• …»: не больше n, каждый урезан; не влезшие — одной строкой со ссылкой на отчёт. */
+function bullets(items, n, id) {
+  const out = items.slice(0, n).map((l) => `• ${truncate(String(l).replace(/`/g, ''), ITEM_MAX)}`);
+  if (items.length > n) out.push(`• … ещё ${items.length - n} — mcfly/runs/${id}/summary.md`);
+  return out;
+}
+/**
+ * Итог прогона для Telegram: первая строка статуса, «Сделано» и «Нужно от вас» из отчёта репортёра, что будет дальше
+ * и кнопки одобрений и ответов по умолчанию. Без этого человек видел только «прогон завершён: ок» и не понимал,
+ * сделала ли команда что-нибудь (18.10: из четырёх ручных прогонов работали только первый и третий).
+ */
+export function finishMessage(cfg, record, p) {
+  if (['network', 'error'].includes(record.status)) return { text: alertText(cfg, record), keyboard: [] };
+  const lines = [finishText(cfg, record)];
+  const sec = reportSections(readText(path.join(p.runs, record.id, 'summary.md'), '')) || {};
+  const changes = listChanges(p.openspecChanges);
+  const done = (sec['Сделано'] || []).filter((l) => !isNone(l));
+  if (done.length) lines.push('', 'Сделано:', ...bullets(done, DONE_MAX, record.id));
+  const need = humanItems(sec).filter((l) => !approvalCovered(l, changes));
+  if (need.length) lines.push('', 'Нужно от вас:', ...bullets(need, NEED_MAX, record.id));
+  lines.push('', `Дальше: ${nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => changeProgress(p.projectDir, c))}`);
+  return { text: truncate(lines.join('\n'), MESSAGE_MAX), keyboard: summaryKeyboard(p, cfg) };
 }
 
 /** Текст тревоги о прогоне, который не выполнил работу и требует внимания человека. */
@@ -196,7 +215,7 @@ export function afterLastSlot(now, slots) {
 }
 
 /** Прогон команды. mode: night (с проверкой окна слота) | day. */
-export async function run({ projectDir, mode = 'day', dryRun = false, now = new Date(), log = console.log, sleep = realSleep, notify = null, beforeAttempt = null }) {
+export async function run({ projectDir, mode = 'day', dryRun = false, now = new Date(), log = console.log, sleep = realSleep, notify = null, beforeAttempt = null, apiWatch = {} }) {
   const p = paths(projectDir);
   loadEnv(projectDir);
   const cfg = loadConfig(p.config);
@@ -252,7 +271,8 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const eventsStream = fs.createWriteStream(path.join(runDir, 'events.log'));
     const event = (s) => eventsStream.write(`${fmtLocal(new Date())} ${s}\n`);
     let denials = 0; // отказы разрешений субагентам и лиду: иначе о них узнаём только из отчёта
-    const stdoutLines = lineSplitter((line) => { if (permissionDenial(line)) denials += 1; const s = summarizeEvent(line); if (s) event(s); });
+    let watch = null; // сторож зависания на повторах API — свой на каждую попытку
+    const stdoutLines = lineSplitter((line) => { watch?.line(line); if (permissionDenial(line)) denials += 1; const s = summarizeEvent(line); if (s) event(s); });
     const stderrLines = lineSplitter((line) => event(`⚠ ${maskSecrets(line).trim().slice(0, 300)}`));
     const started = new Date();
     log(`Прогон ${id} (${mode}${slot ? ', слот ' + slot : ''}) запущен, лимит ${cfg.run.max_minutes} мин.`);
@@ -270,9 +290,12 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     for (;;) {
       attempts += 1;
       beforeAttempt?.(attempts);
+      watch = apiRetryWatch({ stallMs: cfg.run.api_stall_minutes * 60_000, spanMs: cfg.run.api_retry_span_minutes * 60_000, ...apiWatch });
       result = await runProcess({ bin: cfg.run.claude_bin, args, cwd: projectDir, env, timeoutMs: Math.max(60_000, runDeadline - Date.now()),
-        onStdout: (chunk) => { logStream.write(chunk); stdoutLines.push(chunk); }, onStderr: (chunk) => { logStream.write(chunk); stderrLines.push(chunk); } });
+        onStdout: (chunk) => { logStream.write(chunk); stdoutLines.push(chunk); }, onStderr: (chunk) => { logStream.write(chunk); stderrLines.push(chunk); },
+        watchdog: { check: watch.check, intervalMs: apiWatch.intervalMs ?? 30_000 } });
       stdoutLines.flush(); stderrLines.flush();
+      if (result.aborted) event(`⛔ прерван: ${result.aborted}`);
       parsed = parseResult(result);
       // Стоимость и ходы — сумма по попыткам: прерванная попытка тоже тратила квоту.
       if (parsed.costUsd != null) costUsd = Math.round(((costUsd || 0) + parsed.costUsd) * 1e6) / 1e6;
@@ -302,7 +325,10 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     if (lastSlot) ensureNightHandoff(p, now);
     commitRunState(projectDir, id, log);
     // Итог любого прогона — сразу в Telegram: дневной прогон иначе молчит до утренней сводки.
-    try { await (notify || telegramNotifier(cfg))(finishText(cfg, record, approvedProgress(projectDir, p))); } catch (e) { log(`Сообщение в Telegram не отправлено: ${e.message}`); }
+    // Не ушло (нет связи) — в очередь: задание answers дошлёт его, когда Telegram ответит.
+    const message = finishMessage(cfg, record, p);
+    try { await (notify || telegramNotifier(cfg))(message.text, message.keyboard); }
+    catch (e) { log(`Сообщение в Telegram не отправлено: ${e.message}; поставлено в очередь.`); enqueueNotice(p, message); }
     log(`Прогон ${id} завершён: ${record.status} (${fmtLocal(new Date())}).`);
     return { status: record.status, id };
   } finally { releaseLock(p); }
