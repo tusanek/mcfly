@@ -65,6 +65,12 @@ function shiftSection(file, title, n = 6) {
   return out.slice(0, n);
 }
 const shiftTime = (s) => new Date(Number(s.at.slice(0, 4)), Number(s.at.slice(4, 6)) - 1, Number(s.at.slice(6, 8)), Number(s.at.slice(9, 11)), Number(s.at.slice(11, 13)));
+const PLAIN_MAX = 700; const PLAIN_SUMMARY_MAX = 450; // в сводке пересказов несколько — каждый короче
+/** Раздел «Простыми словами» отчёта одним абзацем (для человека, не читающего код); нет раздела или «нет» — пустая строка. */
+export function plainWords(sec, max = PLAIN_MAX) {
+  const text = (sec?.['Простыми словами'] || []).filter((l) => !isNone(l)).join(' ').replace(/`/g, '').replace(/\s+/g, ' ').trim();
+  return text ? truncate(text, max) : '';
+}
 export const isNone = (l) => !l || /^(нет|ничего)\.?$/i.test(l);
 /** Пункты «от человека»: раздел «Нужно от человека», у старых отчётов — строки «От вас: …». */
 export function humanItems(sec) {
@@ -169,6 +175,10 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
     L.push(`<b>🙋 Нужно от вас (${need.length})</b>`, ...need.map((x, i) => `${i + 1}. ${x}`));
     if (questions.length || pend.length) L.push('<i>Кнопки — под сообщением; свой ответ: «Q1: текст»</i>');
   } else L.push('<b>🙋 От вас ничего не нужно</b>');
+
+  // 1а. Простыми словами — пересказ отчётов для человека, не читающего код: до четырёх последних прогонов.
+  const plainRuns = reports.map(({ r, sec }) => ({ r, text: plainWords(sec, PLAIN_SUMMARY_MAX) })).filter((x) => x.text).slice(-4);
+  if (plainRuns.length) L.push('', '<b>🗣 Простыми словами</b>', ...plainRuns.map(({ r, text }) => `<i>${escHtml(r.slot || hhmm(new Date(r.started_at)))}</i> — ${escHtml(text)}`));
 
   // 2. Прогоны — строка со значком; пропущенные слоты по расписанию.
   L.push('', '<b>🌙 Прогоны</b>');
