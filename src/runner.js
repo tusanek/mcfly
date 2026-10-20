@@ -16,7 +16,7 @@ import { listChanges, expireApprovals, approvedWithWork, pendingApprovals, propo
 import { pullAnswers, errorLine } from './pull.js';
 import { createTelegram } from './telegram.js';
 import { ensureVpn } from './vpn.js';
-import { STATUS_RU, reportSections, humanItems, approvalCovered, isNone, nextRunText, changeProgress, summaryKeyboard } from './summary.js';
+import { STATUS_RU, plainWords, reportSections, humanItems, approvalCovered, isNone, nextRunText, changeProgress, summaryKeyboard } from './summary.js';
 import { enqueueNotice } from './notices.js';
 import { dirtyFiles, teamWorktrees, branchProgress, changedTrackedFiles } from './git.js';
 import { ensureDir, writeJson, appendText, readJson, readText, runId as makeRunId, fmtLocal, fmtShort, fmtDuration, pad2, truncate } from './util.js';
@@ -203,8 +203,10 @@ export function finishMessage(cfg, record, p) {
   const decide = decisionLines(cfg, p, changes);
   const next = `Дальше: ${nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => changeProgress(p.projectDir, c))}`;
   // Решения — главное: если не влезает, урезается «Сделано», а не вопросы.
+  const plain = plainWords(sec);
   const assemble = (doneMax) => {
     const lines = [finishText(cfg, record)];
+    if (plain) lines.push('', `Простыми словами: ${plain}`);
     if (done.length && doneMax) lines.push('', 'Сделано:', ...bullets(done, doneMax, record.id));
     if (need.length) lines.push('', 'Нужно от вас:', ...bullets(need, NEED_MAX, record.id));
     if (decide.length) lines.push('', 'Решить:', ...decide);

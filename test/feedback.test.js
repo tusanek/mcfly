@@ -199,3 +199,18 @@ test('0.5.9: итог прогона — текст вопросов с отве
   assert.match(long.text, /❓ Q6:/, 'последний вопрос на месте'); assert.match(long.text, /Дальше:/);
   assert.ok(long.text.split('\n').filter((l) => l.startsWith('• пункт')).length < 5, '«Сделано» урезано ради вопросов');
 });
+
+test('0.5.10: итог прогона — «Простыми словами» сразу под строкой статуса, без обратных кавычек и не длиннее 700', () => {
+  const dir = bareProject(); const p = paths(dir);
+  fs.mkdirSync(path.join(p.runs, 'r1'), { recursive: true });
+  fs.writeFileSync(path.join(p.runs, 'r1', 'summary.md'), `# Прогон r1\n## Простыми словами\nСтарые скриншоты элемента теперь остаются в \`истории\`.\nОт вас ничего не нужно.\n## Сделано\n- history-screenshots: задачи 1–6\n`);
+  const m = finishMessage(cfg, record(), p);
+  const lines = m.text.split('\n');
+  assert.equal(lines[1], ''); assert.equal(lines[2], 'Простыми словами: Старые скриншоты элемента теперь остаются в истории. От вас ничего не нужно.');
+  assert.ok(m.text.indexOf('Простыми словами') < m.text.indexOf('Сделано:'));
+  fs.writeFileSync(path.join(p.runs, 'r1', 'summary.md'), `# Прогон r1\n## Простыми словами\n${'а'.repeat(900)}\n`);
+  const long = finishMessage(cfg, record(), p).text.split('\n')[2];
+  assert.ok(long.length <= 'Простыми словами: '.length + 700 && long.endsWith('…'));
+  fs.writeFileSync(path.join(p.runs, 'r1', 'summary.md'), '# Прогон r1\n## Простыми словами\nнет\n');
+  assert.doesNotMatch(finishMessage(cfg, record(), p).text, /Простыми словами/);
+});

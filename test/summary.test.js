@@ -264,3 +264,24 @@ test('0.5.6: повторы — «релиз 1.2» и «релиз 1.2.1» ра�
   const need = needBlock(compose(p));
   assert.match(need, /Нужно от вас \(2\)/, need);
 });
+
+test('0.5.10: «Простыми словами» — до четырёх последних отчётов, перед прогонами, HTML экранирован, «нет» и пустое не выводятся', () => {
+  const p = paths(bareProject());
+  const ids = ['20261001-0010', '20261001-0200', '20261001-0400', '20261001-0600', '20261001-0926'];
+  ids.forEach((id, i) => {
+    run(p, { id, slot: null, mode: 'day', started_at: new Date(2026, 9, 1, [0, 2, 4, 6, 9][i], [10, 0, 0, 0, 26][i]).toISOString(), status: 'ok' });
+    report(p, id, `# Прогон ${id}\n## Простыми словами\nПрогон ${i}: старые скриншоты теперь <сохраняются> & видны в \`истории\`.\n## Сделано\n- x\n`);
+  });
+  run(p, { id: '20261001-1000', slot: null, mode: 'day', started_at: new Date(2026, 9, 1, 10, 0).toISOString(), status: 'ok' });
+  report(p, '20261001-1000', '# Прогон\n## Простыми словами\nнет\n## Сделано\n- y\n');
+  const html = compose(p);
+  assert.match(html, /<b>🗣 Простыми словами<\/b>\n<i>02:00<\/i> — Прогон 1: старые скриншоты теперь &lt;сохраняются&gt; &amp; видны в истории\./);
+  assert.doesNotMatch(html, /Прогон 0:/, 'не больше четырёх');
+  assert.match(html, /<i>09:26<\/i> — Прогон 4:/);
+  assert.doesNotMatch(html, /<i>10:00<\/i>/, '«нет» не выводится');
+  assert.ok(html.indexOf('🗣 Простыми словами') < html.indexOf('🌙 Прогоны'));
+  const bare = paths(bareProject());
+  run(bare, { id: '20261001-0200', slot: '02:00', started_at: new Date(2026, 9, 1, 2, 0).toISOString(), status: 'ok' });
+  report(bare, '20261001-0200', '# Прогон\n## Сделано\n- z\n');
+  assert.doesNotMatch(compose(bare), /Простыми словами/, 'старый отчёт без раздела — секции нет');
+});

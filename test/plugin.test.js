@@ -70,6 +70,8 @@ test('репортёр без Write и Edit возвращает тексты, �
   assert.ok(tools, 'у репортёра явный список инструментов');
   assert.ok(!/\b(Write|Edit)\b/.test(tools), tools);
   assert.match(rep, /^Файл: <путь>/m);
+  assert.match(rep, /# Прогон <id>\n## Простыми словами\n[^\n]+\n## Сделано/, '«Простыми словами» — первый раздел отчёта');
+  assert.match(rep, /Без имён классов, файлов, веток, коммитов/);
   assert.match(read('skills', 'mcfly-process', 'SKILL.md'), /## Отчёт прогона/);
   assert.match(read('prompts', 'run.md'), /файлы записываешь и коммитишь ты/);
 });
