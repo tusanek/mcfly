@@ -6,14 +6,15 @@ import { paths } from './state.js';
 import { loadConfig, autoDefault } from './config.js';
 import { loadEnv } from './env.js';
 import { matchSlot, parseSlot } from './window.js';
-import { buildClaudeArgs, runProcess, parseResult, cleanEnv, summarizeEvent, maskSecrets, permissionDenial, apiRetryWatch } from './claude.js';
+import { buildClaudeArgs, runProcess, parseResult, cleanEnv, summarizeEvent, maskSecrets, permissionDenial, apiRetryWatch, rateLimitInfo } from './claude.js';
+import { chainDecision } from './chain.js';
 import { buildContext } from './context.js';
 import { buildLeadPrompt, MCFLY_ROOT } from './prompt.js';
 import { appendMetric, runStats, readMetrics } from './metrics.js';
 import { activeDayHandoff, latestShift, renderAutoHandoff, writeShift, shiftFileName } from './shift-files.js';
 import { loadQuestions, saveQuestions, expireQuestions, openQuestions } from './questions.js';
 import { listChanges, expireApprovals, approvedWithWork, pendingApprovals, proposalExcerpt, approvalDeadline, isAutoApprovable } from './approvals.js';
-import { pullAnswers, errorLine } from './pull.js';
+import { pullAnswers, errorLine, spawnDayRun } from './pull.js';
 import { createTelegram } from './telegram.js';
 import { ensureVpn } from './vpn.js';
 import { STATUS_RU, plainWords, reportSections, humanItems, approvalCovered, isNone, nextRunText, changeProgress, summaryKeyboard } from './summary.js';
@@ -201,7 +202,7 @@ export function finishMessage(cfg, record, p) {
   const done = (sec['Сделано'] || []).filter((l) => !isNone(l));
   const need = humanItems(sec).filter((l) => !approvalCovered(l, changes));
   const decide = decisionLines(cfg, p, changes);
-  const next = `Дальше: ${nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => changeProgress(p.projectDir, c))}`;
+  const next = `Дальше: ${record.chain && record.chain.startsWith('следующий') ? `${record.chain}` : nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => changeProgress(p.projectDir, c))}${record.chain && !record.chain.startsWith('следующий') ? ` (${record.chain})` : ''}`;
   // Решения — главное: если не влезает, урезается «Сделано», а не вопросы.
   const plain = plainWords(sec);
   const assemble = (doneMax) => {
@@ -245,7 +246,7 @@ export function afterLastSlot(now, slots) {
 }
 
 /** Прогон команды. mode: night (с проверкой окна слота) | day. */
-export async function run({ projectDir, mode = 'day', dryRun = false, now = new Date(), log = console.log, sleep = realSleep, notify = null, beforeAttempt = null, apiWatch = {} }) {
+export async function run({ projectDir, mode = 'day', dryRun = false, now = new Date(), log = console.log, sleep = realSleep, notify = null, beforeAttempt = null, apiWatch = {}, startRun = spawnDayRun, chained = process.env.MCFLY_CHAINED === '1' }) {
   const p = paths(projectDir);
   loadEnv(projectDir);
   const cfg = loadConfig(p.config);
@@ -268,6 +269,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     if (!dryRun) recordRun(p, { id, mode, slot, started_at: now.toISOString(), ended_at: now.toISOString(), status: 'locked', note: 'шёл другой прогон (mcfly/.lock)' });
     log('Другой прогон уже идёт (mcfly/.lock).'); return { status: 'locked', id };
   }
+  let outcome;
   try {
     if (!dryRun) {
       // Задание answers держит блокировку опроса на длинный опрос (до 25 с) и отпускает её между опросами — ждём её с запасом.
@@ -302,7 +304,8 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const event = (s) => eventsStream.write(`${fmtLocal(new Date())} ${s}\n`);
     let denials = 0; // отказы разрешений субагентам и лиду: иначе о них узнаём только из отчёта
     let watch = null; // сторож зависания на повторах API — свой на каждую попытку
-    const stdoutLines = lineSplitter((line) => { watch?.line(line); if (permissionDenial(line)) denials += 1; const s = summarizeEvent(line); if (s) event(s); });
+    let usage = null; // доли лимитов подписки из последнего rate_limit_event
+    const stdoutLines = lineSplitter((line) => { watch?.line(line); const rl = rateLimitInfo(line); if (rl) usage = rl; if (permissionDenial(line)) denials += 1; const s = summarizeEvent(line); if (s) event(s); });
     const stderrLines = lineSplitter((line) => event(`⚠ ${maskSecrets(line).trim().slice(0, 300)}`));
     const started = new Date();
     log(`Прогон ${id} (${mode}${slot ? ', слот ' + slot : ''}) запущен, лимит ${cfg.run.max_minutes} мин.`);
@@ -346,20 +349,26 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const unfinished = unfinishedWork(projectDir);
     const record = {
       id, mode, slot, started_at: started.toISOString(), ended_at: new Date().toISOString(), status: parsed.status, attempts, duration_ms: Date.now() - started.getTime(), exit_code: result.exitCode,
-      cost_usd: costUsd, turns, permission_denials: denials, subagents: parsed.subagents, session_id: parsed.sessionId, validate_ok: validate.ok, dirty_files: dirty, error: parsed.errorText,
+      cost_usd: costUsd, turns, usage, ...(chained ? { chained: true } : {}), permission_denials: denials, subagents: parsed.subagents, session_id: parsed.sessionId, validate_ok: validate.ok, dirty_files: dirty, error: parsed.errorText,
       note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', ...new Set(vpnNotes), denials ? `отказов разрешений: ${denials}` : '', fallback ? 'репортёр не написал отчёт, записана авто-сводка' : '', validate.available && validate.ok === false ? 'openspec validate: есть ошибки' : '',
         dirty ? `незакоммиченных файлов: ${dirty}` : '', unfinished.length ? `незакоммиченная работа в worktree: ${unfinished.map(describeWorktree).join(', ')}` : ''].filter(Boolean).join('; '),
     };
+    // Цепочка: решение до записи — причина попадает в журнал и итог прогона.
+    const chain = chainDecision({ cfg, p, record, projectDir, started });
+    if (chain.reason) record.chain = chain.chain ? `следующий прогон запущен (${chain.reason})` : `цепочка остановлена: ${chain.reason}`;
     recordRun(p, record);
     // Последний слот ночи: репортёр не оставил ночную передачу — собрать по фактам.
     if (lastSlot) ensureNightHandoff(p, now);
     commitRunState(projectDir, id, log);
-    // Итог любого прогона — сразу в Telegram: дневной прогон иначе молчит до утренней сводки.
+    // Итог любого прогона — сразу в Telegram: прогон по «запусти» иначе молчит до утренней сводки.
     // Не ушло (нет связи) — в очередь: задание answers дошлёт его, когда Telegram ответит.
     const message = finishMessage(cfg, record, p);
     try { await (notify || telegramNotifier(cfg))(message.text, message.keyboard); }
     catch (e) { log(`Сообщение в Telegram не отправлено: ${e.message}; поставлено в очередь.`); enqueueNotice(p, message); }
     log(`Прогон ${id} завершён: ${record.status} (${fmtLocal(new Date())}).`);
-    return { status: record.status, id };
+    outcome = { status: record.status, id, chained: chain.chain };
   } finally { releaseLock(p); }
+  // Следующий прогон цепочки — после снятия лока, отдельным процессом.
+  if (outcome.chained) { log('Цепочка: запускаю следующий прогон.'); startRun(projectDir, { chained: true }); }
+  return outcome;
 }

@@ -4,10 +4,12 @@ import { readText } from './util.js';
 export const DEFAULT_CONFIG = {
   project: 'project',
   schedule: { slots: ['00:00', '04:00'], tolerance_minutes: 30, summary_at: '08:00', answers_every_minutes: 10 },
-  run: { max_minutes: 180, permission_mode: 'auto', model: '', max_budget_usd: 0, claude_bin: 'claude', lead_agent: 'mcfly:lead', extra_args: [], network_retries: 6, network_retry_minutes: 10, api_stall_minutes: 10, api_retry_span_minutes: 20, vpn_service: '', scutil_bin: 'scutil', telegram_start: true },
+  run: { max_minutes: 180, permission_mode: 'auto', model: '', max_budget_usd: 0, claude_bin: 'claude', lead_agent: 'mcfly:lead', extra_args: [], network_retries: 6, network_retry_minutes: 10, api_stall_minutes: 10, api_retry_span_minutes: 20, chain_max_weekly: 0.7, chain_max_five_hour: 0.9, chain_max_runs: 8, vpn_service: '', scutil_bin: 'scutil', telegram_start: true },
   escalation: {
     answer_deadline_hours: 24,
     approval_deadline_hours: 24,
+    small_change_max_tasks: 6, // мелкое изменение — до 6 задач; 0 — мелких нет
+    small_approval_deadline_hours: 4,
     categories: {
       spec: { label: 'Спецификация и критерии приёмки', auto_default: true },
       deps: { label: 'Внешние зависимости и платные ресурсы', auto_default: true },
@@ -42,6 +44,11 @@ export function validate(cfg) {
   if (!(cfg.run.network_retry_minutes > 0)) errors.push('run.network_retry_minutes: должно быть больше 0');
   if (!(cfg.run.api_stall_minutes > 0)) errors.push('run.api_stall_minutes: должно быть больше 0');
   if (!(cfg.run.api_retry_span_minutes > 0)) errors.push('run.api_retry_span_minutes: должно быть больше 0');
+  if (!(cfg.run.chain_max_weekly >= 0 && cfg.run.chain_max_weekly <= 1)) errors.push('run.chain_max_weekly: доля от 0 до 1 (0 — без цепочки)');
+  if (!(cfg.run.chain_max_five_hour > 0 && cfg.run.chain_max_five_hour <= 1)) errors.push('run.chain_max_five_hour: доля больше 0 и не больше 1');
+  if (!(Number.isInteger(cfg.run.chain_max_runs) && cfg.run.chain_max_runs >= 0)) errors.push('run.chain_max_runs: целое число от 0');
+  if (!(Number.isInteger(cfg.escalation.small_change_max_tasks) && cfg.escalation.small_change_max_tasks >= 0)) errors.push('escalation.small_change_max_tasks: целое число от 0');
+  if (!(cfg.escalation.small_approval_deadline_hours > 0)) errors.push('escalation.small_approval_deadline_hours: должно быть больше 0');
   const modes = ['acceptEdits', 'auto', 'bypassPermissions', 'default', 'dontAsk', 'plan'];
   if (!modes.includes(cfg.run.permission_mode)) errors.push(`run.permission_mode: одно из ${modes.join(', ')}`);
   if (errors.length) throw new Error('Ошибки в mcfly/config.yaml:\n- ' + errors.join('\n- '));

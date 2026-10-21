@@ -71,7 +71,8 @@ export function extractMessages(updates, chatId) {
     const m = u.message;
     if (!m || !m.text) continue;
     if (chatId && String(m.chat?.id) !== String(chatId)) continue;
-    messages.push({ id: m.message_id, chatId: m.chat.id, text: m.text, date: new Date(m.date * 1000), from: m.from?.username || m.from?.first_name || '' });
+    // replyTo — текст сообщения, на которое человек ответил свайпом: по нему ответ относится к вопросу (answers.js).
+    messages.push({ id: m.message_id, chatId: m.chat.id, text: m.text, date: new Date(m.date * 1000), from: m.from?.username || m.from?.first_name || '', ...(m.reply_to_message?.text ? { replyTo: m.reply_to_message.text } : {}) });
   }
   return { messages, nextOffset };
 }

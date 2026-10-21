@@ -85,7 +85,7 @@ test('0.5.2: «запусти» из Telegram стартует дневной п
   const started = [];
   await pullAnswers({ projectDir: dir, cfg: tgCfg(), p, telegram: createTelegram({ token: 'T', fetchImpl: f }), log: () => {}, startRun: (d) => started.push(d) });
   assert.deepEqual(started, [dir]);
-  assert.match(f.calls.find((c) => c.url.endsWith('/sendMessage')).body.text, /▶️ Запускаю дневной прогон/);
+  assert.match(f.calls.find((c) => c.url.endsWith('/sendMessage')).body.text, /▶️ Запускаю прогон/);
 });
 test('0.5.2: «запусти» во время прогона — ответ «идёт прогон», второй не стартует', async () => {
   const dir = bareProject(); const p = paths(dir); process.env.X = 'T';

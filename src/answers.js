@@ -13,6 +13,17 @@ export function parseMessage(text) {
   return { type: 'note', text: t };
 }
 
+/**
+ * Ответ свайпом на сообщение с вопросом: текст без «Qn:» становится ответом на тот вопрос, если в исходном сообщении
+ * ровно один открытый вопрос. Иначе — как раньше (заметка): Q12 прежде повторялся, потому что заметка вопрос не закрывала.
+ */
+export function withReplyQuestion(parsed, replyTo, qdata) {
+  if (parsed.type !== 'note' || !replyTo) return parsed;
+  const open = new Set(qdata.questions.filter((q) => q.status === 'open').map((q) => q.id));
+  const ids = [...new Set(String(replyTo).match(/\bQ\d+\b/g) || [])].filter((id) => open.has(id));
+  return ids.length === 1 ? { type: 'answer', id: ids[0], text: parsed.text } : parsed;
+}
+
 /** Применяет сообщения человека к состоянию проекта; возвращает строки-подтверждения для ответа в чат. */
 export function applyMessages(p, messages, { now = new Date(), by = 'human', onRun = null } = {}) {
   const acks = [];
@@ -20,7 +31,7 @@ export function applyMessages(p, messages, { now = new Date(), by = 'human', onR
   const changes = listChanges(p.openspecChanges);
   const stamp = fmtLocal(now);
   for (const msg of messages) {
-    const parsed = parseMessage(msg.text);
+    const parsed = withReplyQuestion(parseMessage(msg.text), msg.replyTo, qdata);
     switch (parsed.type) {
       case 'answer': {
         // «по умолчанию» (кнопка сводки или текст) — ответ по умолчанию самого вопроса.

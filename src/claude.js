@@ -96,6 +96,14 @@ export function apiRetryWatch({ stallMs = 10 * 60_000, spanMs = 20 * 60_000, clo
   };
 }
 
+/** Доли лимитов подписки из события rate_limit_event потока stream-json: { five_hour, seven_day } от 0 до 1 или null. */
+export function rateLimitInfo(line) {
+  let ev; try { ev = JSON.parse(line); } catch { return null; }
+  const w = ev?.type === 'rate_limit_event' ? ev.rate_limit_info?.unifiedWindows : null;
+  if (!w || w.seven_day?.utilization == null) return null;
+  return { five_hour: w.five_hour?.utilization ?? null, seven_day: w.seven_day.utilization };
+}
+
 export function parseResult({ exitCode, stdout, stderr, timedOut, aborted = null }) {
   // stream-json: по объекту на строку; событий result столько, сколько ходов сделал лид (CLI будит его по готовности фоновых задач),
   // статус и стоимость — по последнему, ходы — сумма. json: один объект (возможно многострочный).

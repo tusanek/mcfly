@@ -50,7 +50,7 @@ test('0.5.4: цикл обрабатывает сообщение в перво�
   assert.match(tg.sent[0], /Q1: ответ записан/);
   assert.deepEqual(tg.callbacks, ['cb1'], 'нажатие кнопки подтверждено сразу');
   assert.equal(tg.polls[1].offset, 9, 'offset сохранён после первой итерации');
-  assert.deepEqual(started, [dir]); assert.match(tg.sent[1], /▶️ Запускаю дневной прогон/);
+  assert.deepEqual(started, [dir]); assert.match(tg.sent[1], /▶️ Запускаю прогон/);
   assert.equal(loadState(p).telegram_offset, 10);
 });
 
