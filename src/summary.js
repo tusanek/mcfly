@@ -34,7 +34,7 @@ const inline = (t) => escHtml(t).replace(/`([^`]+)`/g, '<code>$1</code>');
 
 function runLine(r) {
   const start = new Date(r.started_at);
-  const when = r.slot || (r.mode === 'day' ? `${hhmm(start)} (днём)` : hhmm(start));
+  const when = r.slot || hhmm(start);
   let detail;
   if (r.status === 'ok') detail = [r.duration_ms ? fmtDuration(r.duration_ms) : '', r.cost_usd != null ? `~$${Number(r.cost_usd).toFixed(2)}` : ''].filter(Boolean).join(' · ') || 'ок';
   else if (r.status === 'error') detail = `ошибка: ${truncate(String(r.note || r.error || '').split('; ')[0], 120)}`;

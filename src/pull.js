@@ -11,10 +11,12 @@ import { ensureDir, readJson, pad2 } from './util.js';
 import { listChanges, approvedWithWork, pendingApprovals } from './approvals.js';
 import { summaryKeyboard } from './summary.js';
 import { enqueueNotice, flushNotices } from './notices.js';
+import { autoApproveAndStart } from './chain.js';
 
 /** Дневной прогон отдельным процессом: опрос ответов не ждёт его конца. */
-export function spawnDayRun(projectDir) {
-  spawn(process.execPath, [path.join(MCFLY_ROOT, 'bin', 'mcfly'), 'run', '--mode', 'day', '--project', projectDir], { cwd: projectDir, detached: true, stdio: 'ignore', env: process.env }).unref();
+export function spawnDayRun(projectDir, { chained = false } = {}) {
+  const env = { ...process.env }; if (chained) env.MCFLY_CHAINED = '1'; else delete env.MCFLY_CHAINED;
+  spawn(process.execPath, [path.join(MCFLY_ROOT, 'bin', 'mcfly'), 'run', '--mode', 'day', '--project', projectDir], { cwd: projectDir, detached: true, stdio: 'ignore', env }).unref();
 }
 
 const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -89,12 +91,12 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
     const extracted = extractMessages(updates, cfg.telegram.chat_id);
     messages = extracted.messages;
     const { nextOffset } = extracted;
-    // «запусти» из Telegram: дневной прогон, если сейчас ничего не идёт (run.telegram_start: false — только запись, как раньше).
+    // «запусти» из Telegram: прогон, если сейчас ничего не идёт (run.telegram_start: false — только запись, как раньше).
     const onRun = cfg.run.telegram_start === false ? null : (text = '') => {
       const cur = currentRun(p);
       if (cur) return `⏳ Идёт прогон ${cur.id || ''} с ${pad2(cur.since.getHours())}:${pad2(cur.since.getMinutes())} — итог придёт сообщением`;
       // прогон стартовал в этом задании меньше минуты назад и ещё не взял лок
-      if (session.runStartedAt && Date.now() - session.runStartedAt < 60_000) return '⏳ Дневной прогон уже запускается';
+      if (session.runStartedAt && Date.now() - session.runStartedAt < 60_000) return '⏳ Прогон уже запускается';
       // Работы нет, а изменение ждёт одобрения: прогон лишь повторит «одобрите X» и потратит квоту (18.10 — два таких прогона).
       // «запусти всё равно» — запустить, например чтобы команда прочла заметку.
       const changes = listChanges(p.openspecChanges); const pend = pendingApprovals(changes);
@@ -103,7 +105,7 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
         return `⏸ Прогон не запущен: работы нет, ждёт одобрения ${pend.map((c) => c.name).join(', ')}. Одобрите кнопкой ниже — запустить можно сразу; «запусти всё равно» — запуск без одобрения.`;
       }
       session.runStartedAt = Date.now(); startRun(projectDir); started = true;
-      return '▶️ Запускаю дневной прогон — итог придёт сообщением';
+      return '▶️ Запускаю прогон — итог придёт сообщением';
     };
     // Сбой применения (не сеть) не должен оставлять offset на месте: иначе цикл применял бы ту же пачку каждые 12 с
     // (дубли в answers.md, повторные одобрения и «запусти»). Пачка пропускается, человек получает предупреждение.
@@ -116,7 +118,7 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
   // Кнопки под ответом: после одобрения — «Запустить», если прогон не идёт и не запущен этим же сообщением; после отказа в запуске — одобрения.
   const approved = acks.some((a) => a.startsWith('✅ одобрено'));
   const keyboard = wantKeyboard ? summaryKeyboard(p, cfg)
-    : approved && !started && !currentRun(p) && cfg.run.telegram_start !== false ? [[{ text: '▶️ Запустить дневной прогон', callback_data: 'rn:day' }]] : [];
+    : approved && !started && !currentRun(p) && cfg.run.telegram_start !== false ? [[{ text: '▶️ Запустить прогон', callback_data: 'rn:day' }]] : [];
   if (acks.length) {
     // Сообщения уже применены: не дошёл ответ — в очередь, а не «недоступен» с потерей подтверждения.
     try { await tg.sendMessage(cfg.telegram.chat_id, acks.join('\n'), { keyboard }); }
@@ -144,6 +146,16 @@ export async function pollAnswers({ projectDir, cfg, p, log = console.log, teleg
   const pause = (ms) => sleep(Math.max(0, Math.min(ms, left())));
   const session = {}; const stats = { polls: 0, messages: 0, errors: 0 };
   let oldRunNoted = false;
+  // Раз в цикл: авто-одобрение по сроку (мелкие изменения — через small_approval_deadline_hours) и, если лимиты позволяют, прогон.
+  try {
+    const lines = autoApproveAndStart({ cfg, p, now: new Date(clock()), isRunning: () => !!currentRun(p), startRun: () => startRun(projectDir) });
+    if (lines.length) {
+      log(lines.join(' | '));
+      const token = process.env[cfg.telegram.token_env];
+      const tg = telegram || (token && cfg.telegram.chat_id ? createTelegram({ token }) : null);
+      if (tg) { try { await tg.sendMessage(cfg.telegram.chat_id, lines.join('\n')); } catch (e) { enqueueNotice(p, { text: lines.join('\n') }); } }
+    }
+  } catch (e) { log(`Авто-одобрение не выполнено: ${errorLine(e)}`); }
   while (left() >= 1_000) {
     const cur = currentRun(p);
     if (cur && !cur.pullLock) {

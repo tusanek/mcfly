@@ -33,8 +33,15 @@ export function requestApproval(change, { category = 'spec', priority, now = new
 export function setApproval(change, status, by, note = '', now = new Date(), { priority } = {}) {
   return writeMeta(change, { ...change.mcfly, approval: status, ...(priority != null ? { priority: Number(priority) } : {}), decided_at: now.toISOString(), by, note });
 }
+/** Мелкое изменение: задач не больше escalation.small_change_max_tasks (0 — мелких нет). */
+export function isSmallChange(change, cfg) {
+  const max = Number(cfg.escalation.small_change_max_tasks || 0);
+  return max > 0 && change.tasksDone + change.tasksOpen <= max;
+}
+/** Срок авто-одобрения: у мелких изменений — escalation.small_approval_deadline_hours, у остальных — approval_deadline_hours. */
 export function approvalDeadline(change, cfg) {
-  return new Date(new Date(change.mcfly.requested_at || 0).getTime() + cfg.escalation.approval_deadline_hours * 3600_000);
+  const hours = isSmallChange(change, cfg) ? cfg.escalation.small_approval_deadline_hours : cfg.escalation.approval_deadline_hours;
+  return new Date(new Date(change.mcfly.requested_at || 0).getTime() + hours * 3600_000);
 }
 export function isAutoApprovable(change, cfg) { return autoDefault(cfg, change.mcfly.category || 'spec'); }
 /** Авто-одобряет просроченные pending-изменения (кроме категорий без auto_default). */

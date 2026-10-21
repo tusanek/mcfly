@@ -154,7 +154,7 @@ test('0.5.8: одобрение кнопкой — ответ с кнопкой 
   const tg = fakeTg([cb]); const started = [];
   await pullAnswers({ projectDir: dir, cfg: tgCfg, p, telegram: tg, log: () => {}, startRun: (d) => started.push(d) });
   assert.match(tg.sent[0].text, /✅ одобрено: add-y/);
-  assert.deepEqual(tg.sent[0].keyboard, [[{ text: '▶️ Запустить дневной прогон', callback_data: 'rn:day' }]]);
+  assert.deepEqual(tg.sent[0].keyboard, [[{ text: '▶️ Запустить прогон', callback_data: 'rn:day' }]]);
   assert.equal(callbackText('rn:day'), 'запусти');
   addChange(dir, 'add-z', { meta: pending('add-z') });
   const tg2 = fakeTg([msg(2, 'approve add-z'), msg(3, 'запусти')]);
