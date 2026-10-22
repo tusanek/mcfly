@@ -31,20 +31,26 @@ export function createTelegram({ token, fetchImpl = globalThis.fetch, timeoutMs 
     return data.result;
   }
   return {
-    /** html — разметка Telegram HTML (длинный HTML режет вызывающий, см. splitHtml); keyboard — кнопки под последним куском этого вызова. */
-    async sendMessage(chatId, text, { html = false, keyboard = null } = {}) {
+    /**
+     * html — разметка Telegram HTML (длинный HTML режет вызывающий, см. splitHtml); keyboard — кнопки под последним куском этого вызова;
+     * replyKeyboard — постоянная клавиатура внизу чата (ряды кнопок-текстов), если кнопок под сообщением нет.
+     */
+    async sendMessage(chatId, text, { html = false, keyboard = null, replyKeyboard = null } = {}) {
       const results = [];
       const parts = html ? [text] : chunk(text);
       for (const [i, part] of parts.entries()) {
         const body = { chat_id: chatId, text: part, disable_web_page_preview: true };
         if (html) body.parse_mode = 'HTML';
         if (keyboard?.length && i === parts.length - 1) body.reply_markup = { inline_keyboard: keyboard };
+        else if (replyKeyboard?.length && i === parts.length - 1) body.reply_markup = { keyboard: replyKeyboard, resize_keyboard: true, is_persistent: true };
         results.push(await call('sendMessage', body));
       }
       return results;
     },
     getUpdates(offset = 0, timeoutSec = 0) { return call('getUpdates', { offset, timeout: timeoutSec, allowed_updates: ['message', 'callback_query'] }); },
     answerCallbackQuery(id, text = '') { return call('answerCallbackQuery', { callback_query_id: id, text }); },
+    /** Меню команд «/» в чате с ботом: [{ command, description }]. */
+    setMyCommands(commands) { return call('setMyCommands', { commands }); },
   };
 }
 /** Кнопка сводки → команда, как если бы человек написал её текстом: ap:имя, rj:имя, qd:Qn, rn:day («запусти»). */

@@ -17,7 +17,7 @@ test('parseMessage: одобрения, запуск, заметки', () => {
   assert.deepEqual(parseMessage('одобряю add-cache но без кеша'), { type: 'approve', change: 'add-cache', note: 'но без кеша' });
   assert.deepEqual(parseMessage('reject add-cache слишком сложно'), { type: 'reject', change: 'add-cache', note: 'слишком сложно' });
   assert.equal(parseMessage('запусти').type, 'run');
-  assert.equal(parseMessage('/start').type, 'ignore');
+  assert.deepEqual(parseMessage('/start'), { type: 'view', view: 'help' });
   assert.deepEqual(parseMessage('подумай про кеш'), { type: 'note', text: 'подумай про кеш' });
 });
 test('applyMessages меняет состояние и возвращает подтверждения', () => {
