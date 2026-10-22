@@ -1,6 +1,7 @@
 import { appendText, fmtLocal } from './util.js';
 import { loadQuestions, saveQuestions, answerQuestion } from './questions.js';
 import { listChanges, setApproval } from './approvals.js';
+import { viewOf } from './overview.js';
 
 export function parseMessage(text) {
   const t = String(text || '').trim();
@@ -8,8 +9,11 @@ export function parseMessage(text) {
   if ((m = /^#?\s*(Q\d+)\s*[:：\-–—]?\s*([\s\S]*)$/i.exec(t)) && m[2].trim()) return { type: 'answer', id: m[1].toUpperCase(), text: m[2].trim() };
   if ((m = /^(?:approve|ok|одобряю|одобрить|да)\s+([\w.-]+)\s*([\s\S]*)$/i.exec(t))) return { type: 'approve', change: m[1], note: m[2].trim() };
   if ((m = /^(?:reject|отклоняю|отклонить|нет)\s+([\w.-]+)\s*([\s\S]*)$/i.exec(t))) return { type: 'reject', change: m[1], note: m[2].trim() };
-  if (/^(?:run|запусти|запуск)(?:\s|$)/i.test(t)) return { type: 'run', text: t };
-  if (/^\/start\b/.test(t)) return { type: 'ignore' };
+  // Команды обзора («где мы», /status, кнопки внизу чата) только читают состояние: их отвечает pull.js, сюда они не пишутся.
+  const view = viewOf(t);
+  if (view) return { type: 'view', view };
+  // «▶️ Запусти» — кнопка внизу чата, /run — меню команд.
+  if (/^\/?(?:run|запусти|запуск)(?:@\w+)?(?:\s|$)/i.test(t.replace(/^[^\p{L}\p{N}/]+/u, ''))) return { type: 'run', text: t };
   return { type: 'note', text: t };
 }
 
@@ -55,7 +59,7 @@ export function applyMessages(p, messages, { now = new Date(), by = 'human', onR
         appendText(p.answers, `\n## ${stamp} — запрос ручного запуска\n${parsed.text}\n`);
         acks.push(onRun ? onRun(parsed.text) : '▶️ Запрос записан. Запуск с ноутбука: mcfly run --mode day');
         break;
-      case 'ignore': break;
+      case 'view': break;
       default:
         appendText(p.answers, `\n## ${stamp} — заметка\n${parsed.text}\n`);
         acks.push('📝 Записал как заметку для команды');

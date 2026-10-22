@@ -15,7 +15,7 @@ export const STATUS_RU = { ok: 'ок', missed: 'пропущен', error: 'ош�
 
 const STATUS_COUNT_RU = { ok: 'ок', quota: 'квота', network: 'нет сети', timeout: 'по времени', error: 'ошибок', missed: 'пропущено', locked: 'занято' };
 /** «прогонов 3 (квота 2, ок 1)» — частые статусы первыми. */
-function runsByStatus(agg) {
+export function runsByStatus(agg) {
   const parts = Object.keys(STATUS_COUNT_RU).filter((s) => agg[s]).sort((a, b) => agg[b] - agg[a]).map((s) => `${STATUS_COUNT_RU[s]} ${agg[s]}`);
   return `прогонов ${agg.runs}${parts.length ? ` (${parts.join(', ')})` : ''}`;
 }
@@ -30,7 +30,7 @@ export const escHtml = (t) => String(t ?? '').replace(/&/g, '&amp;').replace(/</
 export const htmlToPlain = (html) => String(html).replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 const hhmm = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 /** `код` из markdown отчёта — моноширинным, остальное экранировано. */
-const inline = (t) => escHtml(t).replace(/`([^`]+)`/g, '<code>$1</code>');
+export const inline = (t) => escHtml(t).replace(/`([^`]+)`/g, '<code>$1</code>');
 
 function runLine(r) {
   const start = new Date(r.started_at);

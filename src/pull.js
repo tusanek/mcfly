@@ -1,5 +1,6 @@
 import { createTelegram, extractMessages } from './telegram.js';
-import { applyMessages } from './answers.js';
+import { applyMessages, parseMessage } from './answers.js';
+import { sendView, ensureBotMenu } from './overview.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -125,6 +126,11 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
     catch (e) { log(`Ответ в Telegram не отправлен: ${errorLine(e)}; поставлен в очередь.`); enqueueNotice(p, { text: acks.join('\n'), keyboard }, now); }
   }
   // Связь есть — дошлём то, что не ушло раньше (итоги прогонов, тревоги). Только задание answers: один отправитель очереди.
+  // Команды обзора («где мы», «цели», …) — после применения остальных сообщений, чтобы ответ уже видел, например, свежее одобрение.
+  for (const view of messages.map((m) => parseMessage(m.text)).filter((x) => x.type === 'view').map((x) => x.view)) {
+    try { await sendView(tg, cfg.telegram.chat_id, view, p, cfg, { now }); }
+    catch (e) { log(`Ответ на «${view}» не отправлен: ${errorLine(e)}`); }
+  }
   if (flush) await flushNotices(p, (text, kb) => tg.sendMessage(cfg.telegram.chat_id, text, { keyboard: kb }), { now, log });
   if (messages.length || !quietEmpty) log(`Telegram: сообщений ${messages.length}, применено ${acks.length}.`);
   return { applied: acks.length, messages };
@@ -146,13 +152,15 @@ export async function pollAnswers({ projectDir, cfg, p, log = console.log, teleg
   const pause = (ms) => sleep(Math.max(0, Math.min(ms, left())));
   const session = {}; const stats = { polls: 0, messages: 0, errors: 0 };
   let oldRunNoted = false;
+  const token = process.env[cfg.telegram.token_env];
+  const tg = telegram || (token && cfg.telegram.chat_id ? createTelegram({ token }) : null);
+  // Новая ревизия меню бота: команды «/» и клавиатура внизу чата — один раз; сбой (нет сети) повторится в следующем цикле.
+  if (tg) { try { if (await ensureBotMenu(p, cfg, tg)) log('Меню команд бота обновлено.'); } catch (e) { log(`Меню команд бота не обновлено: ${errorLine(e)}`); } }
   // Раз в цикл: авто-одобрение по сроку (мелкие изменения — через small_approval_deadline_hours) и, если лимиты позволяют, прогон.
   try {
     const lines = autoApproveAndStart({ cfg, p, now: new Date(clock()), isRunning: () => !!currentRun(p), startRun: () => startRun(projectDir) });
     if (lines.length) {
       log(lines.join(' | '));
-      const token = process.env[cfg.telegram.token_env];
-      const tg = telegram || (token && cfg.telegram.chat_id ? createTelegram({ token }) : null);
       if (tg) { try { await tg.sendMessage(cfg.telegram.chat_id, lines.join('\n')); } catch (e) { enqueueNotice(p, { text: lines.join('\n') }); } }
     }
   } catch (e) { log(`Авто-одобрение не выполнено: ${errorLine(e)}`); }
