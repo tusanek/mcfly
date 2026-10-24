@@ -21,6 +21,8 @@ export const DEFAULT_CONFIG = {
   },
   telegram: { chat_id: '', token_env: 'MCFLY_TELEGRAM_TOKEN', owner_id: '' }, // owner_id — кто может запускать действия (0.6.0); пусто — личный чат chat_id
   limits: { max_changes_per_run: 2, max_tasks_per_change: 10 },
+  // Ссылки в «статус» (0.6.1): { <подпись>: <адрес http(s)> }, например сайт продукта
+  links: {},
   // Действия владельца из Telegram (0.6.0): { <id>: { title, run, describe?, prepare?, offer?, followups?, timeout_minutes?, confirm?, during_run?, vpn? } }
   actions: {},
 };
@@ -55,6 +57,8 @@ export function validate(cfg) {
   const modes = ['acceptEdits', 'auto', 'bypassPermissions', 'default', 'dontAsk', 'plan'];
   if (!modes.includes(cfg.run.permission_mode)) errors.push(`run.permission_mode: одно из ${modes.join(', ')}`);
   errors.push(...actionErrors(cfg.actions));
+  if (!cfg.links || typeof cfg.links !== 'object' || Array.isArray(cfg.links)) errors.push('links: словарь «подпись: адрес»');
+  else for (const [k, v] of Object.entries(cfg.links)) if (!/^https?:\/\/\S+$/.test(String(v))) errors.push(`links.${k}: адрес http:// или https://`);
   if (errors.length) throw new Error('Ошибки в mcfly/config.yaml:\n- ' + errors.join('\n- '));
   return cfg;
 }
