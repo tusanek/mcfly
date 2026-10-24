@@ -13,7 +13,7 @@ export function parseMessage(text) {
   // Действия владельца (0.6.0): «действия», «действие deploy», кнопки ac:/ax:/an: — отвечает pull.js (actions.js), сюда не пишутся.
   const action = parseActionText(t);
   if (action) return action;
-  // Команды обзора («где мы», /status, кнопки внизу чата) только читают состояние: их отвечает pull.js, сюда они не пишутся.
+  // Команды обзора («статус», /status, кнопки внизу чата) только читают состояние: их отвечает pull.js, сюда они не пишутся.
   const view = viewOf(t);
   if (view) return { type: 'view', view };
   // «▶️ Запусти» — кнопка внизу чата, /run — меню команд.

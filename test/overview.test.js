@@ -40,7 +40,7 @@ const REPORT = `# Прогон 20261022-1450
 `;
 
 test('0.5.12: команды обзора — текстом, /командой, кнопкой внизу чата; «статус по X» остаётся заметкой', () => {
-  for (const [t, v] of [['где мы', 'status'], ['📍 Где мы', 'status'], ['Где мы?', 'status'], ['/status', 'status'], ['/status@mcfly_bot', 'status'], ['Статус', 'status'],
+  for (const [t, v] of [['где мы', 'status'], ['📍 Где мы', 'status'], ['📍 Статус', 'status'], ['Где мы?', 'status'], ['/status', 'status'], ['/status@mcfly_bot', 'status'], ['Статус', 'status'],
     ['🎯 Цели', 'goals'], ['/goals', 'goals'], ['📊 Статистика', 'stats'], ['/stats', 'stats'], ['последний прогон', 'last'], ['/last', 'last'],
     ['помощь', 'help'], ['/help', 'help'], ['/start', 'help']]) assert.equal(viewOf(t), v, t);
   for (const t of ['статус по задаче ORB-1', 'где мы будем завтра?', 'цели на неделю такие', '']) assert.equal(viewOf(t), null, t);
@@ -54,7 +54,7 @@ test('0.5.12: команды обзора — текстом, /командой,
 
 test('0.5.12: меню команд и клавиатура — латиница для setMyCommands, кнопки из задания', () => {
   for (const c of BOT_COMMANDS) { assert.match(c.command, /^[a-z]+$/); assert.ok(c.description.length <= 256); }
-  assert.deepEqual(MAIN_KEYBOARD.flat().map((b) => b.text), ['📍 Где мы', '🎯 Цели', '📊 Статистика', '▶️ Запусти']);
+  assert.deepEqual(MAIN_KEYBOARD.flat().map((b) => b.text), ['📍 Статус', '🎯 Цели', '📊 Статистика', '▶️ Запусти']);
   for (const b of MAIN_KEYBOARD.flat()) assert.ok(viewOf(b.text) || parseMessage(b.text).type === 'run', b.text);
 });
 
@@ -167,7 +167,7 @@ test('0.5.12: бот отвечает на «где мы», «цели», «ст
   await pullAnswers({ projectDir: dir, cfg: tgCfg, p, telegram: createTelegram({ token: 'T', fetchImpl: f }), log: () => {}, startRun: (d) => started.push(d) });
   const sent = f.sent();
   assert.equal(sent.length, 5); // только ответы на команды, без «📝 Записал как заметку»
-  assert.match(sent[0].text, /📍 <b>Где мы/); assert.match(sent[1].text, /Сделано 1 из 2/); assert.match(sent[2].text, /📊 <b>Статистика/);
+  assert.match(sent[0].text, /📍 <b>Статус/); assert.match(sent[1].text, /Сделано 1 из 2/); assert.match(sent[2].text, /📊 <b>Статистика/);
   assert.match(sent[3].text, /📰 <b>Последний прогон/); assert.match(sent[4].text, /Что умеет бот/);
   for (const s of sent) {
     assert.equal(s.parse_mode, 'HTML'); assert.ok(s.text.length <= 4096 && plainLen(s.text) <= 4096);
@@ -195,7 +195,7 @@ test('0.5.12: задание answers один раз ставит меню ко�
   for (let i = 0; i < 2; i++) await pollAnswers({ projectDir: dir, cfg: tgCfg, p, telegram: tg, log: () => {}, durationMs: 20_000, clock, sleep, startRun: () => {} });
   const menus = f.calls.filter((c) => c.method === 'setMyCommands');
   assert.equal(menus.length, 1); assert.deepEqual(menus[0].body.commands, BOT_COMMANDS);
-  const announce = f.sent().filter((s) => /появились команды/.test(s.text));
+  const announce = f.sent().filter((s) => /команды обзора/.test(s.text));
   assert.equal(announce.length, 1); assert.deepEqual(announce[0].reply_markup.keyboard, MAIN_KEYBOARD);
   assert.equal(readText(path.join(p.logs, '.bot-menu')).trim(), MENU_REV);
 });
@@ -209,4 +209,15 @@ test('0.5.12: сбой setMyCommands — меню повторится в сле
   assert.ok(stats.polls >= 1);
   assert.ok(logs.some((l) => /Меню команд бота не обновлено: fetch failed/.test(l)));
   assert.equal(readText(path.join(p.logs, '.bot-menu')), '');
+});
+
+test('0.6.1: «статус» — ссылки проекта из links под заголовком; неверный адрес — ошибка конфигурации', async () => {
+  const { parseConfig } = await import('../src/config.js');
+  const dir = bareProject(); const p = paths(dir);
+  const c = { ...cfg, links: { 'Сайт': 'http://10.0.0.1:8080/latest/', 'На проверку': 'http://10.0.0.1:8080/latest/review/' } };
+  const html = statusView(p, c).join('\n');
+  assert.match(html, /📍 <b>Статус · demo<\/b>/);
+  assert.match(html, /🔗 <a href="http:\/\/10\.0\.0\.1:8080\/latest\/">Сайт<\/a> · <a href="http:\/\/10\.0\.0\.1:8080\/latest\/review\/">На проверку<\/a>/);
+  assert.doesNotMatch(statusView(p, cfg).join('\n'), /🔗/);
+  assert.throws(() => parseConfig('project: x\nlinks:\n  Сайт: javascript:alert(1)\n'), /links\.Сайт: адрес/);
 });

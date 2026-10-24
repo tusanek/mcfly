@@ -128,7 +128,7 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
     catch (e) { log(`Ответ в Telegram не отправлен: ${errorLine(e)}; поставлен в очередь.`); enqueueNotice(p, { text: acks.join('\n'), keyboard }, now); }
   }
   // Связь есть — дошлём то, что не ушло раньше (итоги прогонов, тревоги). Только задание answers: один отправитель очереди.
-  // Команды обзора («где мы», «цели», …) — после применения остальных сообщений, чтобы ответ уже видел, например, свежее одобрение.
+  // Команды обзора («статус», «цели», …) — после применения остальных сообщений, чтобы ответ уже видел, например, свежее одобрение.
   for (const view of messages.map((m) => parseMessage(m.text)).filter((x) => x.type === 'view').map((x) => x.view)) {
     try { await sendView(tg, cfg.telegram.chat_id, view, p, cfg, { now }); }
     catch (e) { log(`Ответ на «${view}» не отправлен: ${errorLine(e)}`); }

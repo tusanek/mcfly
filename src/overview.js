@@ -12,11 +12,11 @@ import { currentAction, offerKeyboard, isTrusted } from './actions.js';
 import { escHtml, inline, splitHtml, reportSections, plainWords, humanItems, approvalCovered, isNone, changeProgress, nextRunText, runsByStatus, STATUS_RU } from './summary.js';
 
 /**
- * Команды обзора для владельца в Telegram: «где мы», «цели», «статистика», «последний прогон», «помощь».
+ * Команды обзора для владельца в Telegram: «статус» (раньше «где мы»), «цели», «статистика», «последний прогон», «помощь».
  * Только читают состояние проекта — ничего не пишут в answers.md, не трогают вопросы и одобрения, не запускают прогон.
  */
 const VIEW_WORDS = {
-  status: ['/status', 'где мы', 'где мы сейчас', 'статус'],
+  status: ['/status', 'статус', 'где мы', 'где мы сейчас'],
   goals: ['/goals', 'цели', 'цель'],
   stats: ['/stats', 'статистика'],
   last: ['/last', 'последний прогон'],
@@ -33,7 +33,7 @@ export function viewOf(text) {
 
 /** Меню команд Telegram (setMyCommands): латиница в нижнем регистре, описание до 256 символов. */
 export const BOT_COMMANDS = [
-  { command: 'status', description: '📍 Где мы: прогон, изменения, вопросы, квота' },
+  { command: 'status', description: '📍 Статус: прогон, изменения, вопросы, ссылки, квота' },
   { command: 'goals', description: '🎯 Цели проекта и чек-лист до MVP' },
   { command: 'stats', description: '📊 Статистика за 7 дней и всего' },
   { command: 'last', description: '📰 Последний прогон простыми словами' },
@@ -44,11 +44,11 @@ const ACTIONS_COMMAND = { command: 'actions', description: '🛠 Действи�
 /** Меню «/» проекта: с действиями — ещё /actions перед /help. */
 export const botCommands = (cfg) => (hasActions(cfg) ? [...BOT_COMMANDS.slice(0, -1), ACTIONS_COMMAND, BOT_COMMANDS.at(-1)] : BOT_COMMANDS);
 /** Постоянная клавиатура внизу чата: нажатие отправляет текст кнопки, как если бы его написали. */
-export const MAIN_KEYBOARD = [[{ text: '📍 Где мы' }, { text: '🎯 Цели' }], [{ text: '📊 Статистика' }, { text: '▶️ Запусти' }]];
+export const MAIN_KEYBOARD = [[{ text: '📍 Статус' }, { text: '🎯 Цели' }], [{ text: '📊 Статистика' }, { text: '▶️ Запусти' }]];
 /** Клавиатура проекта: с действиями (раздел actions) — третий ряд «🛠 Действия». */
 export const mainKeyboard = (cfg) => (hasActions(cfg) ? [...MAIN_KEYBOARD, [{ text: '🛠 Действия' }]] : MAIN_KEYBOARD);
 /** Ревизия меню: другая — задание answers один раз обновит меню и пришлёт клавиатуру (метка в mcfly/logs, она вне git). */
-export const MENU_REV = '0.5.12';
+export const MENU_REV = '0.6.1';
 /** Ревизия с учётом действий: подтверждены владельцем (mcfly action trust) или пропали — меню и клавиатура обновятся. */
 const menuRev = (p, cfg) => `${MENU_REV}${hasActions(cfg) && isTrusted(p, cfg) ? '+actions' : ''}`;
 const menuMark = (p) => path.join(p.logs, '.bot-menu');
@@ -102,9 +102,12 @@ const changeLine = (p, cfg, c) => {
 };
 const toParts = (html) => splitHtml(html, MAX);
 
-/** 📍 Где мы: прогон, изменения, вопросы, «Нужно от вас», следующий прогон и квота. Возвращает куски HTML ≤ 4000 символов. */
+/** 📍 Статус: ссылки, прогон, изменения, вопросы, «Нужно от вас», следующий прогон и квота. Возвращает куски HTML ≤ 4000 символов. */
 export function statusView(p, cfg, { now = new Date() } = {}) {
-  const L = [`📍 <b>Где мы · ${escHtml(cfg.project)}</b> · ${fmtShort(now)}`, ''];
+  const L = [`📍 <b>Статус · ${escHtml(cfg.project)}</b> · ${fmtShort(now)}`];
+  const links = Object.entries(cfg.links || {});
+  if (links.length) L.push(`🔗 ${links.map(([k, v]) => `<a href="${escHtml(v)}">${escHtml(k)}</a>`).join(' · ')}`);
+  L.push('');
   const cur = currentRun(p);
   const last = runs(p).at(-1);
   if (cur) L.push(`▶️ <b>Идёт прогон</b> ${escHtml(cur.id || '')} с ${fmtShort(cur.since)}${cur.lastEvent ? `\nПоследнее действие: ${escHtml(truncate(cur.lastEvent, 300))}` : ''}`);
@@ -252,7 +255,7 @@ export function helpView(p, cfg) {
     `❓ <b>Что умеет бот mcfly · ${escHtml(cfg.project)}</b>`,
     '',
     '<b>Посмотреть</b> (ничего не меняет)',
-    '📍 «где мы» или /status — идёт ли прогон, изменения и их задачи, вопросы, что нужно от вас, следующий прогон, квота',
+    '📍 «статус» или /status (по-старому «где мы») — ссылки проекта, идёт ли прогон, изменения и их задачи, вопросы, что нужно от вас, следующий прогон, квота',
     '🎯 «цели» или /goals — цель проекта, ближайшая веха и чек-лист до MVP (файл mcfly/goals.md)',
     '📊 «статистика» или /stats — прогоны, задачи, изменения, возвраты с ревью и расход за 7 дней и всего',
     '📰 «последний прогон» или /last — пересказ простыми словами, что сделано и что нужно от вас',
@@ -278,7 +281,7 @@ export function renderView(view, p, cfg, opts = {}) { return VIEWS[view](p, cfg,
 /** Отправляет ответ на команду обзора с постоянной клавиатурой внизу чата. */
 export async function sendView(tg, chatId, view, p, cfg, opts = {}) {
   for (const part of renderView(view, p, cfg, opts)) await tg.sendMessage(chatId, part, { html: true, replyKeyboard: mainKeyboard(cfg) });
-  // «где мы» с действиями: отдельным сообщением кнопки того, что можно сделать сейчас (offer вернул 0) — у одного сообщения одна клавиатура
+  // «статус» с действиями: отдельным сообщением кнопки того, что можно сделать сейчас (offer вернул 0) — у одного сообщения одна клавиатура
   if (view === 'status' && hasActions(cfg)) {
     const rows = await (opts.offerKeyboard || offerKeyboard)(p, cfg);
     if (rows.length) await tg.sendMessage(chatId, '🛠 <b>Можно сделать кнопкой</b> — сначала бот покажет, что будет сделано', { html: true, keyboard: rows });
@@ -294,8 +297,8 @@ export async function ensureBotMenu(p, cfg, tg) {
   if (readText(menuMark(p), '').trim() === rev) return false;
   await tg.setMyCommands(botCommands(cfg));
   const text = rev.endsWith('+actions')
-    ? `🆕 mcfly ${escHtml(cfg.project)}: в боте появились действия — 🛠 «действия»: ${listActions(cfg).map((a) => escHtml(a.title)).join(', ')}. Каждое с подтверждением, итог приходит сообщением; в «где мы» — кнопки того, что можно сделать сейчас.`
-    : `🆕 mcfly ${escHtml(cfg.project)}: в боте появились команды обзора — 📍 «где мы», 🎯 «цели», 📊 «статистика», 📰 «последний прогон», ❓ «помощь». Кнопки — внизу чата, все команды — в меню «/».`;
+    ? `🆕 mcfly ${escHtml(cfg.project)}: «Где мы» теперь 📍 «Статус» (со ссылками проекта); 🛠 «действия»: ${listActions(cfg).map((a) => escHtml(a.title)).join(', ')}. Действия с подтверждением, итог приходит сообщением; в «статус» — кнопки того, что можно сделать сейчас.`
+    : `🆕 mcfly ${escHtml(cfg.project)}: команды обзора — 📍 «статус» (раньше «где мы»), 🎯 «цели», 📊 «статистика», 📰 «последний прогон», ❓ «помощь». Кнопки — внизу чата, все команды — в меню «/».`;
   await tg.sendMessage(cfg.telegram.chat_id, text, { html: true, replyKeyboard: mainKeyboard(cfg) });
   writeText(menuMark(p), `${rev}\n`);
   return true;
