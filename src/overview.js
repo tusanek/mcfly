@@ -1,6 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
-import { readText, writeText, fmtShort, fmtDuration, truncate, pad2 } from './util.js';
+import { readText, writeText, fmtShort, fmtDuration, truncate, pad2, commandText } from './util.js';
 import { readMetrics, aggregate } from './metrics.js';
 import { loadQuestions, openQuestions } from './questions.js';
 import { listChanges, pendingApprovals, approvedWithWork, approvalDeadline, isAutoApprovable } from './approvals.js';
@@ -22,9 +22,7 @@ const VIEW_WORDS = {
   last: ['/last', 'последний прогон'],
   help: ['/help', '/start', 'помощь', 'справка'],
 };
-/** Текст команды без эмодзи кнопки в начале, «@имя_бота» после /команды, регистра, «ё» и знаков в конце: «📍 Где мы?» → «где мы». */
-export const commandText = (text) => String(text || '').trim().replace(/^[^\p{L}\p{N}/]+/u, '').replace(/^(\/\w+)@\w+/, '$1')
-  .toLowerCase().replace(/ё/g, 'е').replace(/[\s?!.]+$/u, '').replace(/\s+/g, ' ');
+export { commandText };
 /** Имя обзора (status, goals, stats, last, help) или null: сообщение целиком должно быть командой, «статус по X» — заметка. */
 export function viewOf(text) {
   const t = commandText(text);
@@ -49,8 +47,8 @@ export const MAIN_KEYBOARD = [[{ text: '📍 Статус' }, { text: '🎯 Це
 export const mainKeyboard = (cfg) => (hasActions(cfg) ? [...MAIN_KEYBOARD, [{ text: '🛠 Действия' }]] : MAIN_KEYBOARD);
 /** Ревизия меню: другая — задание answers один раз обновит меню и пришлёт клавиатуру (метка в mcfly/logs, она вне git). */
 export const MENU_REV = '0.6.1';
-/** Ревизия с учётом действий: подтверждены владельцем (mcfly action trust) или пропали — меню и клавиатура обновятся. */
-const menuRev = (p, cfg) => `${MENU_REV}${hasActions(cfg) && isTrusted(p, cfg) ? '+actions' : ''}`;
+/** Ревизия с учётом действий: появились (и подтверждены) или пропали — меню и клавиатура обновятся один раз. */
+const menuRev = (cfg) => `${MENU_REV}${hasActions(cfg) ? '+actions' : ''}`;
 const menuMark = (p) => path.join(p.logs, '.bot-menu');
 
 const MAX = 4000; // предел сообщения Telegram 4096 символов — с запасом
@@ -282,7 +280,7 @@ export function renderView(view, p, cfg, opts = {}) { return VIEWS[view](p, cfg,
 export async function sendView(tg, chatId, view, p, cfg, opts = {}) {
   for (const part of renderView(view, p, cfg, opts)) await tg.sendMessage(chatId, part, { html: true, replyKeyboard: mainKeyboard(cfg) });
   // «статус» с действиями: отдельным сообщением кнопки того, что можно сделать сейчас (offer вернул 0) — у одного сообщения одна клавиатура
-  if (view === 'status' && hasActions(cfg)) {
+  if (view === 'status' && hasActions(cfg) && opts.offers !== false) {
     const rows = await (opts.offerKeyboard || offerKeyboard)(p, cfg);
     if (rows.length) await tg.sendMessage(chatId, '🛠 <b>Можно сделать кнопкой</b> — сначала бот покажет, что будет сделано', { html: true, keyboard: rows });
   }
@@ -293,7 +291,9 @@ export async function sendView(tg, chatId, view, p, cfg, opts = {}) {
  * и присылает объявление с клавиатурой. Метка — после успеха, сбой повторится в следующем цикле. true — обновлено сейчас.
  */
 export async function ensureBotMenu(p, cfg, tg) {
-  const rev = menuRev(p, cfg);
+  // Действия есть, но не подтверждены (mcfly action trust) — меню не трогаем: объявим кнопки, когда они заработают.
+  if (hasActions(cfg) && !isTrusted(p, cfg)) return false;
+  const rev = menuRev(cfg);
   if (readText(menuMark(p), '').trim() === rev) return false;
   await tg.setMyCommands(botCommands(cfg));
   const text = rev.endsWith('+actions')

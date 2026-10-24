@@ -28,7 +28,7 @@ const EXCERPT = 160; // выдержка proposal в пункте одобрен
 export const escHtml = (t) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 /** Текст для консоли: без тегов и HTML-сущностей. */
 export const htmlToPlain = (html) => String(html).replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-const hhmm = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+export const hhmm = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 /** `код` из markdown отчёта — моноширинным, остальное экранировано. */
 export const inline = (t) => escHtml(t).replace(/`([^`]+)`/g, '<code>$1</code>');
 

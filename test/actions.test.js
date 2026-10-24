@@ -24,7 +24,7 @@ import { MCFLY_ROOT } from '../src/prompt.js';
 process.env.MCFLY_TRUST_FILE = path.join(tmpDir('mcfly-trust-'), 'trusted.json');
 /** Проект с подтверждённым разделом actions (как после mcfly action trust). */
 function trustedProject(c) { const dir = bareProject(); const p = paths(dir); trustActions(p, c); return { dir, p }; }
-const ticketFor = (p, c, id) => issueTicket(p, id, new Date(), actionsDigest(c));
+const ticketFor = (p, c, id) => issueTicket(p, id, new Date(), actionsDigest(c, p.projectDir));
 
 const withActions = (actions, extra = {}) => ({ ...cfg, ...extra, actions });
 const deploy = { title: '🚀 Выкатить', describe: 'выкат main', run: 'echo собираю; echo "@@ выкачено abc"; echo "@@ адреса 200"', followups: ['rollback'] };
@@ -89,7 +89,7 @@ test('0.6.0: нажатие — описание и «Да» с кодом; «Д
   await handleActionMessage({ parsed: parsedYes, p, cfg: c, send, spawn });
   assert.deepEqual(spawned, ['exec:deploy']); assert.match(sent[1].text, /▶️ Начинаю/);
   assert.match(tickets[0], /^[0-9a-f]{32}$/, 'процесс получает пропуск');
-  assert.equal(takeTicket(p, 'deploy', tickets[0], new Date(), actionsDigest(c)), true);
+  assert.equal(takeTicket(p, 'deploy', tickets[0], new Date(), actionsDigest(c, p.projectDir)), true);
   await handleActionMessage({ parsed: parsedYes, p, cfg: c, send, spawn });
   assert.deepEqual(spawned, ['exec:deploy'], 'старое «Да» второй раз не запускает');
   assert.match(sent[2].text, /устарело или уже использовано/);
@@ -111,7 +111,7 @@ test('0.6.0: без подтверждения — сразу exec; с prepare �
 
 test('0.6.0: во время прогона команды и во время другого действия «Да» не запускает', async () => {
   const c = withActions({ deploy, rollback, free: { title: 'Чтение', run: 'echo', during_run: true } }); const { p } = trustedProject(c);
-  const dg = actionsDigest(c);
+  const dg = actionsDigest(c, p.projectDir);
   const { sent, send } = recorder(); const spawned = [];
   const lock = acquireLock(p, 'r1');
   try {
@@ -264,9 +264,9 @@ test('0.6.0: exec и prepare без пропуска (в обход кнопки
   const t = ticketFor(p, c, 'hi');
   assert.equal((await execAction({ p, cfg: c, id: 'hi', send, ticket: t })).status, 'ok'); assert.equal(fs.existsSync(marker), true);
   assert.equal((await execAction({ p, cfg: c, id: 'hi', send, ticket: t })).status, 'refused', 'пропуск одноразовый');
-  const code = issueCode(p, 'hi', new Date(), actionsDigest(c));
+  const code = issueCode(p, 'hi', new Date(), actionsDigest(c, p.projectDir));
   const changed = withActions({ hi: { ...c.actions.hi, run: 'echo другое' } });
-  assert.equal(takeCode(p, 'hi', code, new Date(), actionsDigest(changed)), false);
+  assert.equal(takeCode(p, 'hi', code, new Date(), actionsDigest(changed, p.projectDir)), false);
 });
 
 test('0.6.0: mcfly action в прогоне команды запрещён', () => {
@@ -321,9 +321,33 @@ test('0.6.0: правка скрипта действия (и соседних �
   const bin = tmpDir('mcfly-scripts-'); const script = path.join(bin, 'deploy.sh'); const lib = path.join(bin, 'common.sh');
   fs.writeFileSync(script, 'echo ok\n'); fs.writeFileSync(lib, 'X=1\n'); fs.mkdirSync(path.join(bin, 'state')); fs.writeFileSync(path.join(bin, 'state', 'last'), 'a');
   const c = withActions({ d: { title: 'Выкат', run: `bash ${script} --plan` } }); const { p } = trustedProject(c);
-  assert.deepEqual(actionFiles(c), [lib, script].sort(), 'файлы каталога скрипта, без подкаталога state');
+  assert.deepEqual(actionFiles(c, p.projectDir), [lib, script].sort(), 'файлы каталога скрипта, без подкаталога state');
   assert.equal(isTrusted(p, c), true);
   fs.writeFileSync(path.join(bin, 'state', 'last'), 'b'); assert.equal(isTrusted(p, c), true, 'состояние скрипта не влияет');
   fs.writeFileSync(lib, 'X=2\n'); assert.equal(isTrusted(p, c), false, 'правка соседнего файла снимает подтверждение');
   trustActions(p, c); fs.writeFileSync(script, 'echo подмена\n'); assert.equal(isTrusted(p, c), false);
+});
+
+test('0.6.2: скрипт по относительному пути внутри проекта тоже входит в подтверждение', async () => {
+  const { actionFiles } = await import('../src/actions.js');
+  const c = withActions({ d: { title: 'Выкат', run: 'bash scripts/deploy.sh --plan', prepare: 'bash ./scripts/deploy.sh' } });
+  const dir = bareProject(); const p = paths(dir);
+  fs.mkdirSync(path.join(dir, 'scripts')); fs.writeFileSync(path.join(dir, 'scripts', 'deploy.sh'), 'echo ok\n');
+  trustActions(p, c);
+  assert.deepEqual(actionFiles(c, dir), [path.join(dir, 'scripts', 'deploy.sh')]);
+  fs.writeFileSync(path.join(dir, 'scripts', 'deploy.sh'), 'echo подмена\n');
+  assert.equal(isTrusted(p, c), false, 'правка скрипта в репозитории снимает подтверждение');
+});
+
+test('0.6.2: «статус» не владельца не запускает offer; неподтверждённые действия не трогают меню', async () => {
+  const c = withActions({ deploy, rollback }); const { p } = trustedProject(c);
+  let offered = 0; const sent = [];
+  const tg = { async sendMessage(chatId, text, opts) { sent.push({ text, opts }); return []; } };
+  await sendView(tg, '42', 'status', p, c, { offers: false, offerKeyboard: () => { offered += 1; return []; } });
+  assert.equal(offered, 0);
+  const { ensureBotMenu } = await import('../src/overview.js');
+  const dir = bareProject(); const p2 = paths(dir); const calls = [];
+  const tg2 = { async setMyCommands() { calls.push('menu'); }, async sendMessage() { calls.push('msg'); return []; } };
+  assert.equal(await ensureBotMenu(p2, { ...c, telegram: { chat_id: '42' } }, tg2), false);
+  assert.deepEqual(calls, [], 'пока не подтверждено — ни меню, ни объявления');
 });

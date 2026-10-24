@@ -9,9 +9,10 @@ import { enqueueNotice } from './notices.js';
 import { currentRun } from './runner.js';
 import { ensureVpn } from './vpn.js';
 import { MCFLY_ROOT } from './prompt.js';
+import { escHtml, hhmm as hm } from './summary.js';
 import { getAction, listActions, hasActions } from './action-config.js';
 
-export { ACTION_ID_RE, ACTION_DEFAULTS, actionErrors, getAction, listActions, hasActions, parseActionText } from './action-config.js';
+export { ACTION_ID_RE, ACTION_DEFAULTS, actionErrors, getAction, listActions, hasActions, parseActionText, ownerId } from './action-config.js';
 
 /**
  * Действия владельца из Telegram (0.6.0): выкат, откат, eval и другое, что раньше владелец запускал скриптом в терминале.
@@ -35,15 +36,16 @@ const KEEP_LINES = 400;
 export const trustFile = () => process.env.MCFLY_TRUST_FILE || path.join(os.homedir(), '.config', 'mcfly', 'trusted-actions.json');
 const canonical = (v) => (Array.isArray(v) ? v.map(canonical) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical(v[k])])) : v);
 /**
- * Файлы, от которых зависят команды: пути в run/prepare/offer (~/… или /…) и все файлы в их каталогах (без подкаталогов —
- * там обычно состояние скриптов). Правка скрипта, как и правка команды, снимает подтверждение.
+ * Файлы, от которых зависят команды: пути в run/prepare/offer (~/…, /… или относительно каталога проекта, где команды
+ * выполняются, например scripts/deploy.sh) и все файлы в их каталогах (без подкаталогов — там обычно состояние скриптов).
+ * Правка скрипта, как и правка команды, снимает подтверждение.
  */
-export function actionFiles(cfg) {
+export function actionFiles(cfg, projectDir) {
   const dirs = new Set(); const files = new Set();
   for (const a of Object.values(cfg.actions || {})) {
     for (const cmd of [a?.run, a?.prepare, a?.offer]) {
-      for (const tok of String(cmd || '').match(/(?:~\/|\/)[^\s"';|&<>()]+/g) || []) {
-        const f = tok.startsWith('~/') ? path.join(os.homedir(), tok.slice(2)) : tok;
+      for (const tok of String(cmd || '').split(/[\s"';|&<>()]+/).filter(Boolean)) {
+        const f = tok.startsWith('~/') ? path.join(os.homedir(), tok.slice(2)) : path.resolve(projectDir, tok);
         try { if (fs.statSync(f).isFile()) { files.add(f); dirs.add(path.dirname(f)); } } catch {}
       }
     }
@@ -53,16 +55,16 @@ export function actionFiles(cfg) {
   }
   return [...files].sort();
 }
-export function actionsDigest(cfg) {
+export function actionsDigest(cfg, projectDir) {
   const h = crypto.createHash('sha256').update(JSON.stringify(canonical(cfg.actions || {})));
-  for (const f of actionFiles(cfg)) { h.update(`\0${f}\0`); try { h.update(fs.readFileSync(f)); } catch { h.update('нет файла'); } }
+  for (const f of actionFiles(cfg, projectDir)) { h.update(`\0${f}\0`); try { h.update(fs.readFileSync(f)); } catch { h.update('нет файла'); } }
   return h.digest('hex');
 }
-export function isTrusted(p, cfg) { return readJson(trustFile(), {})?.[p.projectDir]?.digest === actionsDigest(cfg); }
+export function isTrusted(p, cfg) { return readJson(trustFile(), {})?.[p.projectDir]?.digest === actionsDigest(cfg, p.projectDir); }
 export function trustActions(p, cfg, now = new Date()) {
   const file = trustFile(); ensureDir(path.dirname(file));
   const all = readJson(file, {}) || {};
-  all[p.projectDir] = { digest: actionsDigest(cfg), at: now.toISOString(), actions: Object.keys(cfg.actions || {}) };
+  all[p.projectDir] = { digest: actionsDigest(cfg, p.projectDir), at: now.toISOString(), actions: Object.keys(cfg.actions || {}) };
   writeJson(file, all);
 }
 export const UNTRUSTED_TEXT = '⚠️ Раздел actions в mcfly/config.yaml изменён и не подтверждён владельцем — кнопки выключены. Проверьте команды и подтвердите в терминале: mcfly action trust';
@@ -162,7 +164,6 @@ export function releaseActionLock(p) {
   if (readJson(actionLockPath(p), null)?.pid === process.pid) { try { fs.unlinkSync(actionLockPath(p)); } catch {} }
 }
 
-const hm = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 /** Почему действие сейчас нельзя начать, или null. */
 export function blockReason(p, a) {
   const cur = currentAction(p);
@@ -173,7 +174,7 @@ export function blockReason(p, a) {
 const runBusyText = (run, a) => `⏳ Идёт прогон команды ${run.id || ''} с ${hm(run.since)} — «${a.title}» во время прогона не запускаю, повторите после него`;
 
 // ---------- сообщения ----------
-export const escHtml = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+export { escHtml };
 const pre = (s) => `<pre>${escHtml(s)}</pre>`;
 
 /** «🛠 Действия»: список с кнопками ac:<id>. */
@@ -271,7 +272,7 @@ async function deliver(p, send, msg, now) {
 
 /** Пропуск или доверие не прошли: в чат — чтобы владелец увидел попытку запуска в обход кнопки. */
 async function refused(p, cfg, a, ticket, interactive, send, now) {
-  const digest = actionsDigest(cfg);
+  const digest = actionsDigest(cfg, p.projectDir);
   if (!isTrusted(p, cfg)) { await deliver(p, send, { text: escHtml(UNTRUSTED_TEXT), keyboard: [] }, now); return { status: 'untrusted' }; }
   if (!interactive && !takeTicket(p, a.id, ticket, now, digest)) {
     await deliver(p, send, { text: `⛔ Запуск «${escHtml(a.title)}» без подтверждения кнопкой отклонён`, keyboard: [] }, now);
@@ -294,7 +295,7 @@ export async function prepareAction({ p, cfg, id, send, ticket = null, now = () 
     await deliver(p, send, { text: `❌ Подготовка «${escHtml(a.title)}» не удалась (${why}) — действие не запускаю.\n${pre(truncate(r.lines.filter((l) => l.trim()).slice(-TAIL_LINES).join('\n'), RESULT_MAX))}`, keyboard: [] }, now());
     return { status: 'error' };
   }
-  await deliver(p, send, confirmMessage(a, issueCode(p, a.id, now(), actionsDigest(cfg)), resultLines(r.lines).join('\n')), now());
+  await deliver(p, send, confirmMessage(a, issueCode(p, a.id, now(), actionsDigest(cfg, p.projectDir)), resultLines(r.lines).join('\n')), now());
   return { status: 'ok' };
 }
 
@@ -354,7 +355,7 @@ export const ACTION_TYPES = new Set(['actions', 'action', 'actionYes', 'actionNo
 export async function handleActionMessage({ parsed, p, cfg, send, spawn: spawnRaw, now = new Date() }) {
   if (hasActions(cfg) && !isTrusted(p, cfg)) return send(escHtml(UNTRUSTED_TEXT), []);
   if (parsed.type === 'actions') { const m = actionsMessage(p, cfg); return send(m.text, m.keyboard); }
-  const digest = actionsDigest(cfg);
+  const digest = actionsDigest(cfg, p.projectDir);
   // процесс получает одноразовый пропуск: без него exec/prepare не работают (вызов mcfly action exec в обход кнопки)
   const spawnKind = (kind, id) => spawnRaw(kind, id, issueTicket(p, id, now, digest));
   const a = getAction(cfg, parsed.id);
