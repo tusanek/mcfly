@@ -7,6 +7,7 @@ import { exists } from './util.js';
 import { MCFLY_ROOT } from './prompt.js';
 import { cleanEnv } from './claude.js';
 import { vpnStatus } from './vpn.js';
+import { isTrusted } from './actions.js';
 
 function ver(bin, args = ['--version']) { const r = spawnSync(bin, args, { encoding: 'utf8' }); return r.status === 0 ? String(r.stdout || r.stderr).trim().split('\n')[0] : null; }
 
@@ -38,6 +39,9 @@ export function doctor({ projectDir, probe = false, log = console.log }) {
   add(ver('git'), 'git');
   add(process.platform !== 'darwin' || exists('/usr/bin/caffeinate'), 'caffeinate (macOS)');
   add(exists(path.join(MCFLY_ROOT, '.claude-plugin', 'plugin.json')), `плагин mcfly (${MCFLY_ROOT})`);
+  if (cfg && Object.keys(cfg.actions || {}).length) {
+    add(isTrusted(p, cfg), `действия в боте (${Object.keys(cfg.actions).join(', ')}) подтверждены владельцем`, 'проверьте команды раздела actions и выполните в терминале: mcfly action trust');
+  }
   if (cfg) {
     add(process.env[cfg.telegram.token_env], `токен Telegram (${cfg.telegram.token_env})`, 'задайте в mcfly/.env');
     add(cfg.telegram.chat_id, 'Telegram chat_id', 'выполните mcfly telegram pair');

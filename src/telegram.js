@@ -53,11 +53,17 @@ export function createTelegram({ token, fetchImpl = globalThis.fetch, timeoutMs 
     setMyCommands(commands) { return call('setMyCommands', { commands }); },
   };
 }
-/** Кнопка сводки → команда, как если бы человек написал её текстом: ap:имя, rj:имя, qd:Qn, rn:day («запусти»). */
+/**
+ * Кнопка → команда, как если бы человек написал её текстом: ap:имя, rj:имя, qd:Qn, rn:day («запусти»);
+ * действия (0.6.0): ac:id («действие id»), ax:id:код («действие id да код»), an:id («действие id отмена»).
+ */
 export function callbackText(data) {
-  const m = /^(ap|rj|qd|rn):(.+)$/.exec(String(data || ''));
+  const m = /^(ap|rj|qd|rn|ac|ax|an):(.+)$/.exec(String(data || ''));
   if (!m) return null;
   if (m[1] === 'rn') return 'запусти';
+  if (m[1] === 'ac') return `действие ${m[2]}`;
+  if (m[1] === 'an') return `действие ${m[2]} отмена`;
+  if (m[1] === 'ax') { const [id, code] = m[2].split(':'); return code ? `действие ${id} да ${code}` : null; }
   if (m[1] === 'ap') return `approve ${m[2]}`;
   if (m[1] === 'rj') return `reject ${m[2]} отклонено кнопкой в Telegram`;
   return `${m[2]}: по умолчанию`;
@@ -71,14 +77,14 @@ export function extractMessages(updates, chatId) {
     if (cq) {
       const text = callbackText(cq.data);
       if (!text || !cq.message || (chatId && String(cq.message.chat?.id) !== String(chatId))) continue;
-      messages.push({ id: cq.message.message_id, chatId: cq.message.chat.id, text, date: new Date(cq.message.date * 1000), from: cq.from?.username || cq.from?.first_name || '', callbackId: cq.id });
+      messages.push({ id: cq.message.message_id, chatId: cq.message.chat.id, text, date: new Date(cq.message.date * 1000), from: cq.from?.username || cq.from?.first_name || '', fromId: cq.from?.id ?? null, callbackId: cq.id });
       continue;
     }
     const m = u.message;
     if (!m || !m.text) continue;
     if (chatId && String(m.chat?.id) !== String(chatId)) continue;
     // replyTo — текст сообщения, на которое человек ответил свайпом: по нему ответ относится к вопросу (answers.js).
-    messages.push({ id: m.message_id, chatId: m.chat.id, text: m.text, date: new Date(m.date * 1000), from: m.from?.username || m.from?.first_name || '', ...(m.reply_to_message?.text ? { replyTo: m.reply_to_message.text } : {}) });
+    messages.push({ id: m.message_id, chatId: m.chat.id, text: m.text, date: new Date(m.date * 1000), from: m.from?.username || m.from?.first_name || '', fromId: m.from?.id ?? null, ...(m.reply_to_message?.text ? { replyTo: m.reply_to_message.text } : {}) });
   }
   return { messages, nextOffset };
 }

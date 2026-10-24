@@ -40,13 +40,16 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   metric add --key <k> [--value <n>] [--change <имя>] | metric
   telegram pair                                   привязать чат (отправьте боту любое сообщение)
   schedule install|remove|status [--dry-run]      задания launchd: ночные прогоны и сводка
+  action list | trust | run <id> [--yes]          действия владельца из раздела actions: список, подтверждение раздела
+                                                  (только в терминале), запуск из терминала (итог и в Telegram)
+  action prepare|exec <id> --ticket <t>           служебные: их запускает бот после нажатия кнопки
 Общие флаги: --project <dir> (по умолчанию текущий каталог или MCFLY_PROJECT_DIR)`;
 
 export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
     project: { type: 'string' }, mode: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
-    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
+    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, yes: { type: 'boolean' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
   const projectDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
   const p = paths(projectDir);
@@ -150,6 +153,48 @@ export async function main(argv) {
       if (nextOffset) { state.telegram_offset = nextOffset; saveState(p, state); }
       await tg.sendMessage(chatId, `mcfly подключён к проекту ${cfg.project}. Сюда будут приходить сводки, вопросы и запросы одобрения.`);
       log(`chat_id ${chatId} сохранён в mcfly/config.yaml`); return 0;
+    }
+    case 'action': {
+      const { listActions, getAction, prepareAction, execAction, isTrusted, trustActions } = await import('./actions.js');
+      const tty = !!(process.stdin.isTTY && process.stdout.isTTY);
+      if (sub === 'list' || !sub) {
+        const list = listActions(cfg);
+        if (!list.length) log('Действий нет: раздел actions в mcfly/config.yaml.');
+        else log(isTrusted(p, cfg) ? 'Раздел actions подтверждён владельцем.' : '⚠ Раздел actions не подтверждён — кнопки выключены. Проверьте команды ниже и выполните: mcfly action trust');
+        for (const a of list) log(`${a.id}: ${a.title}${a.describe ? ` — ${a.describe}` : ''}${a.confirm ? '' : ' (без подтверждения)'}\n  run: ${a.run}${a.prepare ? `\n  prepare: ${a.prepare}` : ''}${a.offer ? `\n  offer: ${a.offer}` : ''}`);
+        return 0;
+      }
+      // Действия — решение владельца (прод, общая квота): в прогоне команды (MCFLY_RUN_ID задаёт runner) запуск запрещён.
+      if (runIdEnv) { console.error('Действия запускает только владелец кнопкой в боте или из терминала: в прогоне команды mcfly action запрещён.'); return 1; }
+      if (sub === 'trust') {
+        // Только живой терминал: агент (без TTY) не может подтвердить команды, которые сам же поправил.
+        if (!tty) { console.error('mcfly action trust — только в терминале владельца (нужен интерактивный ввод).'); return 1; }
+        const list = listActions(cfg);
+        if (!list.length) { log('Действий нет: раздел actions в mcfly/config.yaml.'); return 1; }
+        log('Команды, которые бот сможет запускать по кнопке (prepare и offer — без подтверждения):');
+        for (const a of list) log(`\n${a.id} — ${a.title}${a.confirm ? '' : ' (без подтверждения)'}\n  run: ${a.run}${a.prepare ? `\n  prepare: ${a.prepare}` : ''}${a.offer ? `\n  offer: ${a.offer}` : ''}`);
+        const { createInterface } = await import('node:readline/promises');
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        const answer = (await rl.question('\nПодтвердить эти команды? Напишите «да»: ')).trim().toLowerCase(); rl.close();
+        if (answer !== 'да') { log('Не подтверждено, кнопки остаются выключенными.'); return 1; }
+        trustActions(p, cfg); log('Подтверждено. Любая правка раздела actions снова выключит кнопки до mcfly action trust.'); return 0;
+      }
+      const a = getAction(cfg, rest[0]);
+      if (!a) { console.error(`Действие не найдено: ${rest[0] || '(имя не указано)'}. Список: mcfly action list`); return 1; }
+      const token = process.env[cfg.telegram.token_env];
+      const tg = token && cfg.telegram.chat_id ? createTelegram({ token }) : null;
+      // без Telegram итог печатается: служебные prepare/exec тогда видны хотя бы в журнале launchd
+      const send = async (text, keyboard) => { if (tg) await tg.sendMessage(cfg.telegram.chat_id, text, { html: true, keyboard }); else log(htmlToPlain(text)); };
+      if (sub === 'prepare') { const r = await prepareAction({ p, cfg, id: a.id, send, ticket: values.ticket }); return r.status === 'ok' ? 0 : 1; }
+      if (sub === 'exec') { const r = await execAction({ p, cfg, id: a.id, send, ticket: values.ticket }); return r.status === 'ok' ? 0 : 1; }
+      if (sub === 'run') {
+        if (!tty) { console.error('mcfly action run — только в терминале владельца; из бота — кнопкой «🛠 Действия».'); return 1; }
+        if (a.confirm && !values.yes) { log(`${a.title}${a.describe ? ` — ${a.describe}` : ''}\nКоманда: ${a.run}\nДобавьте --yes, чтобы выполнить.`); return 1; }
+        const r = await execAction({ p, cfg, id: a.id, send, interactive: true, echo: (l) => log(l) });
+        log(`Итог: ${r.status}${r.code != null ? ` (код ${r.code})` : ''}`);
+        return r.status === 'ok' ? 0 : 1;
+      }
+      break;
     }
     case 'schedule': {
       const mcflyBin = path.join(MCFLY_ROOT, 'bin', 'mcfly');

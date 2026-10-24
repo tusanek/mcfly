@@ -13,6 +13,7 @@ import { listChanges, approvedWithWork, pendingApprovals } from './approvals.js'
 import { summaryKeyboard } from './summary.js';
 import { enqueueNotice, flushNotices } from './notices.js';
 import { autoApproveAndStart } from './chain.js';
+import { ACTION_TYPES, handleActionMessage, spawnAction } from './actions.js';
 
 /** Дневной прогон отдельным процессом: опрос ответов не ждёт его конца. */
 export function spawnDayRun(projectDir, { chained = false } = {}) {
@@ -75,6 +76,7 @@ export function errorLine(e) {
  * Возвращает { applied, messages } и busy: true (блокировка занята) или disabled: true (Telegram не настроен).
  */
 export async function pullAnswers({ projectDir, cfg, p, log = console.log, telegram = null, now = new Date(), startRun = spawnDayRun,
+  startAction = (kind, id, ticket) => spawnAction(projectDir, kind, id, ticket),
   timeoutSec = 0, lockWaitMs = 0, sleep = realSleep, quietEmpty = false, session = {}, flush = false }) {
   const token = process.env[cfg.telegram.token_env];
   if (!token || !cfg.telegram.chat_id) { log('Telegram не настроен (нет токена или chat_id), опрос пропущен.'); return { applied: 0, messages: [], disabled: true }; }
@@ -131,7 +133,19 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
     try { await sendView(tg, cfg.telegram.chat_id, view, p, cfg, { now }); }
     catch (e) { log(`Ответ на «${view}» не отправлен: ${errorLine(e)}`); }
   }
-  if (flush) await flushNotices(p, (text, kb) => tg.sendMessage(cfg.telegram.chat_id, text, { keyboard: kb }), { now, log });
+  // Действия владельца (0.6.0): список, подтверждение с одноразовым кодом, запуск отдельным процессом — после записи offset.
+  // Только от владельца: telegram.owner_id, а без него — личный чат chat_id (в личном чате id чата = id собеседника).
+  const owner = String(cfg.telegram.owner_id || (Number(cfg.telegram.chat_id) > 0 ? cfg.telegram.chat_id : ''));
+  for (const m of messages) {
+    const parsed = parseMessage(m.text);
+    if (!ACTION_TYPES.has(parsed.type)) continue;
+    const send = (text, keyboard) => tg.sendMessage(cfg.telegram.chat_id, text, { html: true, keyboard });
+    try {
+      if (!owner || String(m.fromId) !== owner) { await send(owner ? '⛔ Действия принимаются только от владельца' : '⛔ Действия выключены: в групповом чате задайте telegram.owner_id в mcfly/config.yaml', []); continue; }
+      await handleActionMessage({ parsed, p, cfg, now, spawn: startAction, send });
+    } catch (e) { log(`Ответ на действие не отправлен: ${errorLine(e)}`); }
+  }
+  if (flush) await flushNotices(p, (text, kb, o = {}) => tg.sendMessage(cfg.telegram.chat_id, text, { keyboard: kb, html: !!o.html }), { now, log });
   if (messages.length || !quietEmpty) log(`Telegram: сообщений ${messages.length}, применено ${acks.length}.`);
   return { applied: acks.length, messages };
 }
@@ -146,7 +160,8 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
  * clock и sleep подставляются в тестах.
  */
 export async function pollAnswers({ projectDir, cfg, p, log = console.log, telegram = null, durationMs, pollTimeoutSec = 25,
-  errorPauseMs = 12_000, idleMs = 1_000, busyPauseMs = 2_000, oldRunPauseMs = 30_000, clock = Date.now, sleep = realSleep, startRun = spawnDayRun }) {
+  errorPauseMs = 12_000, idleMs = 1_000, busyPauseMs = 2_000, oldRunPauseMs = 30_000, clock = Date.now, sleep = realSleep, startRun = spawnDayRun,
+  startAction = (kind, id, ticket) => spawnAction(projectDir, kind, id, ticket) }) {
   const deadline = clock() + durationMs;
   const left = () => deadline - clock();
   const pause = (ms) => sleep(Math.max(0, Math.min(ms, left())));
@@ -173,7 +188,7 @@ export async function pollAnswers({ projectDir, cfg, p, log = console.log, teleg
     let r;
     try {
       stats.polls += 1;
-      r = await pullAnswers({ projectDir, cfg, p, log, telegram, now: new Date(clock()), startRun, session, quietEmpty: true, flush: true,
+      r = await pullAnswers({ projectDir, cfg, p, log, telegram, now: new Date(clock()), startRun, startAction, session, quietEmpty: true, flush: true,
         timeoutSec: Math.max(1, Math.min(pollTimeoutSec, Math.floor(left() / 1000))) });
     } catch (e) {
       stats.errors += 1;

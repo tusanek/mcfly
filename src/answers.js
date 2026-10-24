@@ -2,6 +2,7 @@ import { appendText, fmtLocal } from './util.js';
 import { loadQuestions, saveQuestions, answerQuestion } from './questions.js';
 import { listChanges, setApproval } from './approvals.js';
 import { viewOf } from './overview.js';
+import { parseActionText } from './action-config.js';
 
 export function parseMessage(text) {
   const t = String(text || '').trim();
@@ -9,6 +10,9 @@ export function parseMessage(text) {
   if ((m = /^#?\s*(Q\d+)\s*[:：\-–—]?\s*([\s\S]*)$/i.exec(t)) && m[2].trim()) return { type: 'answer', id: m[1].toUpperCase(), text: m[2].trim() };
   if ((m = /^(?:approve|ok|одобряю|одобрить|да)\s+([\w.-]+)\s*([\s\S]*)$/i.exec(t))) return { type: 'approve', change: m[1], note: m[2].trim() };
   if ((m = /^(?:reject|отклоняю|отклонить|нет)\s+([\w.-]+)\s*([\s\S]*)$/i.exec(t))) return { type: 'reject', change: m[1], note: m[2].trim() };
+  // Действия владельца (0.6.0): «действия», «действие deploy», кнопки ac:/ax:/an: — отвечает pull.js (actions.js), сюда не пишутся.
+  const action = parseActionText(t);
+  if (action) return action;
   // Команды обзора («где мы», /status, кнопки внизу чата) только читают состояние: их отвечает pull.js, сюда они не пишутся.
   const view = viewOf(t);
   if (view) return { type: 'view', view };
@@ -59,7 +63,7 @@ export function applyMessages(p, messages, { now = new Date(), by = 'human', onR
         appendText(p.answers, `\n## ${stamp} — запрос ручного запуска\n${parsed.text}\n`);
         acks.push(onRun ? onRun(parsed.text) : '▶️ Запрос записан. Запуск с ноутбука: mcfly run --mode day');
         break;
-      case 'view': break;
+      case 'view': case 'actions': case 'action': case 'actionYes': case 'actionNo': break;
       default:
         appendText(p.answers, `\n## ${stamp} — заметка\n${parsed.text}\n`);
         acks.push('📝 Записал как заметку для команды');
