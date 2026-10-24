@@ -165,8 +165,10 @@ test('0.5.12: бот отвечает на «где мы», «цели», «ст
   const f = fakeFetch(['где мы', '🎯 Цели', 'статистика', '/last', 'помощь'].map((t, i) => msg(100 + i, t)));
   const started = [];
   await pullAnswers({ projectDir: dir, cfg: tgCfg, p, telegram: createTelegram({ token: 'T', fetchImpl: f }), log: () => {}, startRun: (d) => started.push(d) });
-  const sent = f.sent();
-  assert.equal(sent.length, 5); // только ответы на команды, без «📝 Записал как заметку»
+  const all = f.sent();
+  assert.equal(all.length, 6); // только ответы на команды, без «📝 Записал как заметку»; у «статуса» — ещё сообщение с кнопками решений
+  assert.match(all[1].text, /Ждут вашего решения/);
+  const sent = all.filter((_, i) => i !== 1);
   assert.match(sent[0].text, /📍 <b>Статус/); assert.match(sent[1].text, /Сделано 1 из 2/); assert.match(sent[2].text, /📊 <b>Статистика/);
   assert.match(sent[3].text, /📰 <b>Последний прогон/); assert.match(sent[4].text, /Что умеет бот/);
   for (const s of sent) {
@@ -185,6 +187,28 @@ test('0.5.12: одобрение и «где мы» в одной пачке —
   const sent = f.sent();
   assert.match(sent[0].text, /✅ одобрено: demo-x/);
   assert.match(sent[1].text, /🔧 <b>demo-x<\/b> — одобрено/);
+});
+
+test('0.6.3: «статус» присылает кнопки одобрения и отклонения изменений и ответов по умолчанию; без них — без лишнего сообщения', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'demo-a'); addChange(dir, 'demo-b');
+  for (const c of listChanges(p.openspecChanges)) requestApproval(c, { now: new Date() });
+  const qd = loadQuestions(p); addQuestion(qd, { category: 'spec', text: 'Порог?', defaultAnswer: '150', now: new Date() }, cfg); saveQuestions(p, qd);
+  const f = fakeFetch([msg(1, '📍 Статус')]);
+  await pullAnswers({ projectDir: dir, cfg: tgCfg, p, telegram: createTelegram({ token: 'T', fetchImpl: f }), log: () => {}, startRun: () => {} });
+  const sent = f.sent();
+  assert.equal(sent.length, 2);
+  assert.match(sent[0].text, /📍 <b>Статус/);
+  assert.match(sent[1].text, /Ждут вашего решения/);
+  const data = sent[1].reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.deepEqual(data.sort(), ['ap:demo-a', 'ap:demo-b', 'qd:Q1', 'rj:demo-a', 'rj:demo-b']);
+
+  setApproval(listChanges(p.openspecChanges).find((c) => c.name === 'demo-a'), 'approved', 'test');
+  setApproval(listChanges(p.openspecChanges).find((c) => c.name === 'demo-b'), 'rejected', 'test');
+  const q2 = loadQuestions(p); q2.questions[0].status = 'answered'; saveQuestions(p, q2);
+  const f2 = fakeFetch([msg(2, 'статус')]);
+  await pullAnswers({ projectDir: dir, cfg: tgCfg, p, telegram: createTelegram({ token: 'T', fetchImpl: f2 }), log: () => {}, startRun: () => {} });
+  assert.equal(f2.sent().length, 1, 'решать нечего — только статус');
 });
 
 test('0.5.12: задание answers один раз ставит меню команд и присылает клавиатуру', async () => {

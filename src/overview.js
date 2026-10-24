@@ -9,7 +9,7 @@ import { parseSlot } from './window.js';
 import { currentRun } from './runner.js';
 import { hasActions, listActions } from './action-config.js';
 import { currentAction, offerKeyboard, isTrusted } from './actions.js';
-import { escHtml, inline, splitHtml, reportSections, plainWords, humanItems, approvalCovered, isNone, changeProgress, nextRunText, runsByStatus, STATUS_RU } from './summary.js';
+import { escHtml, inline, splitHtml, reportSections, plainWords, humanItems, approvalCovered, isNone, changeProgress, nextRunText, runsByStatus, STATUS_RU, summaryKeyboard } from './summary.js';
 
 /**
  * Команды обзора для владельца в Telegram: «статус» (раньше «где мы»), «цели», «статистика», «последний прогон», «помощь».
@@ -268,7 +268,7 @@ export function helpView(p, cfg) {
     '📝 Любой другой текст — заметка команде, её прочтёт ближайший прогон',
     ...(hasActions(cfg) ? ['', '<b>Действия</b> (раздел actions в mcfly/config.yaml)', `🛠 «действия» или /actions — ${listActions(cfg).map((a) => escHtml(a.title)).join(', ')}; каждое с подтверждением «✅ Да, выполнить», итог приходит сообщением`] : []),
     '',
-    '<i>Кнопки под сводкой — те же одобрения и ответы одним нажатием. Кнопки внизу чата и меню «/» — команды выше.</i>',
+    '<i>Кнопки под сводкой и под «статусом» — те же одобрения и ответы одним нажатием. Кнопки внизу чата и меню «/» — команды выше.</i>',
   ].join('\n'));
 }
 
@@ -279,6 +279,11 @@ export function renderView(view, p, cfg, opts = {}) { return VIEWS[view](p, cfg,
 /** Отправляет ответ на команду обзора с постоянной клавиатурой внизу чата. */
 export async function sendView(tg, chatId, view, p, cfg, opts = {}) {
   for (const part of renderView(view, p, cfg, opts)) await tg.sendMessage(chatId, part, { html: true, replyKeyboard: mainKeyboard(cfg) });
+  // «статус»: отдельным сообщением кнопки решений, как под сводкой, — одобрить/отклонить изменение, ответ по умолчанию на вопрос
+  if (view === 'status') {
+    const rows = summaryKeyboard(p, cfg);
+    if (rows.length) await tg.sendMessage(chatId, '🗳 <b>Ждут вашего решения</b>', { html: true, keyboard: rows });
+  }
   // «статус» с действиями: отдельным сообщением кнопки того, что можно сделать сейчас (offer вернул 0) — у одного сообщения одна клавиатура
   if (view === 'status' && hasActions(cfg) && opts.offers !== false) {
     const rows = await (opts.offerKeyboard || offerKeyboard)(p, cfg);

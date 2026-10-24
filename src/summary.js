@@ -237,7 +237,7 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   return html;
 }
 
-/** Кнопки под сводкой: ответ по умолчанию на вопрос и одобрение/отклонение изменения. */
+/** Кнопки под сводкой и «статусом»: ответ по умолчанию на вопрос и одобрение/отклонение изменения. */
 export function summaryKeyboard(p, cfg) {
   const fitsData = (d) => Buffer.byteLength(d) <= 64; // предел callback_data в Telegram
   const rows = [];
