@@ -220,4 +220,5 @@ test('0.6.1: «статус» — ссылки проекта из links под 
   assert.match(html, /🔗 <a href="http:\/\/10\.0\.0\.1:8080\/latest\/">Сайт<\/a> · <a href="http:\/\/10\.0\.0\.1:8080\/latest\/review\/">На проверку<\/a>/);
   assert.doesNotMatch(statusView(p, cfg).join('\n'), /🔗/);
   assert.throws(() => parseConfig('project: x\nlinks:\n  Сайт: javascript:alert(1)\n'), /links\.Сайт: адрес/);
+  assert.throws(() => parseConfig('project: x\nlinks:\n  Сайт: \'http://a"b\'\n'), /links\.Сайт: адрес/, 'кавычка в адресе сломала бы href');
 });

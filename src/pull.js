@@ -13,7 +13,7 @@ import { listChanges, approvedWithWork, pendingApprovals } from './approvals.js'
 import { summaryKeyboard } from './summary.js';
 import { enqueueNotice, flushNotices } from './notices.js';
 import { autoApproveAndStart } from './chain.js';
-import { ACTION_TYPES, handleActionMessage, spawnAction } from './actions.js';
+import { ACTION_TYPES, handleActionMessage, spawnAction, ownerId } from './actions.js';
 
 /** Дневной прогон отдельным процессом: опрос ответов не ждёт его конца. */
 export function spawnDayRun(projectDir, { chained = false } = {}) {
@@ -129,13 +129,15 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
   }
   // Связь есть — дошлём то, что не ушло раньше (итоги прогонов, тревоги). Только задание answers: один отправитель очереди.
   // Команды обзора («статус», «цели», …) — после применения остальных сообщений, чтобы ответ уже видел, например, свежее одобрение.
-  for (const view of messages.map((m) => parseMessage(m.text)).filter((x) => x.type === 'view').map((x) => x.view)) {
-    try { await sendView(tg, cfg.telegram.chat_id, view, p, cfg, { now }); }
+  for (const m of messages) {
+    const parsed = parseMessage(m.text); if (parsed.type !== 'view') continue;
+    const view = parsed.view;
+    // проверки offer (команды из раздела actions) — только на «статус» владельца
+    try { await sendView(tg, cfg.telegram.chat_id, view, p, cfg, { now, offers: String(m.fromId) === ownerId(cfg) }); }
     catch (e) { log(`Ответ на «${view}» не отправлен: ${errorLine(e)}`); }
   }
   // Действия владельца (0.6.0): список, подтверждение с одноразовым кодом, запуск отдельным процессом — после записи offset.
-  // Только от владельца: telegram.owner_id, а без него — личный чат chat_id (в личном чате id чата = id собеседника).
-  const owner = String(cfg.telegram.owner_id || (Number(cfg.telegram.chat_id) > 0 ? cfg.telegram.chat_id : ''));
+  const owner = ownerId(cfg); // только от владельца, см. ownerId
   for (const m of messages) {
     const parsed = parseMessage(m.text);
     if (!ACTION_TYPES.has(parsed.type)) continue;

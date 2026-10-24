@@ -157,6 +157,8 @@ export async function main(argv) {
     case 'action': {
       const { listActions, getAction, prepareAction, execAction, isTrusted, trustActions, actionFiles } = await import('./actions.js');
       const tty = !!(process.stdin.isTTY && process.stdout.isTTY);
+      // Действия — решение владельца (прод, общая квота): в прогоне команды (MCFLY_RUN_ID задаёт runner) запуск запрещён.
+      if (runIdEnv) { console.error('Действия запускает только владелец кнопкой в боте или из терминала: в прогоне команды mcfly action запрещён.'); return 1; }
       if (sub === 'list' || !sub) {
         const list = listActions(cfg);
         if (!list.length) log('Действий нет: раздел actions в mcfly/config.yaml.');
@@ -164,8 +166,6 @@ export async function main(argv) {
         for (const a of list) log(`${a.id}: ${a.title}${a.describe ? ` — ${a.describe}` : ''}${a.confirm ? '' : ' (без подтверждения)'}\n  run: ${a.run}${a.prepare ? `\n  prepare: ${a.prepare}` : ''}${a.offer ? `\n  offer: ${a.offer}` : ''}`);
         return 0;
       }
-      // Действия — решение владельца (прод, общая квота): в прогоне команды (MCFLY_RUN_ID задаёт runner) запуск запрещён.
-      if (runIdEnv) { console.error('Действия запускает только владелец кнопкой в боте или из терминала: в прогоне команды mcfly action запрещён.'); return 1; }
       if (sub === 'trust') {
         // Только живой терминал: агент (без TTY) не может подтвердить команды, которые сам же поправил.
         if (!tty) { console.error('mcfly action trust — только в терминале владельца (нужен интерактивный ввод).'); return 1; }
@@ -173,7 +173,7 @@ export async function main(argv) {
         if (!list.length) { log('Действий нет: раздел actions в mcfly/config.yaml.'); return 1; }
         log('Команды, которые бот сможет запускать по кнопке (prepare и offer — без подтверждения):');
         for (const a of list) log(`\n${a.id} — ${a.title}${a.confirm ? '' : ' (без подтверждения)'}\n  run: ${a.run}${a.prepare ? `\n  prepare: ${a.prepare}` : ''}${a.offer ? `\n  offer: ${a.offer}` : ''}`);
-        const files = actionFiles(cfg);
+        const files = actionFiles(cfg, p.projectDir);
         if (files.length) log(`\nПодтверждается и содержимое файлов (правка любого снова выключит кнопки):\n${files.map((f) => `  ${f}`).join('\n')}`);
         const { createInterface } = await import('node:readline/promises');
         const rl = createInterface({ input: process.stdin, output: process.stdout });

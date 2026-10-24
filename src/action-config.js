@@ -1,7 +1,8 @@
 /**
- * Раздел actions в mcfly/config.yaml (0.6.0): проверка и умолчания. Отдельно от actions.js — без импортов,
+ * Раздел actions в mcfly/config.yaml (0.6.0): проверка и умолчания. Отдельно от actions.js — только util.js,
  * чтобы config.js не тянул runner.js по кругу.
  */
+import { commandText } from './util.js';
 export const ACTION_ID_RE = /^[a-z0-9-]{1,20}$/;
 
 export const ACTION_DEFAULTS = { title: '', describe: '', run: '', prepare: '', offer: '', followups: [], timeout_minutes: 60, confirm: true, during_run: false, vpn: false };
@@ -33,10 +34,12 @@ export function getAction(cfg, id) {
 }
 export function listActions(cfg) { return Object.keys(cfg.actions || {}).map((id) => getAction(cfg, id)).filter(Boolean); }
 export const hasActions = (cfg) => listActions(cfg).length > 0;
+/** Кто может запускать действия: telegram.owner_id, а без него — собеседник личного чата chat_id (в личном чате id чата = id собеседника); в группе без owner_id — никто. */
+export const ownerId = (cfg) => String(cfg.telegram.owner_id || (Number(cfg.telegram.chat_id) > 0 ? cfg.telegram.chat_id : ''));
 
 /** Разбор: «действия», «действие <id>», «действие <id> да <код>», «действие <id> отмена» (кнопки ac:/ax:/an: дают те же тексты). */
 export function parseActionText(t) {
-  const s = String(t || '').trim().replace(/^[^\p{L}\p{N}/]+/u, '').replace(/^(\/\w+)@\w+/, '$1').toLowerCase().replace(/ё/g, 'е').replace(/[\s?!.]+$/u, '');
+  const s = commandText(t);
   if (s === '/actions' || s === 'действия') return { type: 'actions' };
   const m = /^действие\s+([a-z0-9-]{1,20})(?:\s+(?:да\s+([0-9a-f]{6})|(отмена)))?$/.exec(s);
   if (!m) return null;

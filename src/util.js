@@ -12,6 +12,9 @@ export function readJson(p, fallback = null) {
   try { return JSON.parse(t); } catch { return fallback; }
 }
 export function writeJson(p, obj) { writeText(p, JSON.stringify(obj, null, 2) + '\n'); }
+/** Текст команды без эмодзи кнопки в начале, «@имя_бота» после /команды, регистра, «ё» и знаков в конце: «📍 Статус?» → «статус». */
+export const commandText = (text) => String(text || '').trim().replace(/^[^\p{L}\p{N}/]+/u, '').replace(/^(\/\w+)@\w+/, '$1')
+  .toLowerCase().replace(/ё/g, 'е').replace(/[\s?!.]+$/u, '').replace(/\s+/g, ' ');
 export function pad2(n) { return String(n).padStart(2, '0'); }
 export function fmtLocal(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
 export function fmtShort(d) { return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
