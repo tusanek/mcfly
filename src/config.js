@@ -19,7 +19,7 @@ export const DEFAULT_CONFIG = {
       stuck: { label: 'Два неудачных подхода подряд', auto_default: true },
     },
   },
-  telegram: { chat_id: '', token_env: 'MCFLY_TELEGRAM_TOKEN' },
+  telegram: { chat_id: '', token_env: 'MCFLY_TELEGRAM_TOKEN', owner_id: '' }, // owner_id — кто может запускать действия (0.6.0); пусто — личный чат chat_id
   limits: { max_changes_per_run: 2, max_tasks_per_change: 10 },
   // Действия владельца из Telegram (0.6.0): { <id>: { title, run, describe?, prepare?, offer?, followups?, timeout_minutes?, confirm?, during_run?, vpn? } }
   actions: {},

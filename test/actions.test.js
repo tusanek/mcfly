@@ -16,9 +16,15 @@ import { noticesPath } from '../src/notices.js';
 import {
   actionErrors, getAction, issueCode, takeCode, CODE_TTL_MS, handleActionMessage, execAction, prepareAction,
   acquireActionLock, releaseActionLock, currentAction, resultLines, offerKeyboard, actionLockPath,
+  trustActions, isTrusted, actionsDigest, issueTicket, takeTicket,
 } from '../src/actions.js';
-import { cfg, bareProject } from './helpers.js';
+import { cfg, bareProject, tmpDir } from './helpers.js';
 import { MCFLY_ROOT } from '../src/prompt.js';
+
+process.env.MCFLY_TRUST_FILE = path.join(tmpDir('mcfly-trust-'), 'trusted.json');
+/** Проект с подтверждённым разделом actions (как после mcfly action trust). */
+function trustedProject(c) { const dir = bareProject(); const p = paths(dir); trustActions(p, c); return { dir, p }; }
+const ticketFor = (p, c, id) => issueTicket(p, id, new Date(), actionsDigest(c));
 
 const withActions = (actions, extra = {}) => ({ ...cfg, ...extra, actions });
 const deploy = { title: '🚀 Выкатить', describe: 'выкат main', run: 'echo собираю; echo "@@ выкачено abc"; echo "@@ адреса 200"', followups: ['rollback'] };
@@ -70,9 +76,10 @@ test('0.6.0: код подтверждения одноразовый, прив�
 });
 
 test('0.6.0: нажатие — описание и «Да» с кодом; «Да» запускает exec; повтор старого «Да» отклоняется', async () => {
-  const dir = bareProject(); const p = paths(dir); const c = withActions({ deploy, rollback });
+  const c = withActions({ deploy, rollback }); const { p } = trustedProject(c);
   const { sent, send } = recorder(); const spawned = [];
-  const spawn = (kind, id) => spawned.push(`${kind}:${id}`);
+  const tickets = [];
+  const spawn = (kind, id, ticket) => { spawned.push(`${kind}:${id}`); tickets.push(ticket); };
   await handleActionMessage({ parsed: { type: 'action', id: 'deploy' }, p, cfg: c, send, spawn });
   assert.match(sent[0].text, /Что будет сделано: выкат main/);
   const yes = sent[0].keyboard[0][0].callback_data; assert.match(yes, /^ax:deploy:[0-9a-f]{6}$/);
@@ -81,6 +88,8 @@ test('0.6.0: нажатие — описание и «Да» с кодом; «Д
   const parsedYes = parseMessage(callbackText(yes));
   await handleActionMessage({ parsed: parsedYes, p, cfg: c, send, spawn });
   assert.deepEqual(spawned, ['exec:deploy']); assert.match(sent[1].text, /▶️ Начинаю/);
+  assert.match(tickets[0], /^[0-9a-f]{32}$/, 'процесс получает пропуск');
+  assert.equal(takeTicket(p, 'deploy', tickets[0], new Date(), actionsDigest(c)), true);
   await handleActionMessage({ parsed: parsedYes, p, cfg: c, send, spawn });
   assert.deepEqual(spawned, ['exec:deploy'], 'старое «Да» второй раз не запускает');
   assert.match(sent[2].text, /устарело или уже использовано/);
@@ -91,8 +100,8 @@ test('0.6.0: нажатие — описание и «Да» с кодом; «Д
 });
 
 test('0.6.0: без подтверждения — сразу exec; с prepare — подготовка в фоне', async () => {
-  const dir = bareProject(); const p = paths(dir);
   const c = withActions({ status: { title: 'Сервер', run: 'echo ok', confirm: false }, evalx: { title: 'Eval', run: 'echo run', prepare: 'echo оценка' } });
+  const { p } = trustedProject(c);
   const { sent, send } = recorder(); const spawned = [];
   await handleActionMessage({ parsed: { type: 'action', id: 'status' }, p, cfg: c, send, spawn: (k, id) => spawned.push(`${k}:${id}`) });
   await handleActionMessage({ parsed: { type: 'action', id: 'evalx' }, p, cfg: c, send, spawn: (k, id) => spawned.push(`${k}:${id}`) });
@@ -101,15 +110,16 @@ test('0.6.0: без подтверждения — сразу exec; с prepare �
 });
 
 test('0.6.0: во время прогона команды и во время другого действия «Да» не запускает', async () => {
-  const dir = bareProject(); const p = paths(dir); const c = withActions({ deploy, rollback, free: { title: 'Чтение', run: 'echo', during_run: true } });
+  const c = withActions({ deploy, rollback, free: { title: 'Чтение', run: 'echo', during_run: true } }); const { p } = trustedProject(c);
+  const dg = actionsDigest(c);
   const { sent, send } = recorder(); const spawned = [];
   const lock = acquireLock(p, 'r1');
   try {
-    const code = issueCode(p, 'deploy');
+    const code = issueCode(p, 'deploy', new Date(), dg);
     await handleActionMessage({ parsed: { type: 'actionYes', id: 'deploy', code }, p, cfg: c, send, spawn: (k, id) => spawned.push(id) });
     assert.match(sent[0].text, /Идёт прогон команды/); assert.deepEqual(spawned, []);
-    assert.equal(takeCode(p, 'deploy', code), true, 'код не сгорел: после прогона можно нажать снова');
-    const code2 = issueCode(p, 'free');
+    assert.equal(takeCode(p, 'deploy', code, new Date(), dg), true, 'код не сгорел: после прогона можно нажать снова');
+    const code2 = issueCode(p, 'free', new Date(), dg);
     await handleActionMessage({ parsed: { type: 'actionYes', id: 'free', code: code2 }, p, cfg: c, send, spawn: (k, id) => spawned.push(id) });
     assert.deepEqual(spawned, ['free'], 'during_run: true — можно и во время прогона');
   } finally { releaseLock(p, lock); }
@@ -126,9 +136,9 @@ test('0.6.0: во время прогона команды и во время д
 });
 
 test('0.6.0: exec — журнал, итог по строкам «@@», кнопки followups, запись в metrics', async () => {
-  const dir = bareProject(); const p = paths(dir); const c = withActions({ deploy, rollback });
+  const c = withActions({ deploy, rollback }); const { p } = trustedProject(c);
   const { sent, send } = recorder();
-  const r = await execAction({ p, cfg: c, id: 'deploy', send });
+  const r = await execAction({ p, cfg: c, id: 'deploy', send, ticket: ticketFor(p, c, 'deploy') });
   assert.equal(r.status, 'ok');
   assert.match(sent[0].text, /✅ <b>🚀 Выкатить<\/b> — готово/);
   assert.match(sent[0].text, /выкачено abc\nадреса 200/); assert.doesNotMatch(sent[0].text, /собираю/);
@@ -141,51 +151,51 @@ test('0.6.0: exec — журнал, итог по строкам «@@», кно�
 });
 
 test('0.6.0: exec — ошибка с хвостом вывода, предел времени, итог в очередь без связи', async () => {
-  const dir = bareProject(); const p = paths(dir);
   const c = withActions({ bad: { title: 'Плохое', run: 'for i in $(seq 1 30); do echo строка$i; done; echo "<b>" >&2; exit 3' }, slow: { title: 'Долгое', run: 'sleep 30', timeout_minutes: 0.005 } });
+  const { p } = trustedProject(c);
   const { sent, send } = recorder();
-  const bad = await execAction({ p, cfg: c, id: 'bad', send });
+  const bad = await execAction({ p, cfg: c, id: 'bad', send, ticket: ticketFor(p, c, 'bad') });
   assert.equal(bad.status, 'error'); assert.equal(bad.code, 3);
   assert.match(sent[0].text, /❌ <b>Плохое<\/b> — ошибка \(код 3\)/);
   assert.match(sent[0].text, /строка30/); assert.doesNotMatch(sent[0].text, /строка10\n/, 'только хвост');
   assert.match(sent[0].text, /&lt;b&gt;/, 'вывод экранирован');
   const t = Date.now();
-  const slow = await execAction({ p, cfg: c, id: 'slow', send });
+  const slow = await execAction({ p, cfg: c, id: 'slow', send, ticket: ticketFor(p, c, 'slow') });
   assert.equal(slow.status, 'timeout'); assert.ok(Date.now() - t < 15_000);
   assert.match(sent[1].text, /⏱ <b>Долгое<\/b> — прервано/);
-  await execAction({ p, cfg: c, id: 'bad', send: async () => { throw new Error('fetch failed'); } });
+  await execAction({ p, cfg: c, id: 'bad', ticket: ticketFor(p, c, 'bad'), send: async () => { throw new Error('fetch failed'); } });
   assert.match(fs.readFileSync(noticesPath(p), 'utf8'), /Плохое/, 'итог не потерян');
 });
 
 test('0.6.0: exec во время прогона команды не выполняет команду', async () => {
-  const dir = bareProject(); const p = paths(dir); const marker = path.join(dir, 'ran');
-  const c = withActions({ deploy: { title: 'Выкат', run: `touch ${marker}` } });
+  const dir0 = tmpDir(); const marker = path.join(dir0, 'ran');
+  const c = withActions({ deploy: { title: 'Выкат', run: `touch ${marker}` } }); const { p } = trustedProject(c);
   const { sent, send } = recorder();
   const lock = acquireLock(p, 'r1');
-  try { assert.equal((await execAction({ p, cfg: c, id: 'deploy', send })).status, 'busy'); } finally { releaseLock(p, lock); }
+  try { assert.equal((await execAction({ p, cfg: c, id: 'deploy', send, ticket: ticketFor(p, c, 'deploy') })).status, 'busy'); } finally { releaseLock(p, lock); }
   assert.equal(fs.existsSync(marker), false); assert.match(sent[0].text, /Идёт прогон/);
 });
 
 test('0.6.0: prepare — вывод и «Да» с кодом; сбой подготовки — без кнопки', async () => {
-  const dir = bareProject(); const p = paths(dir);
   const c = withActions({ ev: { title: 'Eval', run: 'echo', prepare: 'echo "@@ оценка ~827568"' }, bad: { title: 'Плохое', run: 'echo', prepare: 'echo нет сети; exit 2' } });
+  const { p } = trustedProject(c);
   const { sent, send } = recorder();
-  assert.equal((await prepareAction({ p, cfg: c, id: 'ev', send })).status, 'ok');
+  assert.equal((await prepareAction({ p, cfg: c, id: 'ev', send, ticket: ticketFor(p, c, 'ev') })).status, 'ok');
   assert.match(sent[0].text, /оценка ~827568/); assert.match(sent[0].keyboard[0][0].callback_data, /^ax:ev:/);
-  assert.equal((await prepareAction({ p, cfg: c, id: 'bad', send })).status, 'error');
+  assert.equal((await prepareAction({ p, cfg: c, id: 'bad', send, ticket: ticketFor(p, c, 'bad') })).status, 'error');
   assert.match(sent[1].text, /Подготовка «Плохое» не удалась \(код 2\)/); assert.deepEqual(sent[1].keyboard, []);
 });
 
 test('0.6.0: resultLines и offerKeyboard', () => {
   assert.deepEqual(resultLines(['a', '@@ x', 'b', '@@ y']), ['x', 'y']);
   assert.deepEqual(resultLines(['', 'a', 'b']), ['a', 'b']);
-  const dir = bareProject(); const p = paths(dir);
   const c = withActions({ yes: { title: 'Да', run: 'x', offer: 'exit 0' }, no: { title: 'Нет', run: 'x', offer: 'exit 1' }, none: { title: 'Без', run: 'x' }, slow: { title: 'Медленно', run: 'x', offer: 'sleep 5' } });
+  const { p } = trustedProject(c);
   assert.deepEqual(offerKeyboard(p, c, { timeoutMs: 500 }), [[{ text: 'Да', callback_data: 'ac:yes' }]]);
 });
 
 test('0.6.0: «где мы» с действиями — кнопки «Можно сделать», клавиатура и меню с «🛠 Действия»; список действий', async () => {
-  const dir = bareProject(); const p = paths(dir); const c = withActions({ deploy, rollback });
+  const c = withActions({ deploy, rollback }); const { p } = trustedProject(c);
   const sent = [];
   const tg = { async sendMessage(chatId, text, opts) { sent.push({ text, opts }); return []; } };
   await sendView(tg, '42', 'status', p, c, { offerKeyboard: () => [[{ text: '🚀 Выкатить', callback_data: 'ac:deploy' }]] });
@@ -199,18 +209,61 @@ test('0.6.0: «где мы» с действиями — кнопки «Можн
   assert.match(buildContext(p, c), /кнопка «<название>» в боте/);
 });
 
-test('0.6.0: кнопка из Telegram доходит до действия в том же опросе', async () => {
-  const dir = bareProject(); const p = paths(dir);
+test('0.6.0: кнопка из Telegram доходит до действия в том же опросе; только от владельца', async () => {
   process.env.MCFLY_TEST_TG_A = 'T';
   const c = withActions({ status: { title: 'Сервер', run: 'echo ok', confirm: false } }, { telegram: { chat_id: '42', token_env: 'MCFLY_TEST_TG_A' } });
+  const { dir, p } = trustedProject(c);
+  const cb = (uid, data, from = 42, chat = 42) => ({ update_id: uid, callback_query: { id: 'cb', data, from: { id: from }, message: { message_id: 1, chat: { id: chat }, date: 1700000000 } } });
   const sent = []; const started = [];
-  const tg = { async getUpdates() { return [{ update_id: 5, callback_query: { id: 'cb', data: 'ac:status', message: { message_id: 1, chat: { id: 42 }, date: 1700000000 } } }]; },
+  const tg = { async getUpdates() { return [cb(5, 'ac:status')]; },
     async sendMessage(chatId, text, opts) { sent.push({ text, opts }); return []; }, async answerCallbackQuery() { return true; } };
   await pullAnswers({ projectDir: dir, cfg: c, p, telegram: tg, log: () => {}, startAction: (k, id) => started.push(`${k}:${id}`) });
   assert.deepEqual(started, ['exec:status']); assert.match(sent.at(-1).text, /Сервер — итог придёт/);
-  const other = { ...tg, async getUpdates() { return [{ update_id: 6, callback_query: { id: 'cb', data: 'ac:status', message: { message_id: 1, chat: { id: 777 }, date: 1700000000 } } }]; } };
+  const other = { ...tg, async getUpdates() { return [cb(6, 'ac:status', 777, 777)]; } };
   await pullAnswers({ projectDir: dir, cfg: c, p, telegram: other, log: () => {}, startAction: (k, id) => started.push(id) });
   assert.deepEqual(started, ['exec:status'], 'кнопка из чужого чата игнорируется');
+  const stranger = { ...tg, async getUpdates() { return [cb(7, 'ac:status', 555, 42)]; } };
+  await pullAnswers({ projectDir: dir, cfg: c, p, telegram: stranger, log: () => {}, startAction: (k, id) => started.push(id) });
+  assert.deepEqual(started, ['exec:status'], 'чужой человек в том же чате действие не запускает');
+  assert.match(sent.at(-1).text, /только от владельца/);
+  const group = { ...c, telegram: { chat_id: '-100', token_env: 'MCFLY_TEST_TG_A' } };
+  const inGroup = { ...tg, async getUpdates() { return [cb(8, 'ac:status', 42, -100)]; } };
+  await pullAnswers({ projectDir: dir, cfg: group, p, telegram: inGroup, log: () => {}, startAction: (k, id) => started.push(id) });
+  assert.deepEqual(started, ['exec:status']); assert.match(sent.at(-1).text, /owner_id/, 'в группе без owner_id действия выключены');
+});
+
+test('0.6.0: раздел actions без подтверждения владельца или после правки — кнопки выключены, команды не выполняются', async () => {
+  const dir0 = tmpDir(); const marker = path.join(dir0, 'ran');
+  const c = withActions({ hi: { title: 'Привет', run: `touch ${marker}`, offer: `touch ${marker}`, confirm: false } });
+  const dir = bareProject(); const p = paths(dir);
+  assert.equal(isTrusted(p, c), false);
+  const { sent, send } = recorder(); const spawned = [];
+  await handleActionMessage({ parsed: { type: 'action', id: 'hi' }, p, cfg: c, send, spawn: (k, id) => spawned.push(id) });
+  await handleActionMessage({ parsed: { type: 'actions' }, p, cfg: c, send, spawn: (k, id) => spawned.push(id) });
+  assert.deepEqual(spawned, []); assert.match(sent[0].text, /mcfly action trust/); assert.match(sent[1].text, /mcfly action trust/);
+  assert.deepEqual(offerKeyboard(p, c), [], 'offer не выполняется');
+  trustActions(p, c);
+  const t = ticketFor(p, c, 'hi');
+  const changed = withActions({ hi: { ...c.actions.hi, run: `touch ${marker}; echo подмена` } });
+  assert.equal(isTrusted(p, changed), false, 'правка команды снимает подтверждение');
+  assert.equal((await execAction({ p, cfg: changed, id: 'hi', send, ticket: t })).status, 'untrusted');
+  assert.equal(fs.existsSync(marker), false);
+});
+
+test('0.6.0: exec и prepare без пропуска (в обход кнопки) отклоняются; код «Да» не годится после правки команды', async () => {
+  const dir0 = tmpDir(); const marker = path.join(dir0, 'ran');
+  const c = withActions({ hi: { title: 'Привет', run: `touch ${marker}`, prepare: `touch ${marker}` } }); const { p } = trustedProject(c);
+  const { sent, send } = recorder();
+  assert.equal((await execAction({ p, cfg: c, id: 'hi', send })).status, 'refused');
+  assert.equal((await execAction({ p, cfg: c, id: 'hi', send, ticket: 'deadbeef' })).status, 'refused');
+  assert.equal((await prepareAction({ p, cfg: c, id: 'hi', send })).status, 'refused');
+  assert.equal(fs.existsSync(marker), false); assert.match(sent[0].text, /без подтверждения кнопкой отклонён/);
+  const t = ticketFor(p, c, 'hi');
+  assert.equal((await execAction({ p, cfg: c, id: 'hi', send, ticket: t })).status, 'ok'); assert.equal(fs.existsSync(marker), true);
+  assert.equal((await execAction({ p, cfg: c, id: 'hi', send, ticket: t })).status, 'refused', 'пропуск одноразовый');
+  const code = issueCode(p, 'hi', new Date(), actionsDigest(c));
+  const changed = withActions({ hi: { ...c.actions.hi, run: 'echo другое' } });
+  assert.equal(takeCode(p, 'hi', code, new Date(), actionsDigest(changed)), false);
 });
 
 test('0.6.0: mcfly action в прогоне команды запрещён', () => {
@@ -221,6 +274,10 @@ test('0.6.0: mcfly action в прогоне команды запрещён', ()
   assert.equal(inRun.status, 1); assert.match(inRun.stderr, /в прогоне команды mcfly action запрещён/);
   assert.equal(fs.existsSync(path.join(dir, 'ran')), false);
   const env = { ...process.env }; delete env.MCFLY_RUN_ID; delete env.MCFLY_TELEGRAM_TOKEN;
-  const own = spawnSync(process.execPath, [bin, 'action', 'run', 'hi', '--project', dir], { encoding: 'utf8', env });
-  assert.equal(own.status, 0, own.stderr); assert.equal(fs.existsSync(path.join(dir, 'ran')), true);
+  const noTty = spawnSync(process.execPath, [bin, 'action', 'run', 'hi', '--yes', '--project', dir], { encoding: 'utf8', env });
+  assert.equal(noTty.status, 1); assert.match(noTty.stderr, /только в терминале владельца/, 'без терминала (агент) run не работает');
+  const trust = spawnSync(process.execPath, [bin, 'action', 'trust', '--project', dir], { encoding: 'utf8', env, input: 'да\n' });
+  assert.equal(trust.status, 1); assert.match(trust.stderr, /только в терминале владельца/, 'trust без терминала не работает');
+  const exec = spawnSync(process.execPath, [bin, 'action', 'exec', 'hi', '--project', dir], { encoding: 'utf8', env });
+  assert.equal(exec.status, 1, 'exec без пропуска'); assert.equal(fs.existsSync(path.join(dir, 'ran')), false);
 });

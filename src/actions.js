@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
@@ -8,7 +9,7 @@ import { enqueueNotice } from './notices.js';
 import { currentRun } from './runner.js';
 import { ensureVpn } from './vpn.js';
 import { MCFLY_ROOT } from './prompt.js';
-import { ACTION_ID_RE, getAction, listActions } from './action-config.js';
+import { getAction, listActions, hasActions } from './action-config.js';
 
 export { ACTION_ID_RE, ACTION_DEFAULTS, actionErrors, getAction, listActions, hasActions, parseActionText } from './action-config.js';
 
@@ -25,32 +26,58 @@ const TAIL_LINES = 20;
 const RESULT_MAX = 3500;
 const KEEP_LINES = 400;
 
-// ---------- одноразовые коды подтверждения ----------
+// ---------- доверие: раздел actions подтверждён владельцем ----------
+/**
+ * config.yaml лежит в репозитории, и агент по ошибке может его поправить (offer выполняется при «где мы» без подтверждения).
+ * Поэтому действия работают, только если сумма раздела actions совпадает с подтверждённой владельцем командой
+ * mcfly action trust (только в терминале). Файл подтверждений — вне проекта. Защита от ошибки агента, не от злого умысла.
+ */
+export const trustFile = () => process.env.MCFLY_TRUST_FILE || path.join(os.homedir(), '.config', 'mcfly', 'trusted-actions.json');
+const canonical = (v) => (Array.isArray(v) ? v.map(canonical) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical(v[k])])) : v);
+export function actionsDigest(cfg) { return crypto.createHash('sha256').update(JSON.stringify(canonical(cfg.actions || {}))).digest('hex'); }
+export function isTrusted(p, cfg) { return readJson(trustFile(), {})?.[p.projectDir]?.digest === actionsDigest(cfg); }
+export function trustActions(p, cfg, now = new Date()) {
+  const file = trustFile(); ensureDir(path.dirname(file));
+  const all = readJson(file, {}) || {};
+  all[p.projectDir] = { digest: actionsDigest(cfg), at: now.toISOString(), actions: Object.keys(cfg.actions || {}) };
+  writeJson(file, all);
+}
+export const UNTRUSTED_TEXT = '⚠️ Раздел actions в mcfly/config.yaml изменён и не подтверждён владельцем — кнопки выключены. Проверьте команды и подтвердите в терминале: mcfly action trust';
+
+// ---------- одноразовые коды подтверждения и пропуски на запуск ----------
+/** Пропуск: бот выдаёт его после «Да» (или нажатия действия без подтверждения) и передаёт процессу; exec/prepare без него не работают. */
+export const TICKET_TTL_MS = 2 * 60_000;
 const statePath = (p) => path.join(p.logs, 'actions-state.json');
-function loadCodes(p) { return readJson(statePath(p), {})?.codes || {}; }
-function saveCodes(p, codes) {
+function loadState(p) { const s = readJson(statePath(p), {}) || {}; return { codes: s.codes || {}, tickets: s.tickets || {} }; }
+function saveState(p, st) {
   ensureDir(p.logs);
   // атомарно: код пишет процесс подготовки, читает задание answers
-  const tmp = `${statePath(p)}.${process.pid}.tmp`; writeJson(tmp, { codes }); fs.renameSync(tmp, statePath(p));
+  const tmp = `${statePath(p)}.${process.pid}.tmp`; writeJson(tmp, st); fs.renameSync(tmp, statePath(p));
 }
-const fresh = (codes, now) => Object.fromEntries(Object.entries(codes).filter(([, c]) => now - new Date(c.at) < CODE_TTL_MS));
-
-/** Новый код подтверждения действия id (6 знаков hex, живёт CODE_TTL_MS). */
-export function issueCode(p, id, now = new Date()) {
-  const codes = fresh(loadCodes(p), now);
-  const code = crypto.randomBytes(3).toString('hex');
-  codes[code] = { id, at: now.toISOString() };
-  saveCodes(p, codes);
-  return code;
+const fresh = (items, now, ttl) => Object.fromEntries(Object.entries(items).filter(([, c]) => now - new Date(c.at) < ttl));
+function issue(p, kind, id, digest, now, bytes) {
+  const st = loadState(p); st.codes = fresh(st.codes, now, CODE_TTL_MS); st.tickets = fresh(st.tickets, now, TICKET_TTL_MS);
+  const key = crypto.randomBytes(bytes).toString('hex');
+  st[kind][key] = { id, digest, at: now.toISOString() };
+  saveState(p, st);
+  return key;
 }
-/** Забирает код: true, если он выдан для id и не устарел; повторно тот же код не сработает. */
-export function takeCode(p, id, code, now = new Date()) {
-  const all = loadCodes(p); const codes = fresh(all, now);
-  const ok = codes[code]?.id === id;
-  if (ok) delete codes[code];
-  if (ok || Object.keys(codes).length !== Object.keys(all).length) saveCodes(p, codes);
+function take(p, kind, id, key, digest, now) {
+  const st = loadState(p); const all = st[kind];
+  st.codes = fresh(st.codes, now, CODE_TTL_MS); st.tickets = fresh(st.tickets, now, TICKET_TTL_MS);
+  const item = st[kind][key];
+  // код выдан под этот текст раздела actions: команду поправили после показа «что будет сделано» — код не годится
+  const ok = !!item && item.id === id && item.digest === digest;
+  if (ok) delete st[kind][key];
+  if (ok || Object.keys(st[kind]).length !== Object.keys(all).length) saveState(p, st);
   return ok;
 }
+/** Новый код подтверждения действия id (6 знаков hex, живёт CODE_TTL_MS, привязан к тексту раздела actions). */
+export function issueCode(p, id, now = new Date(), digest = '') { return issue(p, 'codes', id, digest, now, 3); }
+/** Забирает код: true, если он выдан для id под тот же текст actions и не устарел; повторно не сработает. */
+export function takeCode(p, id, code, now = new Date(), digest = '') { return take(p, 'codes', id, code, digest, now); }
+export function issueTicket(p, id, now = new Date(), digest = '') { return issue(p, 'tickets', id, digest, now, 16); }
+export function takeTicket(p, id, ticket, now = new Date(), digest = '') { return !!ticket && take(p, 'tickets', id, ticket, digest, now); }
 
 // ---------- блокировка: одно действие за раз ----------
 export const actionLockPath = (p) => path.join(p.logs, '.action.lock');
@@ -136,8 +163,8 @@ export function resultMessage(cfg, a, { status, code, durationMs, lines, logRel 
 
 // ---------- запуск команд ----------
 /** Отдельный процесс mcfly action <kind> <id>: опрос Telegram не ждёт выката. */
-export function spawnAction(projectDir, kind, id) {
-  spawn(process.execPath, [path.join(MCFLY_ROOT, 'bin', 'mcfly'), 'action', kind, id, '--project', projectDir], { cwd: projectDir, detached: true, stdio: 'ignore', env: process.env }).unref();
+export function spawnAction(projectDir, kind, id, ticket) {
+  spawn(process.execPath, [path.join(MCFLY_ROOT, 'bin', 'mcfly'), 'action', kind, id, '--ticket', ticket, '--project', projectDir], { cwd: projectDir, detached: true, stdio: 'ignore', env: process.env }).unref();
 }
 
 /**
@@ -186,10 +213,23 @@ async function deliver(p, send, msg, now) {
   catch { enqueueNotice(p, { text: msg.text, keyboard: msg.keyboard }, now); }
 }
 
-/** mcfly action prepare <id>: вывод prepare и запрос подтверждения с новым кодом. */
-export async function prepareAction({ p, cfg, id, send, now = () => new Date(), timeoutMs = PREPARE_TIMEOUT_MS }) {
+/** Пропуск или доверие не прошли: в чат — чтобы владелец увидел попытку запуска в обход кнопки. */
+async function refused(p, cfg, a, ticket, interactive, send, now) {
+  const digest = actionsDigest(cfg);
+  if (!isTrusted(p, cfg)) { await deliver(p, send, { text: escHtml(UNTRUSTED_TEXT), keyboard: [] }, now); return { status: 'untrusted' }; }
+  if (!interactive && !takeTicket(p, a.id, ticket, now, digest)) {
+    await deliver(p, send, { text: `⛔ Запуск «${escHtml(a.title)}» без подтверждения кнопкой отклонён`, keyboard: [] }, now);
+    return { status: 'refused' };
+  }
+  return null;
+}
+
+/** mcfly action prepare <id> --ticket: вывод prepare и запрос подтверждения с новым кодом. */
+export async function prepareAction({ p, cfg, id, send, ticket = null, now = () => new Date(), timeoutMs = PREPARE_TIMEOUT_MS }) {
   const a = getAction(cfg, id);
   if (!a) return { status: 'unknown' };
+  const no = await refused(p, cfg, a, ticket, false, send, now());
+  if (no) return no;
   const vpn = await vpnFailure(cfg, a);
   if (vpn) { await deliver(p, send, { text: `❌ <b>${escHtml(a.title)}</b>: ${escHtml(vpn)} — без VPN сервер недоступен`, keyboard: [] }, now()); return { status: 'vpn' }; }
   const r = await runCommand(a.prepare, { cwd: p.projectDir, timeoutMs });
@@ -198,15 +238,20 @@ export async function prepareAction({ p, cfg, id, send, now = () => new Date(), 
     await deliver(p, send, { text: `❌ Подготовка «${escHtml(a.title)}» не удалась (${why}) — действие не запускаю.\n${pre(truncate(r.lines.filter((l) => l.trim()).slice(-TAIL_LINES).join('\n'), RESULT_MAX))}`, keyboard: [] }, now());
     return { status: 'error' };
   }
-  await deliver(p, send, confirmMessage(a, issueCode(p, a.id, now()), resultLines(r.lines).join('\n')), now());
+  await deliver(p, send, confirmMessage(a, issueCode(p, a.id, now(), actionsDigest(cfg)), resultLines(r.lines).join('\n')), now());
   return { status: 'ok' };
 }
 
-/** mcfly action exec <id>: блокировка, VPN, команда с пределом времени, журнал, итог в чат, запись в metrics.jsonl. */
-export async function execAction({ p, cfg, id, send, now = () => new Date(), echo = null }) {
+/**
+ * mcfly action exec <id> --ticket: блокировка, VPN, команда с пределом времени, журнал, итог в чат, запись в metrics.jsonl.
+ * interactive — mcfly action run из терминала владельца (TTY и --yes проверяет cli.js): без пропуска.
+ */
+export async function execAction({ p, cfg, id, send, ticket = null, interactive = false, now = () => new Date(), echo = null }) {
   const a = getAction(cfg, id);
   if (!a) return { status: 'unknown' };
   const started = now();
+  const no = await refused(p, cfg, a, ticket, interactive, send, started);
+  if (no) return no;
   if (!acquireActionLock(p, a, started)) {
     await deliver(p, send, { text: blockReason(p, a) || `⏳ «${escHtml(a.title)}» не запущено: идёт другое действие`, keyboard: [] }, started);
     return { status: 'busy' };
@@ -234,6 +279,7 @@ export async function execAction({ p, cfg, id, send, now = () => new Date(), ech
 /** Кнопки «Можно сделать» для «где мы»: действия, у которых offer вернул 0. Таймаут и ошибка — без кнопки. */
 export function offerKeyboard(p, cfg, { timeoutMs = OFFER_TIMEOUT_MS } = {}) {
   const rows = [];
+  if (!isTrusted(p, cfg)) return rows; // неподтверждённый раздел — никаких команд, даже offer
   for (const a of listActions(cfg)) {
     if (!a.offer) continue;
     const r = spawnSync('bash', ['-c', a.offer], { cwd: p.projectDir, timeout: timeoutMs, stdio: 'ignore' });
@@ -246,23 +292,28 @@ export function offerKeyboard(p, cfg, { timeoutMs = OFFER_TIMEOUT_MS } = {}) {
 export const ACTION_TYPES = new Set(['actions', 'action', 'actionYes', 'actionNo']);
 
 /**
- * Ответ на сообщение о действии. send(text, keyboard) — HTML в чат проекта. spawn(kind, id) — фоновый процесс.
+ * Ответ на сообщение о действии. send(text, keyboard) — HTML в чат проекта. spawn(kind, id, ticket) — фоновый процесс.
+ * Отправителя (только владелец) проверяет pull.js.
  * Ничего не пишет в answers.md: решение владельца видно в журнале действия и metrics.jsonl.
  */
-export async function handleActionMessage({ parsed, p, cfg, send, spawn: spawnKind, now = new Date() }) {
+export async function handleActionMessage({ parsed, p, cfg, send, spawn: spawnRaw, now = new Date() }) {
+  if (hasActions(cfg) && !isTrusted(p, cfg)) return send(escHtml(UNTRUSTED_TEXT), []);
   if (parsed.type === 'actions') { const m = actionsMessage(p, cfg); return send(m.text, m.keyboard); }
+  const digest = actionsDigest(cfg);
+  // процесс получает одноразовый пропуск: без него exec/prepare не работают (вызов mcfly action exec в обход кнопки)
+  const spawnKind = (kind, id) => spawnRaw(kind, id, issueTicket(p, id, now, digest));
   const a = getAction(cfg, parsed.id);
   if (!a) return send(`⚠️ Действие «${escHtml(parsed.id)}» не настроено (раздел actions в mcfly/config.yaml)`, []);
   if (parsed.type === 'actionNo') return send(`✖️ Отменено: ${escHtml(a.title)}`, []);
   const blocked = blockReason(p, a);
   if (blocked) return send(escHtml(blocked), []);
   if (parsed.type === 'actionYes') {
-    if (!takeCode(p, a.id, parsed.code, now)) return send(`⌛ Подтверждение «${escHtml(a.title)}» устарело или уже использовано — нажмите «🛠 Действия» и начните снова`, []);
+    if (!takeCode(p, a.id, parsed.code, now, digest)) return send(`⌛ Подтверждение «${escHtml(a.title)}» устарело или уже использовано — нажмите «🛠 Действия» и начните снова`, []);
     spawnKind('exec', a.id);
     return send(`▶️ Начинаю: <b>${escHtml(a.title)}</b> (предел ${a.timeout_minutes} мин) — итог придёт сообщением`, []);
   }
   if (!a.confirm) { spawnKind('exec', a.id); return send(`▶️ ${escHtml(a.title)} — итог придёт сообщением`, []); }
   if (a.prepare) { spawnKind('prepare', a.id); return send(`🔎 Готовлю «${escHtml(a.title)}» — что будет сделано, пришлю с кнопкой подтверждения`, []); }
-  const m = confirmMessage(a, issueCode(p, a.id, now));
+  const m = confirmMessage(a, issueCode(p, a.id, now, digest));
   return send(m.text, m.keyboard);
 }

@@ -8,7 +8,7 @@ import { autoDefault } from './config.js';
 import { parseSlot } from './window.js';
 import { currentRun } from './runner.js';
 import { hasActions, listActions } from './action-config.js';
-import { currentAction, offerKeyboard } from './actions.js';
+import { currentAction, offerKeyboard, isTrusted } from './actions.js';
 import { escHtml, inline, splitHtml, reportSections, plainWords, humanItems, approvalCovered, isNone, changeProgress, nextRunText, runsByStatus, STATUS_RU } from './summary.js';
 
 /**
@@ -110,6 +110,7 @@ export function statusView(p, cfg, { now = new Date() } = {}) {
   if (cur) L.push(`▶️ <b>Идёт прогон</b> ${escHtml(cur.id || '')} с ${fmtShort(cur.since)}${cur.lastEvent ? `\nПоследнее действие: ${escHtml(truncate(cur.lastEvent, 300))}` : ''}`);
   else L.push(`💤 Прогон сейчас не идёт.${last ? ` Последний: ${escHtml(runBrief(last))}` : ' Прогонов ещё не было.'}`);
   const act = currentAction(p);
+  if (hasActions(cfg) && !isTrusted(p, cfg)) L.push('⚠️ Кнопки действий выключены: раздел actions изменён — подтвердите в терминале <code>mcfly action trust</code>');
   if (act) L.push(`🛠 <b>Идёт действие</b> «${escHtml(act.title || act.id)}» с ${fmtShort(act.since)} — итог придёт сообщением`);
 
   const changes = listChanges(p.openspecChanges);
