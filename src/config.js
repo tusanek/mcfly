@@ -1,5 +1,6 @@
 import YAML from 'yaml';
 import { readText } from './util.js';
+import { actionErrors } from './action-config.js';
 
 export const DEFAULT_CONFIG = {
   project: 'project',
@@ -20,6 +21,8 @@ export const DEFAULT_CONFIG = {
   },
   telegram: { chat_id: '', token_env: 'MCFLY_TELEGRAM_TOKEN' },
   limits: { max_changes_per_run: 2, max_tasks_per_change: 10 },
+  // Действия владельца из Telegram (0.6.0): { <id>: { title, run, describe?, prepare?, offer?, followups?, timeout_minutes?, confirm?, during_run?, vpn? } }
+  actions: {},
 };
 
 function merge(base, over) {
@@ -51,6 +54,7 @@ export function validate(cfg) {
   if (!(cfg.escalation.small_approval_deadline_hours > 0)) errors.push('escalation.small_approval_deadline_hours: должно быть больше 0');
   const modes = ['acceptEdits', 'auto', 'bypassPermissions', 'default', 'dontAsk', 'plan'];
   if (!modes.includes(cfg.run.permission_mode)) errors.push(`run.permission_mode: одно из ${modes.join(', ')}`);
+  errors.push(...actionErrors(cfg.actions));
   if (errors.length) throw new Error('Ошибки в mcfly/config.yaml:\n- ' + errors.join('\n- '));
   return cfg;
 }

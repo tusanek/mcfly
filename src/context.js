@@ -4,6 +4,7 @@ import { listChanges, pendingApprovals, approvedWithWork, priorityOf } from './a
 import { branchProgress, teamWorktrees } from './git.js';
 import { autoDefault } from './config.js';
 import { activeDayHandoff, validateHandoff } from './shift-files.js';
+import { listActions } from './action-config.js';
 
 export function isMcflyProject(p) { return exists(p.config); }
 
@@ -36,6 +37,11 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false } = {
   L.push('', `Worktree команды (${team.length}):`);
   for (const w of team) L.push(`- ${w.path}: ветка ${w.branch}, незакоммиченных файлов ${w.dirty}`);
   if (others.length) L.push(`Прочие worktree (не команды — не трогать): ${others.map((w) => `${w.path} (${w.branch})`).join(', ')}`);
+  const acts = listActions(cfg);
+  if (acts.length) {
+    // 0.6.0: владелец делает это кнопкой в боте — в «Нужно от человека» ссылайтесь на кнопку, а не на скрипт или команду терминала
+    L.push('', `Действия владельца в боте (кнопки в Telegram, задаёт только владелец; вам не запускать): ${acts.map((a) => `«${a.title}» (${a.id})${a.describe ? ` — ${a.describe}` : ''}`).join('; ')}. В «Нужно от человека» пишите «кнопка «<название>» в боте».`);
+  }
   const q = openQuestions(loadQuestions(p));
   L.push('', `Открытые вопросы к человеку (${q.length}):`);
   for (const x of q) L.push(`- ${x.id} [${x.category}] ${x.text} — ${autoDefault(cfg, x.category) ? `по умолчанию: ${x.default || '(нет)'} — срок ${fmtShort(new Date(x.deadline_at))}` : 'без ответа по умолчанию: не выполнять, ждать решения человека'}`);

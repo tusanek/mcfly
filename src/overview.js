@@ -7,6 +7,8 @@ import { listChanges, pendingApprovals, approvedWithWork, approvalDeadline, isAu
 import { autoDefault } from './config.js';
 import { parseSlot } from './window.js';
 import { currentRun } from './runner.js';
+import { hasActions, listActions } from './action-config.js';
+import { currentAction, offerKeyboard } from './actions.js';
 import { escHtml, inline, splitHtml, reportSections, plainWords, humanItems, approvalCovered, isNone, changeProgress, nextRunText, runsByStatus, STATUS_RU } from './summary.js';
 
 /**
@@ -38,10 +40,17 @@ export const BOT_COMMANDS = [
   { command: 'run', description: '▶️ Запустить прогон' },
   { command: 'help', description: '❓ Все команды с примерами' },
 ];
+const ACTIONS_COMMAND = { command: 'actions', description: '🛠 Действия: выкат, откат и другое — с подтверждением' };
+/** Меню «/» проекта: с действиями — ещё /actions перед /help. */
+export const botCommands = (cfg) => (hasActions(cfg) ? [...BOT_COMMANDS.slice(0, -1), ACTIONS_COMMAND, BOT_COMMANDS.at(-1)] : BOT_COMMANDS);
 /** Постоянная клавиатура внизу чата: нажатие отправляет текст кнопки, как если бы его написали. */
 export const MAIN_KEYBOARD = [[{ text: '📍 Где мы' }, { text: '🎯 Цели' }], [{ text: '📊 Статистика' }, { text: '▶️ Запусти' }]];
+/** Клавиатура проекта: с действиями (раздел actions) — третий ряд «🛠 Действия». */
+export const mainKeyboard = (cfg) => (hasActions(cfg) ? [...MAIN_KEYBOARD, [{ text: '🛠 Действия' }]] : MAIN_KEYBOARD);
 /** Ревизия меню: другая — задание answers один раз обновит меню и пришлёт клавиатуру (метка в mcfly/logs, она вне git). */
-export const MENU_REV = '0.5.12';
+export const MENU_REV = '0.6.0';
+/** Ревизия с учётом действий: появились или пропали — меню и клавиатура обновятся. */
+const menuRev = (cfg) => `${MENU_REV}${hasActions(cfg) ? '+actions' : ''}`;
 const menuMark = (p) => path.join(p.logs, '.bot-menu');
 
 const MAX = 4000; // предел сообщения Telegram 4096 символов — с запасом
@@ -100,6 +109,8 @@ export function statusView(p, cfg, { now = new Date() } = {}) {
   const last = runs(p).at(-1);
   if (cur) L.push(`▶️ <b>Идёт прогон</b> ${escHtml(cur.id || '')} с ${fmtShort(cur.since)}${cur.lastEvent ? `\nПоследнее действие: ${escHtml(truncate(cur.lastEvent, 300))}` : ''}`);
   else L.push(`💤 Прогон сейчас не идёт.${last ? ` Последний: ${escHtml(runBrief(last))}` : ' Прогонов ещё не было.'}`);
+  const act = currentAction(p);
+  if (act) L.push(`🛠 <b>Идёт действие</b> «${escHtml(act.title || act.id)}» с ${fmtShort(act.since)} — итог придёт сообщением`);
 
   const changes = listChanges(p.openspecChanges);
   L.push('', `<b>📦 Изменения (${changes.length})</b>`, ...(changes.length ? changes.map((c) => changeLine(p, cfg, c)) : ['Открытых изменений нет']));
@@ -253,6 +264,7 @@ export function helpView(p, cfg) {
     '💬 «Q12: ответ» — ответ на вопрос команды; «Q12: по умолчанию» — согласиться с ответом по умолчанию',
     '↩️ Ответ свайпом на сообщение с одним вопросом — ответ на этот вопрос, «Q12:» писать не нужно',
     '📝 Любой другой текст — заметка команде, её прочтёт ближайший прогон',
+    ...(hasActions(cfg) ? ['', '<b>Действия</b> (раздел actions в mcfly/config.yaml)', `🛠 «действия» или /actions — ${listActions(cfg).map((a) => escHtml(a.title)).join(', ')}; каждое с подтверждением «✅ Да, выполнить», итог приходит сообщением`] : []),
     '',
     '<i>Кнопки под сводкой — те же одобрения и ответы одним нажатием. Кнопки внизу чата и меню «/» — команды выше.</i>',
   ].join('\n'));
@@ -264,7 +276,12 @@ export function renderView(view, p, cfg, opts = {}) { return VIEWS[view](p, cfg,
 
 /** Отправляет ответ на команду обзора с постоянной клавиатурой внизу чата. */
 export async function sendView(tg, chatId, view, p, cfg, opts = {}) {
-  for (const part of renderView(view, p, cfg, opts)) await tg.sendMessage(chatId, part, { html: true, replyKeyboard: MAIN_KEYBOARD });
+  for (const part of renderView(view, p, cfg, opts)) await tg.sendMessage(chatId, part, { html: true, replyKeyboard: mainKeyboard(cfg) });
+  // «где мы» с действиями: отдельным сообщением кнопки того, что можно сделать сейчас (offer вернул 0) — у одного сообщения одна клавиатура
+  if (view === 'status' && hasActions(cfg)) {
+    const rows = (opts.offerKeyboard || offerKeyboard)(p, cfg);
+    if (rows.length) await tg.sendMessage(chatId, '🛠 <b>Можно сделать кнопкой</b> — сначала бот покажет, что будет сделано', { html: true, keyboard: rows });
+  }
 }
 
 /**
@@ -272,9 +289,13 @@ export async function sendView(tg, chatId, view, p, cfg, opts = {}) {
  * и присылает объявление с клавиатурой. Метка — после успеха, сбой повторится в следующем цикле. true — обновлено сейчас.
  */
 export async function ensureBotMenu(p, cfg, tg) {
-  if (readText(menuMark(p), '').trim() === MENU_REV) return false;
-  await tg.setMyCommands(BOT_COMMANDS);
-  await tg.sendMessage(cfg.telegram.chat_id, `🆕 mcfly ${escHtml(cfg.project)}: в боте появились команды обзора — 📍 «где мы», 🎯 «цели», 📊 «статистика», 📰 «последний прогон», ❓ «помощь». Кнопки — внизу чата, все команды — в меню «/».`, { html: true, replyKeyboard: MAIN_KEYBOARD });
-  writeText(menuMark(p), `${MENU_REV}\n`);
+  const rev = menuRev(cfg);
+  if (readText(menuMark(p), '').trim() === rev) return false;
+  await tg.setMyCommands(botCommands(cfg));
+  const text = hasActions(cfg)
+    ? `🆕 mcfly ${escHtml(cfg.project)}: в боте появились действия — 🛠 «действия»: ${listActions(cfg).map((a) => escHtml(a.title)).join(', ')}. Каждое с подтверждением, итог приходит сообщением; в «где мы» — кнопки того, что можно сделать сейчас.`
+    : `🆕 mcfly ${escHtml(cfg.project)}: в боте появились команды обзора — 📍 «где мы», 🎯 «цели», 📊 «статистика», 📰 «последний прогон», ❓ «помощь». Кнопки — внизу чата, все команды — в меню «/».`;
+  await tg.sendMessage(cfg.telegram.chat_id, text, { html: true, replyKeyboard: mainKeyboard(cfg) });
+  writeText(menuMark(p), `${rev}\n`);
   return true;
 }

@@ -37,3 +37,10 @@ telegram:
 limits:
   max_changes_per_run: 2
   max_tasks_per_change: 10
+
+# Действия владельца кнопками в Telegram (0.6.0) — по желанию; см. README «Действия владельца в Telegram»
+# actions:
+#   deploy:
+#     title: "🚀 Выкатить"
+#     describe: "что будет сделано"
+#     run: "bash ~/deploy/deploy.sh"
