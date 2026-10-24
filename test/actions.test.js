@@ -254,7 +254,8 @@ test('0.6.0: раздел actions без подтверждения владел
 
 test('0.6.0: exec и prepare без пропуска (в обход кнопки) отклоняются; код «Да» не годится после правки команды', async () => {
   const dir0 = tmpDir(); const marker = path.join(dir0, 'ran');
-  const c = withActions({ hi: { title: 'Привет', run: `touch ${marker}`, prepare: `touch ${marker}` } }); const { p } = trustedProject(c);
+  // команда ссылается на каталог, а не на файл: созданный файл не меняет сумму подтверждения
+  const c = withActions({ hi: { title: 'Привет', run: `cd ${dir0} && touch ran`, prepare: `cd ${dir0} && touch ran` } }); const { p } = trustedProject(c);
   const { sent, send } = recorder();
   assert.equal((await execAction({ p, cfg: c, id: 'hi', send })).status, 'refused');
   assert.equal((await execAction({ p, cfg: c, id: 'hi', send, ticket: 'deadbeef' })).status, 'refused');
@@ -313,4 +314,16 @@ test('0.6.0: итог действия из очереди уходит с HTML;
   const n = await flushNotices(p, async (text, kb, o) => { if (first) { first = false; throw new Error('Telegram sendMessage: Bad Request: can\'t parse entities'); } got.push({ text, html: o.html }); });
   assert.equal(n, 2); assert.deepEqual(got.map((g) => g.html), [true, false]);
   assert.equal(fs.existsSync(noticesPath(p)), false, 'очередь пуста');
+});
+
+test('0.6.0: правка скрипта действия (и соседних файлов) снимает подтверждение', async () => {
+  const { actionFiles } = await import('../src/actions.js');
+  const bin = tmpDir('mcfly-scripts-'); const script = path.join(bin, 'deploy.sh'); const lib = path.join(bin, 'common.sh');
+  fs.writeFileSync(script, 'echo ok\n'); fs.writeFileSync(lib, 'X=1\n'); fs.mkdirSync(path.join(bin, 'state')); fs.writeFileSync(path.join(bin, 'state', 'last'), 'a');
+  const c = withActions({ d: { title: 'Выкат', run: `bash ${script} --plan` } }); const { p } = trustedProject(c);
+  assert.deepEqual(actionFiles(c), [lib, script].sort(), 'файлы каталога скрипта, без подкаталога state');
+  assert.equal(isTrusted(p, c), true);
+  fs.writeFileSync(path.join(bin, 'state', 'last'), 'b'); assert.equal(isTrusted(p, c), true, 'состояние скрипта не влияет');
+  fs.writeFileSync(lib, 'X=2\n'); assert.equal(isTrusted(p, c), false, 'правка соседнего файла снимает подтверждение');
+  trustActions(p, c); fs.writeFileSync(script, 'echo подмена\n'); assert.equal(isTrusted(p, c), false);
 });

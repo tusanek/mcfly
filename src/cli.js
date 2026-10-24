@@ -155,7 +155,7 @@ export async function main(argv) {
       log(`chat_id ${chatId} сохранён в mcfly/config.yaml`); return 0;
     }
     case 'action': {
-      const { listActions, getAction, prepareAction, execAction, isTrusted, trustActions } = await import('./actions.js');
+      const { listActions, getAction, prepareAction, execAction, isTrusted, trustActions, actionFiles } = await import('./actions.js');
       const tty = !!(process.stdin.isTTY && process.stdout.isTTY);
       if (sub === 'list' || !sub) {
         const list = listActions(cfg);
@@ -173,6 +173,8 @@ export async function main(argv) {
         if (!list.length) { log('Действий нет: раздел actions в mcfly/config.yaml.'); return 1; }
         log('Команды, которые бот сможет запускать по кнопке (prepare и offer — без подтверждения):');
         for (const a of list) log(`\n${a.id} — ${a.title}${a.confirm ? '' : ' (без подтверждения)'}\n  run: ${a.run}${a.prepare ? `\n  prepare: ${a.prepare}` : ''}${a.offer ? `\n  offer: ${a.offer}` : ''}`);
+        const files = actionFiles(cfg);
+        if (files.length) log(`\nПодтверждается и содержимое файлов (правка любого снова выключит кнопки):\n${files.map((f) => `  ${f}`).join('\n')}`);
         const { createInterface } = await import('node:readline/promises');
         const rl = createInterface({ input: process.stdin, output: process.stdout });
         const answer = (await rl.question('\nПодтвердить эти команды? Напишите «да»: ')).trim().toLowerCase(); rl.close();

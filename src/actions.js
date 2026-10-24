@@ -34,7 +34,30 @@ const KEEP_LINES = 400;
  */
 export const trustFile = () => process.env.MCFLY_TRUST_FILE || path.join(os.homedir(), '.config', 'mcfly', 'trusted-actions.json');
 const canonical = (v) => (Array.isArray(v) ? v.map(canonical) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical(v[k])])) : v);
-export function actionsDigest(cfg) { return crypto.createHash('sha256').update(JSON.stringify(canonical(cfg.actions || {}))).digest('hex'); }
+/**
+ * Файлы, от которых зависят команды: пути в run/prepare/offer (~/… или /…) и все файлы в их каталогах (без подкаталогов —
+ * там обычно состояние скриптов). Правка скрипта, как и правка команды, снимает подтверждение.
+ */
+export function actionFiles(cfg) {
+  const dirs = new Set(); const files = new Set();
+  for (const a of Object.values(cfg.actions || {})) {
+    for (const cmd of [a?.run, a?.prepare, a?.offer]) {
+      for (const tok of String(cmd || '').match(/(?:~\/|\/)[^\s"';|&<>()]+/g) || []) {
+        const f = tok.startsWith('~/') ? path.join(os.homedir(), tok.slice(2)) : tok;
+        try { if (fs.statSync(f).isFile()) { files.add(f); dirs.add(path.dirname(f)); } } catch {}
+      }
+    }
+  }
+  for (const d of dirs) {
+    try { for (const e of fs.readdirSync(d, { withFileTypes: true })) if (e.isFile()) files.add(path.join(d, e.name)); } catch {}
+  }
+  return [...files].sort();
+}
+export function actionsDigest(cfg) {
+  const h = crypto.createHash('sha256').update(JSON.stringify(canonical(cfg.actions || {})));
+  for (const f of actionFiles(cfg)) { h.update(`\0${f}\0`); try { h.update(fs.readFileSync(f)); } catch { h.update('нет файла'); } }
+  return h.digest('hex');
+}
 export function isTrusted(p, cfg) { return readJson(trustFile(), {})?.[p.projectDir]?.digest === actionsDigest(cfg); }
 export function trustActions(p, cfg, now = new Date()) {
   const file = trustFile(); ensureDir(path.dirname(file));
