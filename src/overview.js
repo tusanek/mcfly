@@ -49,8 +49,8 @@ export const MAIN_KEYBOARD = [[{ text: '📍 Где мы' }, { text: '🎯 Це�
 export const mainKeyboard = (cfg) => (hasActions(cfg) ? [...MAIN_KEYBOARD, [{ text: '🛠 Действия' }]] : MAIN_KEYBOARD);
 /** Ревизия меню: другая — задание answers один раз обновит меню и пришлёт клавиатуру (метка в mcfly/logs, она вне git). */
 export const MENU_REV = '0.5.12';
-/** Ревизия с учётом действий: появились или пропали — меню и клавиатура обновятся. */
-const menuRev = (cfg) => `${MENU_REV}${hasActions(cfg) ? '+actions' : ''}`;
+/** Ревизия с учётом действий: подтверждены владельцем (mcfly action trust) или пропали — меню и клавиатура обновятся. */
+const menuRev = (p, cfg) => `${MENU_REV}${hasActions(cfg) && isTrusted(p, cfg) ? '+actions' : ''}`;
 const menuMark = (p) => path.join(p.logs, '.bot-menu');
 
 const MAX = 4000; // предел сообщения Telegram 4096 символов — с запасом
@@ -290,10 +290,10 @@ export async function sendView(tg, chatId, view, p, cfg, opts = {}) {
  * и присылает объявление с клавиатурой. Метка — после успеха, сбой повторится в следующем цикле. true — обновлено сейчас.
  */
 export async function ensureBotMenu(p, cfg, tg) {
-  const rev = menuRev(cfg);
+  const rev = menuRev(p, cfg);
   if (readText(menuMark(p), '').trim() === rev) return false;
   await tg.setMyCommands(botCommands(cfg));
-  const text = hasActions(cfg)
+  const text = rev.endsWith('+actions')
     ? `🆕 mcfly ${escHtml(cfg.project)}: в боте появились действия — 🛠 «действия»: ${listActions(cfg).map((a) => escHtml(a.title)).join(', ')}. Каждое с подтверждением, итог приходит сообщением; в «где мы» — кнопки того, что можно сделать сейчас.`
     : `🆕 mcfly ${escHtml(cfg.project)}: в боте появились команды обзора — 📍 «где мы», 🎯 «цели», 📊 «статистика», 📰 «последний прогон», ❓ «помощь». Кнопки — внизу чата, все команды — в меню «/».`;
   await tg.sendMessage(cfg.telegram.chat_id, text, { html: true, replyKeyboard: mainKeyboard(cfg) });
