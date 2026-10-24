@@ -48,7 +48,7 @@ export const MAIN_KEYBOARD = [[{ text: '📍 Где мы' }, { text: '🎯 Це�
 /** Клавиатура проекта: с действиями (раздел actions) — третий ряд «🛠 Действия». */
 export const mainKeyboard = (cfg) => (hasActions(cfg) ? [...MAIN_KEYBOARD, [{ text: '🛠 Действия' }]] : MAIN_KEYBOARD);
 /** Ревизия меню: другая — задание answers один раз обновит меню и пришлёт клавиатуру (метка в mcfly/logs, она вне git). */
-export const MENU_REV = '0.6.0';
+export const MENU_REV = '0.5.12';
 /** Ревизия с учётом действий: появились или пропали — меню и клавиатура обновятся. */
 const menuRev = (cfg) => `${MENU_REV}${hasActions(cfg) ? '+actions' : ''}`;
 const menuMark = (p) => path.join(p.logs, '.bot-menu');
@@ -280,7 +280,7 @@ export async function sendView(tg, chatId, view, p, cfg, opts = {}) {
   for (const part of renderView(view, p, cfg, opts)) await tg.sendMessage(chatId, part, { html: true, replyKeyboard: mainKeyboard(cfg) });
   // «где мы» с действиями: отдельным сообщением кнопки того, что можно сделать сейчас (offer вернул 0) — у одного сообщения одна клавиатура
   if (view === 'status' && hasActions(cfg)) {
-    const rows = (opts.offerKeyboard || offerKeyboard)(p, cfg);
+    const rows = await (opts.offerKeyboard || offerKeyboard)(p, cfg);
     if (rows.length) await tg.sendMessage(chatId, '🛠 <b>Можно сделать кнопкой</b> — сначала бот покажет, что будет сделано', { html: true, keyboard: rows });
   }
 }

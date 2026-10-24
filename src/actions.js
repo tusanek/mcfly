@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { ensureDir, readJson, writeJson, fmtDuration, truncate, pad2, runId } from './util.js';
 import { appendMetric } from './metrics.js';
 import { enqueueNotice } from './notices.js';
@@ -48,6 +48,23 @@ export const UNTRUSTED_TEXT = '⚠️ Раздел actions в mcfly/config.yaml 
 /** Пропуск: бот выдаёт его после «Да» (или нажатия действия без подтверждения) и передаёт процессу; exec/prepare без него не работают. */
 export const TICKET_TTL_MS = 2 * 60_000;
 const statePath = (p) => path.join(p.logs, 'actions-state.json');
+/**
+ * Чтение-изменение-запись файла кодов под короткой блокировкой: код пишет процесс подготовки, забирает задание answers —
+ * без неё использованный код мог «воскреснуть» (подготовка записала бы прочитанную до этого копию).
+ */
+function withStateLock(p, fn) {
+  ensureDir(p.logs);
+  const lock = `${statePath(p)}.lock`;
+  for (let i = 0; ; i++) {
+    try { fs.closeSync(fs.openSync(lock, 'wx')); break; } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      try { if (Date.now() - fs.statSync(lock).mtimeMs > 5_000) { fs.unlinkSync(lock); continue; } } catch { continue; }
+      if (i > 400) throw new Error('файл кодов действий занят');
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+    }
+  }
+  try { return fn(); } finally { try { fs.unlinkSync(lock); } catch {} }
+}
 function loadState(p) { const s = readJson(statePath(p), {}) || {}; return { codes: s.codes || {}, tickets: s.tickets || {} }; }
 function saveState(p, st) {
   ensureDir(p.logs);
@@ -55,14 +72,16 @@ function saveState(p, st) {
   const tmp = `${statePath(p)}.${process.pid}.tmp`; writeJson(tmp, st); fs.renameSync(tmp, statePath(p));
 }
 const fresh = (items, now, ttl) => Object.fromEntries(Object.entries(items).filter(([, c]) => now - new Date(c.at) < ttl));
-function issue(p, kind, id, digest, now, bytes) {
+function issue(p, kind, id, digest, now, bytes) { return withStateLock(p, () => issueLocked(p, kind, id, digest, now, bytes)); }
+function issueLocked(p, kind, id, digest, now, bytes) {
   const st = loadState(p); st.codes = fresh(st.codes, now, CODE_TTL_MS); st.tickets = fresh(st.tickets, now, TICKET_TTL_MS);
   const key = crypto.randomBytes(bytes).toString('hex');
   st[kind][key] = { id, digest, at: now.toISOString() };
   saveState(p, st);
   return key;
 }
-function take(p, kind, id, key, digest, now) {
+function take(p, kind, id, key, digest, now) { return withStateLock(p, () => takeLocked(p, kind, id, key, digest, now)); }
+function takeLocked(p, kind, id, key, digest, now) {
   const st = loadState(p); const all = st[kind];
   st.codes = fresh(st.codes, now, CODE_TTL_MS); st.tickets = fresh(st.tickets, now, TICKET_TTL_MS);
   const item = st[kind][key];
@@ -81,28 +100,40 @@ export function takeTicket(p, id, ticket, now = new Date(), digest = '') { retur
 
 // ---------- блокировка: одно действие за раз ----------
 export const actionLockPath = (p) => path.join(p.logs, '.action.lock');
+const LOCK_GRACE_MS = 10 * 60_000;
 function alive(pid) { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
-/** Идущее действие { id, title, since, pid } или null (брошенная блокировка — процесса нет — не считается). */
+/** Брошена: процесса нет или она старше предела действия + 10 минут (pid после перезагрузки мог достаться другому). */
+function lockStale(lock, now = Date.now()) {
+  if (!lock?.pid || !alive(lock.pid)) return true;
+  return now - new Date(lock.since).getTime() > (lock.max_ms || 60 * 60_000) + LOCK_GRACE_MS;
+}
+/** Идущее действие { id, title, since, pid } или null (брошенная блокировка не считается). */
 export function currentAction(p) {
   const lock = readJson(actionLockPath(p), null);
-  if (!lock?.pid || !alive(lock.pid)) return null;
+  if (!lock || lockStale(lock)) return null;
   return { ...lock, since: new Date(lock.since) };
 }
+/**
+ * Блокировка «одно действие за раз»: содержимое пишется во временный файл и ставится link() — файл блокировки
+ * никогда не бывает пустым. Брошенную снимаем, только если это всё ещё она (иначе снесли бы свежую чужую).
+ */
 export function acquireActionLock(p, a, now = new Date()) {
   ensureDir(p.logs);
   const file = actionLockPath(p);
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const fd = fs.openSync(file, 'wx');
-      try { fs.writeSync(fd, JSON.stringify({ pid: process.pid, id: a.id, title: a.title, since: now.toISOString() })); } finally { fs.closeSync(fd); }
-      return true;
-    } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      if (currentAction(p)) return false;
-      try { fs.unlinkSync(file); } catch {}
+  const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}`;
+  fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, id: a.id, title: a.title, since: now.toISOString(), max_ms: a.timeout_minutes * 60_000 }));
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try { fs.linkSync(tmp, file); return true; } catch (e) {
+        if (e.code !== 'EEXIST') throw e;
+        let raw = null; try { raw = fs.readFileSync(file, 'utf8'); } catch { continue; }
+        let lock = null; try { lock = JSON.parse(raw); } catch {}
+        if (lock && !lockStale(lock)) return false;
+        try { if (fs.readFileSync(file, 'utf8') === raw) fs.unlinkSync(file); } catch {}
+      }
     }
-  }
-  return false;
+    return false;
+  } finally { try { fs.unlinkSync(tmp); } catch {} }
 }
 export function releaseActionLock(p) {
   if (readJson(actionLockPath(p), null)?.pid === process.pid) { try { fs.unlinkSync(actionLockPath(p)); } catch {} }
@@ -130,7 +161,7 @@ export function actionsMessage(p, cfg) {
   const L = [`🛠 <b>Действия · ${escHtml(cfg.project)}</b>`, ''];
   if (cur) L.push(`⏳ Сейчас идёт «${escHtml(cur.title || cur.id)}» с ${hm(cur.since)}`, '');
   for (const a of list) L.push(`<b>${escHtml(a.title)}</b>${a.describe ? ` — ${escHtml(a.describe)}` : ''}${a.confirm ? '' : ' <i>(без подтверждения)</i>'}`);
-  L.push('', '<i>Каждое действие с подтверждением: сначала бот покажет, что будет сделано.</i>');
+  L.push('', '<i>Действия с подтверждением: сначала бот покажет, что будет сделано, и спросит «Да».</i>');
   return { text: L.join('\n'), keyboard: list.map((a) => [{ text: a.title, callback_data: `ac:${a.id}` }]) };
 }
 
@@ -194,6 +225,8 @@ export function runCommand(command, { cwd, timeoutMs, logFile = null, env = proc
     child.on('error', (e) => push(`не запустилось: ${e.message}`));
     child.on('close', (code) => {
       clearTimeout(timer);
+      // bash умер от SIGTERM, а потомок мог его проигнорировать: добиваем всю группу сразу, не дожидаясь таймера
+      if (timedOut) kill('SIGKILL');
       for (const k of ['out', 'err']) if (buf[k]) push(buf[k]);
       out?.end();
       resolve({ code, timedOut, lines });
@@ -210,7 +243,7 @@ async function vpnFailure(cfg, a) {
 /** Отправка в Telegram; не дошло — в очередь, задание answers дошлёт. */
 async function deliver(p, send, msg, now) {
   try { await send(msg.text, msg.keyboard); }
-  catch { enqueueNotice(p, { text: msg.text, keyboard: msg.keyboard }, now); }
+  catch { enqueueNotice(p, { text: msg.text, keyboard: msg.keyboard, html: true }, now); }
 }
 
 /** Пропуск или доверие не прошли: в чат — чтобы владелец увидел попытку запуска в обход кнопки. */
@@ -253,7 +286,7 @@ export async function execAction({ p, cfg, id, send, ticket = null, interactive 
   const no = await refused(p, cfg, a, ticket, interactive, send, started);
   if (no) return no;
   if (!acquireActionLock(p, a, started)) {
-    await deliver(p, send, { text: blockReason(p, a) || `⏳ «${escHtml(a.title)}» не запущено: идёт другое действие`, keyboard: [] }, started);
+    await deliver(p, send, { text: blockReason(p, a) ? escHtml(blockReason(p, a)) : `⏳ «${escHtml(a.title)}» не запущено: идёт другое действие`, keyboard: [] }, started);
     return { status: 'busy' };
   }
   try {
@@ -276,16 +309,15 @@ export async function execAction({ p, cfg, id, send, ticket = null, interactive 
   } finally { releaseActionLock(p); }
 }
 
-/** Кнопки «Можно сделать» для «где мы»: действия, у которых offer вернул 0. Таймаут и ошибка — без кнопки. */
-export function offerKeyboard(p, cfg, { timeoutMs = OFFER_TIMEOUT_MS } = {}) {
-  const rows = [];
-  if (!isTrusted(p, cfg)) return rows; // неподтверждённый раздел — никаких команд, даже offer
-  for (const a of listActions(cfg)) {
-    if (!a.offer) continue;
-    const r = spawnSync('bash', ['-c', a.offer], { cwd: p.projectDir, timeout: timeoutMs, stdio: 'ignore' });
-    if (r.status === 0) rows.push([{ text: a.title, callback_data: `ac:${a.id}` }]);
-  }
-  return rows;
+/**
+ * Кнопки «Можно сделать» для «где мы»: действия, у которых offer вернул 0. Все offer — параллельно, каждый не дольше
+ * timeoutMs (по таймауту гибнет вся группа процессов): опрос Telegram ждёт не больше одного предела.
+ */
+export async function offerKeyboard(p, cfg, { timeoutMs = OFFER_TIMEOUT_MS } = {}) {
+  if (!isTrusted(p, cfg)) return []; // неподтверждённый раздел — никаких команд, даже offer
+  const list = listActions(cfg).filter((a) => a.offer);
+  const results = await Promise.all(list.map((a) => runCommand(a.offer, { cwd: p.projectDir, timeoutMs })));
+  return list.filter((a, i) => results[i].code === 0 && !results[i].timedOut).map((a) => [{ text: a.title, callback_data: `ac:${a.id}` }]);
 }
 
 // ---------- сообщения из Telegram ----------

@@ -186,12 +186,14 @@ test('0.6.0: prepare — вывод и «Да» с кодом; сбой подг
   assert.match(sent[1].text, /Подготовка «Плохое» не удалась \(код 2\)/); assert.deepEqual(sent[1].keyboard, []);
 });
 
-test('0.6.0: resultLines и offerKeyboard', () => {
+test('0.6.0: resultLines и offerKeyboard', async () => {
   assert.deepEqual(resultLines(['a', '@@ x', 'b', '@@ y']), ['x', 'y']);
   assert.deepEqual(resultLines(['', 'a', 'b']), ['a', 'b']);
   const c = withActions({ yes: { title: 'Да', run: 'x', offer: 'exit 0' }, no: { title: 'Нет', run: 'x', offer: 'exit 1' }, none: { title: 'Без', run: 'x' }, slow: { title: 'Медленно', run: 'x', offer: 'sleep 5' } });
   const { p } = trustedProject(c);
-  assert.deepEqual(offerKeyboard(p, c, { timeoutMs: 500 }), [[{ text: 'Да', callback_data: 'ac:yes' }]]);
+  const t0 = Date.now();
+  assert.deepEqual(await offerKeyboard(p, c, { timeoutMs: 500 }), [[{ text: 'Да', callback_data: 'ac:yes' }]]);
+  assert.ok(Date.now() - t0 < 3_000, 'offer параллельно и с пределом');
 });
 
 test('0.6.0: «где мы» с действиями — кнопки «Можно сделать», клавиатура и меню с «🛠 Действия»; список действий', async () => {
@@ -241,7 +243,7 @@ test('0.6.0: раздел actions без подтверждения владел
   await handleActionMessage({ parsed: { type: 'action', id: 'hi' }, p, cfg: c, send, spawn: (k, id) => spawned.push(id) });
   await handleActionMessage({ parsed: { type: 'actions' }, p, cfg: c, send, spawn: (k, id) => spawned.push(id) });
   assert.deepEqual(spawned, []); assert.match(sent[0].text, /mcfly action trust/); assert.match(sent[1].text, /mcfly action trust/);
-  assert.deepEqual(offerKeyboard(p, c), [], 'offer не выполняется');
+  assert.deepEqual(await offerKeyboard(p, c), [], 'offer не выполняется');
   trustActions(p, c);
   const t = ticketFor(p, c, 'hi');
   const changed = withActions({ hi: { ...c.actions.hi, run: `touch ${marker}; echo подмена` } });
@@ -280,4 +282,35 @@ test('0.6.0: mcfly action в прогоне команды запрещён', ()
   assert.equal(trust.status, 1); assert.match(trust.stderr, /только в терминале владельца/, 'trust без терминала не работает');
   const exec = spawnSync(process.execPath, [bin, 'action', 'exec', 'hi', '--project', dir], { encoding: 'utf8', env });
   assert.equal(exec.status, 1, 'exec без пропуска'); assert.equal(fs.existsSync(path.join(dir, 'ran')), false);
+});
+
+test('0.6.0: по таймауту гибнет вся группа процессов, даже потомок, игнорирующий SIGTERM', async () => {
+  const dir0 = tmpDir(); const pidFile = path.join(dir0, 'pid');
+  const { runCommand } = await import('../src/actions.js');
+  const r = await runCommand(`(trap '' TERM; sleep 30) >/dev/null & echo $! > ${pidFile}; sleep 30`, { cwd: dir0, timeoutMs: 300 });
+  assert.equal(r.timedOut, true);
+  const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+  await new Promise((res) => setTimeout(res, 200));
+  assert.throws(() => process.kill(pid, 0), 'сирота не осталась');
+});
+
+test('0.6.0: блокировка действия старше предела + 10 минут считается брошенной', () => {
+  const dir = bareProject(); const p = paths(dir);
+  const old = new Date(Date.now() - 2 * 3600_000).toISOString();
+  fs.mkdirSync(p.logs, { recursive: true });
+  fs.writeFileSync(actionLockPath(p), JSON.stringify({ pid: process.pid, id: 'deploy', since: old, max_ms: 45 * 60_000 }));
+  assert.equal(currentAction(p), null);
+  assert.ok(acquireActionLock(p, { id: 'x', title: 'X', timeout_minutes: 1 }));
+  assert.equal(acquireActionLock(p, { id: 'y', title: 'Y', timeout_minutes: 1 }), false, 'живая блокировка держит');
+  releaseActionLock(p); assert.equal(currentAction(p), null);
+});
+
+test('0.6.0: итог действия из очереди уходит с HTML; отклонённое Telegram (Bad Request) не держит очередь', async () => {
+  const { enqueueNotice, flushNotices } = await import('../src/notices.js');
+  const dir = bareProject(); const p = paths(dir);
+  enqueueNotice(p, { text: '<b>bad</b>', html: true }); enqueueNotice(p, { text: '<b>итог</b>', html: true }); enqueueNotice(p, { text: 'обычное' });
+  const got = []; let first = true;
+  const n = await flushNotices(p, async (text, kb, o) => { if (first) { first = false; throw new Error('Telegram sendMessage: Bad Request: can\'t parse entities'); } got.push({ text, html: o.html }); });
+  assert.equal(n, 2); assert.deepEqual(got.map((g) => g.html), [true, false]);
+  assert.equal(fs.existsSync(noticesPath(p)), false, 'очередь пуста');
 });

@@ -145,7 +145,7 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
       await handleActionMessage({ parsed, p, cfg, now, spawn: startAction, send });
     } catch (e) { log(`Ответ на действие не отправлен: ${errorLine(e)}`); }
   }
-  if (flush) await flushNotices(p, (text, kb) => tg.sendMessage(cfg.telegram.chat_id, text, { keyboard: kb }), { now, log });
+  if (flush) await flushNotices(p, (text, kb, o = {}) => tg.sendMessage(cfg.telegram.chat_id, text, { keyboard: kb, html: !!o.html }), { now, log });
   if (messages.length || !quietEmpty) log(`Telegram: сообщений ${messages.length}, применено ${acks.length}.`);
   return { applied: acks.length, messages };
 }
