@@ -1,4 +1,4 @@
-import { readText, fmtShort, exists } from './util.js';
+import { readText, fmtShort, exists, truncate } from './util.js';
 import { loadQuestions, openQuestions } from './questions.js';
 import { listChanges, pendingApprovals, approvedWithWork, priorityOf } from './approvals.js';
 import { branchProgress, teamWorktrees } from './git.js';
@@ -46,7 +46,9 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false } = {
   if (cfg.ideas?.enabled) {
     // 0.7.0: новые изменения — только по взятым владельцем пунктам; отложенные и отклонённые решает владелец в сессии
     const d = loadIdeas(p); const by = (s) => d.ideas.filter((x) => s.includes(x.status));
-    const named = (list) => (list.length ? list.map((x) => `${x.id} «${x.title}»`).join(', ') : 'нет');
+    // Названия пишут владелец и команда (в том числе по страницам из интернета): в контекст — одной строкой и коротко.
+    const short = (s) => truncate(String(s || '').replace(/[\u0000-\u001f\u007f\s]+/g, ' ').trim(), 120);
+    const named = (list) => (list.length ? list.map((x) => `${x.id} «${short(x.title)}»`).join(', ') : 'нет');
     L.push('', 'Предложения (mcfly/ideas.yaml):');
     if (d.error) L.push(`⚠️ ${d.error} — список не прочитан, mcfly ideas add не сработает; сообщи в отчёте`);
     else {

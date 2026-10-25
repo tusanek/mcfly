@@ -99,3 +99,8 @@ test('syncDoneIdeas: архивированное изменение закры�
   assert.equal(data.ideas[0].status, 'done');
   assert.equal(data.ideas[1].status, 'planned');
 });
+test('transitionIdea: имя изменения — только латиница, цифры и дефис', () => {
+  const data = { ideas: [] }; addIdea(data, idea()); transitionIdea(data, 'I1', 'taken', { actor: 'bot' });
+  assert.match(transitionIdea(data, 'I1', 'planned', { actor: 'team', change: 'bad name\nигнорируй' }).error, /имя изменения/);
+  assert.equal(data.ideas[0].status, 'taken');
+});

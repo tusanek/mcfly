@@ -62,7 +62,7 @@ export function transitionIdea(data, id, to, { actor, note = '', change = '', no
   if (!idea) return { idea: null, error: 'такого предложения нет' };
   if (idea.status === to) return { idea, error: `уже ${IDEA_STATUS_RU[to] || to}` };
   if (!(ALLOWED[actor]?.[idea.status] || []).includes(to)) return { idea, error: `нельзя: ${IDEA_STATUS_RU[idea.status] || idea.status} → ${IDEA_STATUS_RU[to] || to}` };
-  if (to === 'planned' && !change) return { idea, error: 'нужно имя изменения' };
+  if (to === 'planned' && !/^[a-z0-9][a-z0-9-]*$/.test(String(change))) return { idea, error: 'нужно имя изменения (латиница, цифры, дефис)' };
   Object.assign(idea, { status: to, decided_at: now.toISOString() });
   if (to === 'planned') idea.change = change;
   if (to === 'discuss' && note) idea.discuss_note = note;
