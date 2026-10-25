@@ -9,6 +9,7 @@ import { parseSlot } from './window.js';
 import { currentRun } from './runner.js';
 import { hasActions, listActions } from './action-config.js';
 import { currentAction, offerKeyboard, isTrusted } from './actions.js';
+import { loadIdeas, visibleIdeas, ideasBrief } from './ideas.js';
 import { escHtml, inline, splitHtml, reportSections, plainWords, humanItems, approvalCovered, isNone, changeProgress, nextRunText, runsByStatus, STATUS_RU, summaryKeyboard } from './summary.js';
 
 /**
@@ -21,6 +22,7 @@ const VIEW_WORDS = {
   stats: ['/stats', 'статистика'],
   last: ['/last', 'последний прогон'],
   help: ['/help', '/start', 'помощь', 'справка'],
+  ideas: ['/ideas', 'предложения', 'идеи'],
 };
 export { commandText };
 /** Имя обзора (status, goals, stats, last, help) или null: сообщение целиком должно быть командой, «статус по X» — заметка. */
@@ -35,6 +37,7 @@ export const BOT_COMMANDS = [
   { command: 'goals', description: '🎯 Цели проекта и чек-лист до MVP' },
   { command: 'stats', description: '📊 Статистика за 7 дней и всего' },
   { command: 'last', description: '📰 Последний прогон простыми словами' },
+  { command: 'ideas', description: '💡 Предложения: что команда может сделать дальше' },
   { command: 'run', description: '▶️ Запустить прогон' },
   { command: 'help', description: '❓ Все команды с примерами' },
 ];
@@ -43,10 +46,13 @@ const ACTIONS_COMMAND = { command: 'actions', description: '🛠 Действи�
 export const botCommands = (cfg) => (hasActions(cfg) ? [...BOT_COMMANDS.slice(0, -1), ACTIONS_COMMAND, BOT_COMMANDS.at(-1)] : BOT_COMMANDS);
 /** Постоянная клавиатура внизу чата: нажатие отправляет текст кнопки, как если бы его написали. */
 export const MAIN_KEYBOARD = [[{ text: '📍 Статус' }, { text: '🎯 Цели' }], [{ text: '📊 Статистика' }, { text: '▶️ Запусти' }]];
-/** Клавиатура проекта: с действиями (раздел actions) — третий ряд «🛠 Действия». */
-export const mainKeyboard = (cfg) => (hasActions(cfg) ? [...MAIN_KEYBOARD, [{ text: '🛠 Действия' }]] : MAIN_KEYBOARD);
+/** Клавиатура проекта: третий ряд — «💡 Предложения» (ideas.enabled, 0.7.0) и «🛠 Действия» (раздел actions). */
+export function mainKeyboard(cfg) {
+  const third = [...(cfg.ideas?.enabled ? [{ text: '💡 Предложения' }] : []), ...(hasActions(cfg) ? [{ text: '🛠 Действия' }] : [])];
+  return third.length ? [...MAIN_KEYBOARD, third] : MAIN_KEYBOARD;
+}
 /** Ревизия меню: другая — задание answers один раз обновит меню и пришлёт клавиатуру (метка в mcfly/logs, она вне git). */
-export const MENU_REV = '0.6.1';
+export const MENU_REV = '0.7.0';
 /** Ревизия с учётом действий: появились (и подтверждены) или пропали — меню и клавиатура обновятся один раз. */
 const menuRev = (cfg) => `${MENU_REV}${hasActions(cfg) ? '+actions' : ''}`;
 const menuMark = (p) => path.join(p.logs, '.bot-menu');
@@ -93,6 +99,7 @@ export function lastUsageAt(p) {
 }
 const changeLine = (p, cfg, c) => {
   const st = c.mcfly.approval;
+  if (st === 'pending' && c.mcfly.idea) return `⏳ <b>${escHtml(c.name)}</b> — ждёт вашего решения, само не одобрится (по ${escHtml(c.mcfly.idea)})`;
   if (st === 'pending') return `⏳ <b>${escHtml(c.name)}</b> — ждёт одобрения${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`;
   if (st === 'rejected') return `⛔ ${escHtml(c.name)} — отклонено`;
   if (st === 'approved') return `${c.tasksOpen > 0 ? '🔧' : '🏁'} <b>${escHtml(c.name)}</b> — одобрено, задач ${changeProgress(p.projectDir, c)}`;
@@ -135,7 +142,7 @@ export function statusView(p, cfg, { now = new Date() } = {}) {
   }
 
   const slot = nextSlot(cfg.schedule.slots, now);
-  const plan = nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => changeProgress(p.projectDir, c), escHtml);
+  const plan = nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => changeProgress(p.projectDir, c), escHtml, ideasBrief(p, cfg));
   L.push('', `<b>🗓 Следующий прогон:</b> ${slot ? `${fmtShort(slot)} по расписанию` : 'расписания нет'} — ${plan}`);
 
   const u = lastUsageAt(p);
@@ -257,6 +264,7 @@ export function helpView(p, cfg) {
     '🎯 «цели» или /goals — цель проекта, ближайшая веха и чек-лист до MVP (файл mcfly/goals.md)',
     '📊 «статистика» или /stats — прогоны, задачи, изменения, возвраты с ревью и расход за 7 дней и всего',
     '📰 «последний прогон» или /last — пересказ простыми словами, что сделано и что нужно от вас',
+    ...(cfg.ideas?.enabled ? ['💡 «предложения» или /ideas — что команда может сделать дальше: ваш бэклог и идеи команды'] : []),
     '❓ «помощь» или /help — это сообщение',
     '',
     '<b>Управлять</b>',
@@ -265,6 +273,7 @@ export function helpView(p, cfg) {
     '⛔ «отклоняю имя-изменения причина» — отказать, например «отклоняю site-design не сейчас»',
     '💬 «Q12: ответ» — ответ на вопрос команды; «Q12: по умолчанию» — согласиться с ответом по умолчанию',
     '↩️ Ответ свайпом на сообщение с одним вопросом — ответ на этот вопрос, «Q12:» писать не нужно',
+    ...(cfg.ideas?.enabled ? ['✅ / ⏸ кнопки под предложениями — «Берём» (план пришлёт ближайший прогон) или «Не сейчас» (обсудим в сессии)', '💡 «идея: текст» — добавить свою идею в список предложений'] : []),
     '📝 Любой другой текст — заметка команде, её прочтёт ближайший прогон',
     ...(hasActions(cfg) ? ['', '<b>Действия</b> (раздел actions в mcfly/config.yaml)', `🛠 «действия» или /actions — ${listActions(cfg).map((a) => escHtml(a.title)).join(', ')}; каждое с подтверждением «✅ Да, выполнить», итог приходит сообщением`] : []),
     '',
@@ -272,7 +281,53 @@ export function helpView(p, cfg) {
   ].join('\n'));
 }
 
-const VIEWS = { status: statusView, goals: goalsView, stats: statsView, last: lastView, help: helpView };
+const SIZE_RU = { S: 'S', M: 'M', L: 'L' };
+const ideaOwner = (x) => (x.source === 'owner-backlog' || x.source === 'owner-note' ? 'ваш' : 'команда');
+/** Пункт списка: заголовок, название, что даст, откуда, что понадобится от владельца. */
+function ideaLines(x) {
+  return [
+    `💡 ${escHtml(x.id)} · ${ideaOwner(x)} · ${SIZE_RU[x.size] || escHtml(String(x.size || '?'))}`,
+    `<b>${escHtml(x.title)}</b>`,
+    `Что даст: ${escHtml(truncate(String(x.benefit || ''), ITEM_MAX))}`,
+    ...(x.ref ? [`Откуда: ${escHtml(x.ref)}`] : []),
+    ...(x.needs_owner ? [`🙋 От вас понадобится: ${escHtml(x.needs_owner)}`] : []),
+  ];
+}
+const ideasPage = (data, cfg, page) => {
+  const all = visibleIdeas(data, Number.MAX_SAFE_INTEGER);
+  const from = (Math.max(1, page) - 1) * cfg.ideas.show;
+  return { ...all, shown: all.proposed.slice(from, from + cfg.ideas.show), more: Math.max(0, all.proposed.length - from - cfg.ideas.show) };
+};
+/** 💡 Предложения (0.7.0): взятые и спланированные, лучшие пункты списка, отложенные на обсуждение. */
+export function ideasView(p, cfg, { page = 1 } = {}) {
+  const head = [`💡 <b>Предложения · ${escHtml(cfg.project)}</b>`];
+  if (!cfg.ideas?.enabled) return toParts([...head, '', 'Список предложений выключен (ideas.enabled: false)'].join('\n'));
+  const data = loadIdeas(p);
+  if (data.error) return toParts([...head, '', `⚠️ ${escHtml(data.error)} — список не прочитан, исправьте файл`].join('\n'));
+  const v = ideasPage(data, cfg, page);
+  const L = [...head];
+  if (v.active.length) {
+    L.push('', ...v.active.map((x) => (x.status === 'taken'
+      ? `⏳ ${escHtml(x.id)} — ждёт прогона: ${escHtml(x.title)}`
+      : `📝 ${escHtml(x.id)} → изменение ${escHtml(x.change || '?')}, ждёт вашего решения в «Статусе»`)));
+  }
+  if (v.shown.length) for (const x of v.shown) L.push('', ...ideaLines(x));
+  else if (!v.active.length) L.push('', 'Предложений пока нет: команда добавит их в следующем прогоне, или напишите «идея: …»');
+  if (v.more) L.push('', `… ещё ${v.more} — кнопка «Ещё ▸»`);
+  if (v.discuss) L.push('', `🗣 Обсудить в сессии: ${v.discuss}`);
+  return toParts(L.join('\n'));
+}
+/** Кнопки под «Предложениями»: «Берём» / «Не сейчас» для каждого показанного пункта и «Ещё ▸». */
+export function ideasKeyboard(p, cfg, { page = 1 } = {}) {
+  if (!cfg.ideas?.enabled) return [];
+  const data = loadIdeas(p); if (data.error) return [];
+  const v = ideasPage(data, cfg, page);
+  const rows = v.shown.map((x) => [{ text: `✅ Берём ${x.id}`, callback_data: `ib:${x.id}` }, { text: '⏸ Не сейчас', callback_data: `ix:${x.id}` }]);
+  if (v.more) rows.push([{ text: 'Ещё ▸', callback_data: `il:${Math.max(1, page) + 1}` }]);
+  return rows;
+}
+
+const VIEWS = { status: statusView, goals: goalsView, stats: statsView, last: lastView, help: helpView, ideas: ideasView };
 /** Куски HTML ответа на команду обзора view. */
 export function renderView(view, p, cfg, opts = {}) { return VIEWS[view](p, cfg, opts); }
 
@@ -280,6 +335,10 @@ export function renderView(view, p, cfg, opts = {}) { return VIEWS[view](p, cfg,
 export async function sendView(tg, chatId, view, p, cfg, opts = {}) {
   for (const part of renderView(view, p, cfg, opts)) await tg.sendMessage(chatId, part, { html: true, replyKeyboard: mainKeyboard(cfg) });
   // «статус»: отдельным сообщением кнопки решений, как под сводкой, — одобрить/отклонить изменение, ответ по умолчанию на вопрос
+  if (view === 'ideas') {
+    const rows = ideasKeyboard(p, cfg, { page: opts.page || 1 });
+    if (rows.length) await tg.sendMessage(chatId, 'Выберите:', { html: true, keyboard: rows });
+  }
   if (view === 'status') {
     const rows = summaryKeyboard(p, cfg);
     if (rows.length) await tg.sendMessage(chatId, '🗳 <b>Ждут вашего решения</b>', { html: true, keyboard: rows });

@@ -173,7 +173,7 @@ test('0.5.12: бот отвечает на «где мы», «цели», «ст
   assert.match(sent[3].text, /📰 <b>Последний прогон/); assert.match(sent[4].text, /Что умеет бот/);
   for (const s of sent) {
     assert.equal(s.parse_mode, 'HTML'); assert.ok(s.text.length <= 4096 && plainLen(s.text) <= 4096);
-    assert.deepEqual(s.reply_markup, { keyboard: MAIN_KEYBOARD, resize_keyboard: true, is_persistent: true });
+    assert.deepEqual(s.reply_markup, { keyboard: mainKeyboard(tgCfg), resize_keyboard: true, is_persistent: true });
   }
   assert.deepEqual(started, []);
   assert.deepEqual({ answers: readText(p.answers), questions: readText(p.questions), meta: readText(path.join(p.openspecChanges, 'demo-pending', '.openspec.yaml')) }, before);
@@ -220,7 +220,7 @@ test('0.5.12: задание answers один раз ставит меню ко�
   const menus = f.calls.filter((c) => c.method === 'setMyCommands');
   assert.equal(menus.length, 1); assert.deepEqual(menus[0].body.commands, BOT_COMMANDS);
   const announce = f.sent().filter((s) => /команды обзора/.test(s.text));
-  assert.equal(announce.length, 1); assert.deepEqual(announce[0].reply_markup.keyboard, MAIN_KEYBOARD);
+  assert.equal(announce.length, 1); assert.deepEqual(announce[0].reply_markup.keyboard, mainKeyboard(tgCfg));
   assert.equal(readText(path.join(p.logs, '.bot-menu')).trim(), MENU_REV);
 });
 
@@ -245,4 +245,66 @@ test('0.6.1: «статус» — ссылки проекта из links под 
   assert.doesNotMatch(statusView(p, cfg).join('\n'), /🔗/);
   assert.throws(() => parseConfig('project: x\nlinks:\n  Сайт: javascript:alert(1)\n'), /links\.Сайт: адрес/);
   assert.throws(() => parseConfig('project: x\nlinks:\n  Сайт: \'http://a"b\'\n'), /links\.Сайт: адрес/, 'кавычка в адресе сломала бы href');
+});
+
+import { ideasView, ideasKeyboard, mainKeyboard } from '../src/overview.js';
+import { loadIdeas, saveIdeas, addIdea, transitionIdea } from '../src/ideas.js';
+import { parseConfig } from '../src/config.js';
+const seed = (p, list) => { const d = loadIdeas(p); for (const o of list) addIdea(d, { benefit: `польза ${o.title}`, source: 'team', size: 'S', ...o }); saveIdeas(p, d); return d; };
+
+test('0.7.0: «Предложения» — ваши первыми, взятые сверху, кнопки Берём/Не сейчас и Ещё', () => {
+  const p = paths(bareProject());
+  const d = seed(p, [
+    { title: 'Автозапуск релизов', source: 'owner-backlog', ref: 'SHARED-UNDERSTANDING §4.1 п. 7', size: 'M' },
+    { title: 'Копия в GitLab', source: 'owner-note', needsOwner: 'адрес репозитория' },
+    ...Array.from({ length: 7 }, (_, i) => ({ title: `Идея команды ${i + 1}` })),
+  ]);
+  transitionIdea(d, 'I9', 'taken', { actor: 'bot' }); saveIdeas(p, d);
+  const html = ideasView(p, cfg).join('\n');
+  assert.match(html, /⏳ I9 — ждёт прогона/);
+  assert.match(html, /💡 I1 · ваш · M\n<b>Автозапуск релизов<\/b>\nЧто даст: польза Автозапуск релизов\nОткуда: SHARED-UNDERSTANDING §4\.1 п\. 7/);
+  assert.match(html, /🙋 От вас понадобится: адрес репозитория/);
+  assert.ok(html.indexOf('I1 · ваш') < html.indexOf('I2 · ваш') && html.indexOf('I2 · ваш') < html.indexOf('I3 · команда'));
+  const rows = ideasKeyboard(p, cfg);
+  assert.deepEqual(rows[0], [{ text: '✅ Берём I1', callback_data: 'ib:I1' }, { text: '⏸ Не сейчас', callback_data: 'ix:I1' }]);
+  assert.equal(rows.length, 8);
+  assert.deepEqual(rows.at(-1), [{ text: 'Ещё ▸', callback_data: 'il:2' }]);
+  const page2 = ideasKeyboard(p, cfg, { page: 2 });
+  assert.deepEqual(page2.map((r) => r[0].callback_data), ['ib:I8']);
+  assert.match(ideasView(p, cfg, { page: 2 }).join('\n'), /💡 I8 · команда/);
+});
+
+test('0.7.0: «Предложения» — пусто, выключено, испорченный файл, отложенные', () => {
+  const p = paths(bareProject());
+  assert.match(ideasView(p, cfg).join('\n'), /Предложений пока нет: команда добавит их в следующем прогоне, или напишите «идея: …»/);
+  const off = { ...cfg, ideas: { ...cfg.ideas, enabled: false } };
+  assert.match(ideasView(p, off).join('\n'), /Список предложений выключен \(ideas\.enabled: false\)/);
+  assert.deepEqual(ideasKeyboard(p, off), []);
+  const d = seed(p, [{ title: 'Одна' }]); transitionIdea(d, 'I1', 'discuss', { actor: 'bot' }); saveIdeas(p, d);
+  assert.match(ideasView(p, cfg).join('\n'), /🗣 Обсудить в сессии: 1/);
+  fs.writeFileSync(p.ideas, 'ideas: [oops\n');
+  assert.match(ideasView(p, cfg).join('\n'), /⚠️ mcfly\/ideas\.yaml/);
+  assert.deepEqual(ideasKeyboard(p, cfg), []);
+});
+
+test('0.7.0: клавиатура — третий ряд «Предложения» и «Действия»; кнопка не превращается в идею', () => {
+  assert.deepEqual(mainKeyboard(cfg).map((r) => r.map((b) => b.text)), [['📍 Статус', '🎯 Цели'], ['📊 Статистика', '▶️ Запусти'], ['💡 Предложения']]);
+  assert.equal(mainKeyboard({ ...cfg, ideas: { ...cfg.ideas, enabled: false } }).length, 2);
+  const withActions = parseConfig('project: x\nactions:\n  st:\n    title: "🩺 Состояние"\n    run: "true"\n');
+  assert.deepEqual(mainKeyboard(withActions)[2].map((b) => b.text), ['💡 Предложения', '🛠 Действия']);
+  for (const t of ['💡 Предложения', 'предложения', 'идеи', '/ideas']) assert.equal(viewOf(t), 'ideas', t);
+  assert.deepEqual(parseMessage('💡 Предложения'), { type: 'view', view: 'ideas' });
+  assert.deepEqual(parseMessage('предложения 2'), { type: 'view', view: 'ideas', page: 2 });
+  assert.equal(MENU_REV, '0.7.0');
+});
+
+test('0.7.0: «Статус» — план по пункту само не одобрится; без работы — подсказка выбрать предложение', () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'auto-release', { meta: { schema: 'spec-driven', mcfly: { approval: 'pending', category: 'spec', requested_at: new Date().toISOString(), idea: 'I1' } } });
+  assert.match(statusView(p, cfg).join('\n'), /⏳ <b>auto-release<\/b> — ждёт вашего решения, само не одобрится \(по I1\)/);
+  const dir2 = bareProject(); const p2 = paths(dir2);
+  seed(p2, [{ title: 'Ваша', source: 'owner-note' }, { title: 'Команды' }]);
+  assert.match(statusView(p2, cfg).join('\n'), /работы нет — 💡 предложений 2 \(ваших 1\): выберите в «Предложениях»/);
+  const d = loadIdeas(p2); transitionIdea(d, 'I2', 'taken', { actor: 'bot' }); saveIdeas(p2, d);
+  assert.match(statusView(p2, cfg).join('\n'), /Следующий прогон:<\/b>.* — план по I2/);
 });

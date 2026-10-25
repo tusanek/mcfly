@@ -285,3 +285,30 @@ test('0.5.10: «Простыми словами» — до четырёх пос
   report(bare, '20261001-0200', '# Прогон\n## Сделано\n- z\n');
   assert.doesNotMatch(compose(bare), /Простыми словами/, 'старый отчёт без раздела — секции нет');
 });
+
+import { nextRunText } from '../src/summary.js';
+import { loadIdeas as li, saveIdeas as si, addIdea as ai, transitionIdea as ti } from '../src/ideas.js';
+test('0.7.0: nextRunText — план по взятым пунктам и подсказка выбрать', () => {
+  const pr = () => '1/2';
+  assert.equal(nextRunText([], [], pr, (x) => x, { taken: ['I2', 'I3'], proposed: 4, owner: 1 }), 'план по I2, I3');
+  assert.equal(nextRunText([], [], pr, (x) => x, { taken: [], proposed: 4, owner: 1 }), 'работы нет — 💡 предложений 4 (ваших 1): выберите в «Предложениях»');
+  assert.equal(nextRunText([], [], pr, (x) => x, null), 'работы нет — одобрите изменение или напишите команде заметку');
+  assert.equal(nextRunText([], [], pr, (x) => x, { taken: [], proposed: 0, owner: 0 }), 'работы нет — одобрите изменение или напишите команде заметку');
+});
+test('0.7.0: summaryKeyboard — «Не сейчас» для плана по пункту, кнопка «Предложения» без работы', () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'by-idea', { meta: { schema: 'spec-driven', mcfly: { approval: 'pending', category: 'spec', requested_at: new Date().toISOString(), idea: 'I1' } } });
+  assert.deepEqual(summaryKeyboard(p, cfg), [[{ text: '✅ Одобрить by-idea', callback_data: 'ap:by-idea' }, { text: '⏸ Не сейчас', callback_data: 'rj:by-idea' }]]);
+  const p2 = paths(bareProject()); const d = li(p2); ai(d, { title: 'X', benefit: 'y', source: 'team', size: 'S' }); si(p2, d);
+  assert.deepEqual(summaryKeyboard(p2, cfg), [[{ text: '💡 Предложения', callback_data: 'il:1' }]]);
+});
+test('0.7.0: сводка — новые предложения за период', () => {
+  const p = paths(bareProject()); const d = li(p);
+  ai(d, { title: 'Старая', benefit: 'y', source: 'team', size: 'S', now: new Date(2026, 9, 1) });
+  ai(d, { title: 'Новая', benefit: 'y', source: 'team', size: 'S', now: new Date(2026, 9, 25, 9) });
+  ai(d, { title: 'Ещё новая', benefit: 'y', source: 'research', ref: 'https://x.y', size: 'S', now: new Date(2026, 9, 25, 9) });
+  si(p, d);
+  const html = composeSummary(p, cfg, { now: new Date(2026, 9, 25, 10), since: new Date(2026, 9, 24, 10) });
+  assert.match(html, /💡 Новые предложения: I2, I3/);
+  assert.doesNotMatch(html, /I1/);
+});

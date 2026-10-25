@@ -2,6 +2,7 @@ import { appendText, fmtLocal } from './util.js';
 import { loadQuestions, saveQuestions, answerQuestion } from './questions.js';
 import { listChanges, setApproval } from './approvals.js';
 import { viewOf } from './overview.js';
+import { commandText } from './util.js';
 import { parseActionText } from './action-config.js';
 import { loadIdeas, saveIdeas, addIdea, transitionIdea, findIdea } from './ideas.js';
 
@@ -20,6 +21,8 @@ export function parseMessage(text) {
   // Команды обзора («статус», /status, кнопки внизу чата) только читают состояние: их отвечает pull.js, сюда они не пишутся.
   const view = viewOf(t);
   if (view) return { type: 'view', view };
+  // «предложения 2» — страница списка (кнопка «Ещё ▸», il:2)
+  if ((m = /^(?:\/ideas|предложения|идеи) (\d+)$/.exec(commandText(t)))) return { type: 'view', view: 'ideas', page: Number(m[1]) };
   // «▶️ Запусти» — кнопка внизу чата, /run — меню команд.
   if (/^\/?(?:run|запусти|запуск)(?:@\w+)?(?:\s|$)/i.test(t.replace(/^[^\p{L}\p{N}/]+/u, ''))) return { type: 'run', text: t };
   // Идея владельца в список предложений: «идея: текст» или «💡 текст» (после команд обзора — кнопка «💡 Предложения» не идея).

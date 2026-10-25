@@ -133,7 +133,7 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
     const parsed = parseMessage(m.text); if (parsed.type !== 'view') continue;
     const view = parsed.view;
     // проверки offer (команды из раздела actions) — только на «статус» владельца
-    try { await sendView(tg, cfg.telegram.chat_id, view, p, cfg, { now, offers: String(m.fromId) === ownerId(cfg) }); }
+    try { await sendView(tg, cfg.telegram.chat_id, view, p, cfg, { now, offers: String(m.fromId) === ownerId(cfg), page: parsed.page }); }
     catch (e) { log(`Ответ на «${view}» не отправлен: ${errorLine(e)}`); }
   }
   // Действия владельца (0.6.0): список, подтверждение с одноразовым кодом, запуск отдельным процессом — после записи offset.

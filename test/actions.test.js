@@ -202,8 +202,8 @@ test('0.6.0: «где мы» с действиями — кнопки «Можн
   const tg = { async sendMessage(chatId, text, opts) { sent.push({ text, opts }); return []; } };
   await sendView(tg, '42', 'status', p, c, { offerKeyboard: () => [[{ text: '🚀 Выкатить', callback_data: 'ac:deploy' }]] });
   assert.match(sent.at(-1).text, /Можно сделать кнопкой/); assert.equal(sent.at(-1).opts.keyboard[0][0].callback_data, 'ac:deploy');
-  assert.deepEqual(sent[0].opts.replyKeyboard.at(-1), [{ text: '🛠 Действия' }]);
-  assert.deepEqual(mainKeyboard(cfg).length, 2, 'без действий клавиатура прежняя');
+  assert.deepEqual(sent[0].opts.replyKeyboard.at(-1), [{ text: '💡 Предложения' }, { text: '🛠 Действия' }]);
+  assert.deepEqual(mainKeyboard({ ...cfg, ideas: { ...cfg.ideas, enabled: false } }).length, 2, 'без действий и предложений клавиатура прежняя');
   assert.equal(botCommands(cfg), BOT_COMMANDS); assert.ok(botCommands(c).some((x) => x.command === 'actions'));
   const r = recorder();
   await handleActionMessage({ parsed: { type: 'actions' }, p, cfg: c, send: r.send, spawn: () => {} });

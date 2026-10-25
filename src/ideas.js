@@ -92,3 +92,10 @@ export function syncDoneIdeas(data, changesDir, now = new Date()) {
   }
   return done;
 }
+/** Кратко для «Статуса» и сводки: { taken: [id], proposed, owner } или null (список выключен или файл испорчен). */
+export function ideasBrief(p, cfg) {
+  if (!cfg.ideas?.enabled) return null;
+  const data = loadIdeas(p); if (data.error) return null;
+  const proposed = data.ideas.filter((x) => x.status === 'proposed');
+  return { taken: data.ideas.filter((x) => x.status === 'taken').map((x) => x.id), proposed: proposed.length, owner: proposed.filter((x) => OWNER.has(x.source)).length };
+}

@@ -3,6 +3,7 @@ import { readText, fmtShort, fmtDuration, truncate, pad2 } from './util.js';
 import { readMetrics, aggregate, formatEvents, runStats } from './metrics.js';
 import { loadQuestions, openQuestions } from './questions.js';
 import { listChanges, pendingApprovals, approvedWithWork, proposalExcerpt, approvalDeadline, isAutoApprovable } from './approvals.js';
+import { loadIdeas, ideasBrief } from './ideas.js';
 import { expectedSlots, slotKey } from './window.js';
 import { loadState, saveState } from './state.js';
 import { createTelegram, chunk } from './telegram.js';
@@ -135,9 +136,11 @@ export function changeProgress(projectDir, c) {
   return `${x.done}/${x.done + x.open}`;
 }
 /** Что будет в следующем прогоне: какие изменения команда продолжит или чего ей не хватает. esc — экранирование имён для HTML. */
-export function nextRunText(work, pend, progress, esc = (t) => t) {
+export function nextRunText(work, pend, progress, esc = (t) => t, ideas = null) {
   if (work.length) return `команда продолжит ${work.map((c) => `${esc(c.name)} (${progress(c)})`).join(', ')}`;
+  if (ideas?.taken?.length) return `план по ${ideas.taken.join(', ')}`;
   if (pend.length) return `работы нет — одобрите ${pend.map((c) => esc(c.name)).join(', ')}`;
+  if (ideas?.proposed > 0) return `работы нет — 💡 предложений ${ideas.proposed} (ваших ${ideas.owner}): выберите в «Предложениях»`;
   return 'работы нет — одобрите изменение или напишите команде заметку';
 }
 
@@ -195,7 +198,11 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   const done = [period.events.changes_archived ? `изменений ${period.events.changes_archived}` : '', period.events.tasks_done ? `задач ${period.events.tasks_done}` : ''].filter(Boolean);
   if (done.length) ch.push(`🏁 За период завершено: ${done.join(', ')}`);
   L.push(...(ch.length ? ch : ['Открытых изменений нет']));
-  L.push('', `<b>🗓 Следующий прогон:</b> ${nextRunText(work, pend, progress, escHtml)}`);
+  if (cfg.ideas?.enabled && since) {
+    const fresh = loadIdeas(p).ideas.filter((x) => new Date(x.created_at) > since).map((x) => x.id);
+    if (fresh.length) L.push(`💡 Новые предложения: ${fresh.join(', ')}`);
+  }
+  L.push('', `<b>🗓 Следующий прогон:</b> ${nextRunText(work, pend, progress, escHtml, ideasBrief(p, cfg))}`);
   if (nightNew) {
     const lines = shiftSection(nightNew.path, 'Предложение на день');
     if (lines.length) L.push('', '<b>🌅 Предложение на день</b>', ...lines.map(inline));
@@ -244,9 +251,12 @@ export function summaryKeyboard(p, cfg) {
   for (const q of openQuestions(loadQuestions(p))) {
     if (autoDefault(cfg, q.category) && q.default && fitsData(`qd:${q.id}`)) rows.push([{ text: `✅ ${q.id}: по умолчанию`, callback_data: `qd:${q.id}` }]);
   }
-  for (const c of pendingApprovals(listChanges(p.openspecChanges))) {
-    if (fitsData(`ap:${c.name}`)) rows.push([{ text: `✅ Одобрить ${c.name}`, callback_data: `ap:${c.name}` }, { text: '❌ Отклонить', callback_data: `rj:${c.name}` }]);
+  const changes = listChanges(p.openspecChanges); const pend = pendingApprovals(changes);
+  for (const c of pend) {
+    // План по пункту списка (0.7.0): «отклонить» значит «не сейчас» — пункт уходит на обсуждение в сессии
+    if (fitsData(`ap:${c.name}`)) rows.push([{ text: `✅ Одобрить ${c.name}`, callback_data: `ap:${c.name}` }, { text: c.mcfly.idea ? '⏸ Не сейчас' : '❌ Отклонить', callback_data: `rj:${c.name}` }]);
   }
+  if (!pend.length && !approvedWithWork(changes).length && ideasBrief(p, cfg)?.proposed > 0) rows.push([{ text: '💡 Предложения', callback_data: 'il:1' }]);
   return rows;
 }
 
