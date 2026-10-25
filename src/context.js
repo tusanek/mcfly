@@ -5,6 +5,7 @@ import { branchProgress, teamWorktrees } from './git.js';
 import { autoDefault } from './config.js';
 import { activeDayHandoff, validateHandoff } from './shift-files.js';
 import { listActions } from './action-config.js';
+import { loadIdeas } from './ideas.js';
 
 export function isMcflyProject(p) { return exists(p.config); }
 
@@ -41,6 +42,21 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false } = {
   if (acts.length) {
     // 0.6.0: владелец делает это кнопкой в боте — в «Нужно от человека» ссылайтесь на кнопку, а не на скрипт или команду терминала
     L.push('', `Действия владельца в боте (кнопки в Telegram, задаёт только владелец; вам не запускать): ${acts.map((a) => `«${a.title}» (${a.id})${a.describe ? ` — ${a.describe}` : ''}`).join('; ')}. В «Нужно от человека» пишите «кнопка «<название>» в боте».`);
+  }
+  if (cfg.ideas?.enabled) {
+    // 0.7.0: новые изменения — только по взятым владельцем пунктам; отложенные и отклонённые решает владелец в сессии
+    const d = loadIdeas(p); const by = (s) => d.ideas.filter((x) => s.includes(x.status));
+    const named = (list) => (list.length ? list.map((x) => `${x.id} «${x.title}»`).join(', ') : 'нет');
+    L.push('', 'Предложения (mcfly/ideas.yaml):');
+    if (d.error) L.push(`⚠️ ${d.error} — список не прочитан, mcfly ideas add не сработает; сообщи в отчёте`);
+    else {
+      const proposed = by(['proposed']); const own = proposed.filter((x) => x.source === 'owner-backlog' || x.source === 'owner-note').length;
+      L.push(`Взятые владельцем — спланируй по порядку: ${named(by(['taken']))}`);
+      L.push(`Спланированы: ${by(['planned']).map((x) => `${x.id} → ${x.change}`).join(', ') || 'нет'}`);
+      L.push(`В списке: ${proposed.length} (ваших ${own}, команды ${proposed.length - own})`);
+      L.push(`Не трогать, решение в сессии: ${named(by(['discuss', 'rejected']))}`);
+    }
+    L.push(`Бэклог владельца: ${cfg.ideas.backlog || 'не задан'}`);
   }
   const q = openQuestions(loadQuestions(p));
   L.push('', `Открытые вопросы к человеку (${q.length}):`);

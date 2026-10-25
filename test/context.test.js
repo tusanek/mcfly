@@ -60,3 +60,22 @@ test('buildContext без handoff (хук SessionStart дневной сесси
   writeShift(p, 'day', '# Смена: день → ночь', new Date(2026, 9, 1, 18, 30));
   assert.doesNotMatch(buildContext(p, cfg), /Передача смены/);
 });
+
+import { loadIdeas, saveIdeas, addIdea, transitionIdea } from '../src/ideas.js';
+test('0.7.0: buildContext — раздел «Предложения»: взятые к планированию, отложенные не трогать', () => {
+  const p = paths(bareProject());
+  const d = loadIdeas(p);
+  for (const t of ['Взять', 'Спланирован', 'Ваш', 'Обсудить', 'Отказано']) addIdea(d, { title: t, benefit: 'y', source: t === 'Ваш' ? 'owner-backlog' : 'team', size: 'S' });
+  transitionIdea(d, 'I1', 'taken', { actor: 'bot' });
+  transitionIdea(d, 'I2', 'taken', { actor: 'bot' }); transitionIdea(d, 'I2', 'planned', { actor: 'team', change: 'ch-2' });
+  transitionIdea(d, 'I4', 'discuss', { actor: 'bot' }); transitionIdea(d, 'I5', 'rejected', { actor: 'session' });
+  saveIdeas(p, d);
+  const text = buildContext(p, { ...cfg, ideas: { ...cfg.ideas, backlog: 'SHARED-UNDERSTANDING.md §4.1' } });
+  assert.match(text, /Предложения \(mcfly\/ideas\.yaml\)/);
+  assert.match(text, /Взятые владельцем — спланируй по порядку: I1 «Взять»/);
+  assert.match(text, /Спланированы: I2 → ch-2/);
+  assert.match(text, /В списке: 1 \(ваших 1, команды 0\)/);
+  assert.match(text, /Не трогать, решение в сессии: I4 «Обсудить», I5 «Отказано»/);
+  assert.match(text, /Бэклог владельца: SHARED-UNDERSTANDING\.md §4\.1/);
+  assert.doesNotMatch(buildContext(p, { ...cfg, ideas: { ...cfg.ideas, enabled: false } }), /Предложения \(mcfly/);
+});

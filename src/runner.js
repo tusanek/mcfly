@@ -18,7 +18,7 @@ import { pullAnswers, errorLine, spawnDayRun } from './pull.js';
 import { createTelegram } from './telegram.js';
 import { ensureVpn } from './vpn.js';
 import { STATUS_RU, plainWords, reportSections, humanItems, approvalCovered, isNone, nextRunText, changeProgress, summaryKeyboard } from './summary.js';
-import { ideasBrief } from './ideas.js';
+import { ideasBrief, loadIdeas, saveIdeas, syncDoneIdeas } from './ideas.js';
 import { enqueueNotice } from './notices.js';
 import { dirtyFiles, teamWorktrees, branchProgress, changedTrackedFiles } from './git.js';
 import { ensureDir, writeJson, appendText, readJson, readText, runId as makeRunId, fmtLocal, fmtShort, fmtDuration, pad2, truncate } from './util.js';
@@ -92,7 +92,7 @@ export function recordRun(p, record) {
 }
 
 /** Служебные файлы команды, которые runner коммитит сам после прогона: журнал, метрики, вопросы, ответы и каталоги прогонов. */
-const STATE_PATHS = ['mcfly/progress.md', 'mcfly/metrics.jsonl', 'mcfly/questions.yaml', 'mcfly/answers.md', 'mcfly/runs', 'mcfly/shifts'];
+const STATE_PATHS = ['mcfly/progress.md', 'mcfly/metrics.jsonl', 'mcfly/questions.yaml', 'mcfly/answers.md', 'mcfly/ideas.yaml', 'mcfly/runs', 'mcfly/shifts'];
 const RAW_LOG = ':(exclude)mcfly/runs/*/stdout.log'; // сырой вывод claude не коммитится, даже если в .gitignore нет строки
 /** Метаданные одобрения изменений (.openspec.yaml), изменённые runner'ом (авто-одобрение по сроку, ответы из Telegram) или человеком. */
 const approvalMeta = (projectDir) => changedTrackedFiles(projectDir).filter((f) => /^openspec\/changes\/[^/]+\/\.openspec\.yaml$/.test(f));
@@ -101,6 +101,15 @@ const approvalMeta = (projectDir) => changedTrackedFiles(projectDir).filter((f) 
  * Коммитит служебные файлы прогона, чтобы рабочее дерево оставалось чистым для следующего прогона.
  * Только эти пути (commit -- <пути>): работа агентов, оставшаяся в индексе после обрыва, в коммит прогона не попадает.
  */
+/** Конец прогона (0.7.0): спланированные пункты, чьё изменение заархивировано, — сделаны. */
+export function finishIdeas(p, cfg) {
+  if (!cfg.ideas?.enabled) return [];
+  const d = loadIdeas(p); if (d.error) return [];
+  const done = syncDoneIdeas(d, p.openspecChanges);
+  if (done.length) saveIdeas(p, d);
+  return done;
+}
+
 export function commitRunState(projectDir, id, log = console.log) {
   const inRepo = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: projectDir, encoding: 'utf8' });
   if (inRepo.status !== 0) return false;
@@ -360,6 +369,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     recordRun(p, record);
     // Последний слот ночи: репортёр не оставил ночную передачу — собрать по фактам.
     if (lastSlot) ensureNightHandoff(p, now);
+    finishIdeas(p, cfg);
     commitRunState(projectDir, id, log);
     // Итог любого прогона — сразу в Telegram: прогон по «запусти» иначе молчит до утренней сводки.
     // Не ушло (нет связи) — в очередь: задание answers дошлёт его, когда Telegram ответит.

@@ -378,3 +378,17 @@ test('0.5.2: отказы разрешений считаются в result.json
   assert.match(rec.note, /отказов разрешений: 2/);
   assert.match(fs.readFileSync(path.join(p.runs, r.id, 'events.log'), 'utf8'), /⛔ отказ разрешения: Permission to use Bash/);
 });
+
+import { finishIdeas } from '../src/runner.js';
+import { cfg as cfg6 } from './helpers.js';
+import { loadIdeas as li6, saveIdeas as si6, addIdea as ai6, transitionIdea as ti6 } from '../src/ideas.js';
+test('0.7.0: ideas.yaml — служебный файл прогона; finishIdeas закрывает пункты заархивированных изменений', () => {
+  const dir = bareProject(); const p = paths(dir);
+  gitRepo(dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'проект');
+  const d = li6(p); ai6(d, { title: 'X', benefit: 'y', source: 'team', size: 'S' }); ti6(d, 'I1', 'taken', { actor: 'bot' }); ti6(d, 'I1', 'planned', { actor: 'team', change: 'gone' }); si6(p, d);
+  assert.deepEqual(finishIdeas(p, cfg6).map((x) => x.id), ['I1']);
+  assert.equal(li6(p).ideas[0].status, 'done');
+  recordRun(p, { id: 'r1', mode: 'day', slot: null, started_at: new Date().toISOString(), status: 'ok' }); // в настоящем прогоне mcfly/runs не пуст
+  assert.equal(commitRunState(dir, 'r1', () => {}), true);
+  assert.match(git(dir, 'show', '--name-only', '--format=', 'HEAD'), /mcfly\/ideas\.yaml/);
+});
