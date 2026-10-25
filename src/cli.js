@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { loadIdeas, saveIdeas, findIdea, transitionIdea, IDEA_STATUS_RU } from './ideas.js';
+import { loadIdeas, saveIdeas, addIdea, findIdea, transitionIdea, IDEA_STATUS_RU } from './ideas.js';
 import YAML from 'yaml';
 import { paths, loadState, saveState } from './state.js';
 import { loadConfig, autoDefault, isCategory } from './config.js';
@@ -32,6 +32,10 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   context                                         контекст состояния для агентов
   status                                          состояние проекта
   question add --category <c> --text <t> --default <d> [--hours <n>]   (--default обязателен, кроме prod)
+  ideas list [--status <статус>]                  список предложений (0.7.0)
+  ideas add --title <t> --benefit <t> --source <owner-backlog|owner-note|team|research> --size <S|M|L>
+            [--how <t>] [--ref <t>] [--needs-owner <t>] [--new-arguments <t>]   добавить предложение
+  ideas set <Iн> proposed|taken|rejected [--note <t>]   решение владельца в сессии (в прогоне запрещено)
   question list | question expire
   approval request <изменение> [--category <c>] [--priority <n>]
   approval set <изменение> approved|rejected [--note <t>] [--priority <n>]   (меньше = раньше; по умолчанию 100)
@@ -50,7 +54,7 @@ export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
     project: { type: 'string' }, mode: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
-    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
+    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
   const projectDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
   const p = paths(projectDir);
@@ -107,6 +111,30 @@ export async function main(argv) {
       }
       for (const x of q) log(`- ${x.id} [${x.category}] ${x.text} (срок ${fmtShort(new Date(x.deadline_at))})`);
       return 0;
+    }
+    case 'ideas': {
+      const data = loadIdeas(p); if (data.error) { console.error(data.error); return 1; }
+      if (sub === 'list') {
+        for (const x of data.ideas.filter((i) => !values.status || i.status === values.status)) {
+          log(`${x.id} [${IDEA_STATUS_RU[x.status] || x.status}] ${x.source === 'owner-backlog' || x.source === 'owner-note' ? 'ваш' : 'команда'} · ${x.size} — ${x.title}${x.change ? ` → ${x.change}` : ''}${x.reject_note || x.discuss_note ? ` — причина: ${x.reject_note || x.discuss_note}` : ''}`);
+        }
+        return 0;
+      }
+      if (sub === 'add') {
+        try {
+          const it = addIdea(data, { title: values.title, benefit: values.benefit, how: values.how || '', source: values.source, ref: values.ref || '', size: values.size, needsOwner: values['needs-owner'] || '', newArguments: values['new-arguments'] || '', now, runId: runIdEnv });
+          saveIdeas(p, data); log(`${it.id} добавлено в предложения`); return 0;
+        } catch (e) { console.error(e.message); return 1; }
+      }
+      if (sub === 'set') {
+        // Решение по предложениям — владельца в сессии: в прогоне команды (MCFLY_RUN_ID задаёт runner) запрещено.
+        if (runIdEnv) { console.error('Решение по предложениям принимает владелец в сессии: в прогоне команды ideas set запрещён'); return 1; }
+        const to = rest[1]; if (!['proposed', 'taken', 'rejected'].includes(to)) { console.error('Статус: proposed | taken | rejected'); return 1; }
+        const r = transitionIdea(data, rest[0], to, { actor: 'session', note: values.note || '', now });
+        if (!r.idea || r.error) { console.error(`${rest[0] || '(номер не указан)'}: ${r.error}`); return 1; }
+        saveIdeas(p, data); log(`${r.idea.id}: ${IDEA_STATUS_RU[to]}`); return 0;
+      }
+      console.error('mcfly ideas list | add | set'); return 1;
     }
     case 'question': {
       const data = loadQuestions(p);

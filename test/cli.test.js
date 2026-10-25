@@ -144,3 +144,28 @@ test('0.7.0: approval request --idea — только для взятого пу
   const after = li7(p).ideas[0];
   assert.deepEqual([after.status, after.change], ['planned', 'by-idea']);
 });
+
+test('0.7.0: mcfly ideas add/list — добавление, ошибки и вывод', () => {
+  const dir = tmpDir(); cli(['init', '--name', 'demo'], dir);
+  const ok = cli(['ideas', 'add', '--title', 'Автозапуск релизов', '--benefit', 'Документация не отстаёт', '--source', 'owner-backlog', '--size', 'M', '--ref', 'SHARED-UNDERSTANDING §4.1 п. 7'], dir);
+  assert.equal(ok.status, 0, ok.stderr); assert.match(ok.stdout, /I1 добавлено в предложения/);
+  const dup = cli(['ideas', 'add', '--title', 'автозапуск релизов', '--benefit', 'x', '--source', 'team', '--size', 'S'], dir);
+  assert.equal(dup.status, 1); assert.match(dup.stderr, /уже есть: I1/);
+  cli(['ideas', 'add', '--title', 'Как у других', '--benefit', 'удобнее', '--source', 'research', '--size', 'S', '--ref', 'https://example.com', '--needs-owner', 'доступ'], dir);
+  const list = cli(['ideas', 'list'], dir).stdout;
+  assert.match(list, /I1 \[в списке\] ваш · M — Автозапуск релизов/);
+  assert.match(list, /I2 \[в списке\] команда · S — Как у других/);
+  assert.doesNotMatch(cli(['ideas', 'list', '--status', 'taken'], dir).stdout, /I1/);
+});
+
+test('0.7.0: mcfly ideas set — в прогоне команды запрещено, в сессии — отказ и возврат', () => {
+  const dir = tmpDir(); cli(['init', '--name', 'demo'], dir);
+  cli(['ideas', 'add', '--title', 'Одна', '--benefit', 'польза', '--source', 'team', '--size', 'S'], dir);
+  const inRun = spawnSync(process.execPath, [bin, 'ideas', 'set', 'I1', 'rejected'], { cwd: dir, encoding: 'utf8', env: { ...process.env, MCFLY_PROJECT_DIR: '', MCFLY_RUN_ID: '20261025-1200' } });
+  assert.equal(inRun.status, 1); assert.match(inRun.stderr, /в прогоне команды ideas set запрещён/);
+  const rej = cli(['ideas', 'set', 'I1', 'rejected', '--note', 'не нужно'], dir);
+  assert.equal(rej.status, 0, rej.stderr); assert.match(cli(['ideas', 'list'], dir).stdout, /I1 \[отклонено\].*— причина: не нужно/);
+  assert.equal(cli(['ideas', 'set', 'I1', 'proposed'], dir).status, 0);
+  const bad = cli(['ideas', 'set', 'I1', 'done'], dir);
+  assert.equal(bad.status, 1); assert.match(bad.stderr, /proposed \| taken \| rejected/);
+});
