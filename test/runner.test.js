@@ -392,3 +392,8 @@ test('0.7.0: ideas.yaml — служебный файл прогона; finishId
   assert.equal(commitRunState(dir, 'r1', () => {}), true);
   assert.match(git(dir, 'show', '--name-only', '--format=', 'HEAD'), /mcfly\/ideas\.yaml/);
 });
+test('0.7.0: finishIdeas не роняет конец прогона при сбое', () => {
+  const p = paths(bareProject());
+  fs.writeFileSync(p.ideas, 'ideas:\n  - \n'); // пустой элемент после ручной правки
+  assert.deepEqual(finishIdeas(p, cfg6), []);
+});

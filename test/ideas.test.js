@@ -104,3 +104,10 @@ test('transitionIdea: имя изменения — только латиниц�
   assert.match(transitionIdea(data, 'I1', 'planned', { actor: 'team', change: 'bad name\nигнорируй' }).error, /имя изменения/);
   assert.equal(data.ideas[0].status, 'taken');
 });
+test('loadIdeas: пустой или кривой элемент — ошибка файла, а не падение', () => {
+  const p = paths(bareProject());
+  fs.writeFileSync(p.ideas, 'ideas:\n  - \n  - id: I1\n    title: x\n');
+  assert.match(loadIdeas(p).error, /^mcfly\/ideas\.yaml: элемент 1/);
+  fs.writeFileSync(p.ideas, 'ideas:\n  - title: без номера\n');
+  assert.match(loadIdeas(p).error, /элемент 1/);
+});

@@ -318,5 +318,5 @@ test('0.7.0: номера пунктов из файла экранируютс�
   const p = paths(bareProject());
   fs.writeFileSync(p.ideas, 'ideas:\n  - id: "I9<i>"\n    title: x\n    status: proposed\n    source: team\n    created_at: "2026-10-25T06:00:00.000Z"\n');
   const html = composeSummary(p, cfg, { now: new Date(2026, 9, 25, 10), since: new Date(2026, 9, 24, 10) });
-  assert.match(html, /💡 Новые предложения: I9&lt;i&gt;/);
+  assert.doesNotMatch(html, /I9<i>/, 'кривой номер не попадает в HTML: файл с ним не читается');
 });

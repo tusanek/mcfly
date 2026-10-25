@@ -104,10 +104,12 @@ const approvalMeta = (projectDir) => changedTrackedFiles(projectDir).filter((f) 
 /** Конец прогона (0.7.0): спланированные пункты, чьё изменение заархивировано, — сделаны. */
 export function finishIdeas(p, cfg) {
   if (!cfg.ideas?.enabled) return [];
-  const d = loadIdeas(p); if (d.error) return [];
-  const done = syncDoneIdeas(d, p.openspecChanges);
-  if (done.length) saveIdeas(p, d);
-  return done;
+  try {
+    const d = loadIdeas(p); if (d.error) return [];
+    const done = syncDoneIdeas(d, p.openspecChanges);
+    if (done.length) saveIdeas(p, d);
+    return done;
+  } catch { return []; } // список — не повод терять коммит и итог прогона
 }
 
 export function commitRunState(projectDir, id, log = console.log) {

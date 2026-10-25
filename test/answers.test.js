@@ -70,7 +70,7 @@ test('applyMessages: старая кнопка по спланированном
   transitionIdea(d, 'I1', 'taken', { actor: 'bot' }); transitionIdea(d, 'I1', 'planned', { actor: 'team', change: 'x' }); saveIdeas(p, d);
   const before = fs.readFileSync(p.ideas, 'utf8');
   const acks = applyMessages(p, [{ text: 'берём I1' }, { text: 'берём I5' }]);
-  assert.match(acks[0], /^ℹ️ I1: нельзя/); assert.equal(acks[1], '⚠️ I5: такого предложения нет');
+  assert.equal(acks[0], 'ℹ️ I1 уже спланирован — план ждёт решения в «Статусе»'); assert.equal(acks[1], '⚠️ I5: такого предложения нет');
   assert.equal(fs.readFileSync(p.ideas, 'utf8'), before);
 });
 
@@ -112,4 +112,17 @@ test('0.7.0: «Отклонить» плана по пункту — пункт 
   const idea = loadIdeas(p).ideas[0];
   assert.equal(idea.status, 'discuss'); assert.equal(idea.discuss_note, 'план отклонён в Telegram: by-idea, отклонено кнопкой в Telegram');
   assert.deepEqual(listChanges(p.openspecChanges).map((c) => c.mcfly.approval), ['rejected', 'rejected']);
+});
+test('0.7.0: старые кнопки — понятное «уже …»; «Не сейчас» по спланированному не рвёт связь с планом', () => {
+  const p = paths(bareProject()); const d = seedIdeas(p, 3);
+  transitionIdea(d, 'I1', 'taken', { actor: 'bot' }); transitionIdea(d, 'I1', 'planned', { actor: 'team', change: 'ch-1' });
+  transitionIdea(d, 'I2', 'rejected', { actor: 'session' }); transitionIdea(d, 'I3', 'discuss', { actor: 'bot' }); saveIdeas(p, d);
+  const acks = applyMessages(p, [{ text: 'берём I1' }, { text: 'не сейчас I1' }, { text: 'берём I2' }, { text: 'берём I3' }]);
+  assert.deepEqual(acks, [
+    'ℹ️ I1 уже спланирован — план ждёт решения в «Статусе»',
+    'ℹ️ I1 уже спланирован — «⏸ Не сейчас» под планом в «Статусе»',
+    'ℹ️ I2 уже отклонён в сессии',
+    'ℹ️ I3 уже отложен — обсудим в сессии',
+  ]);
+  assert.deepEqual(loadIdeas(p).ideas.map((x) => x.status), ['planned', 'rejected', 'discuss']);
 });

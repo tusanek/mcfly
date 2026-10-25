@@ -308,3 +308,14 @@ test('0.7.0: «Статус» — план по пункту само не од�
   const d = loadIdeas(p2); transitionIdea(d, 'I2', 'taken', { actor: 'bot' }); saveIdeas(p2, d);
   assert.match(statusView(p2, cfg).join('\n'), /Следующий прогон:<\/b>.* — план по I2/);
 });
+test('0.7.0: «Предложения» — спланированный пункт показывает состояние плана', () => {
+  const dir = bareProject(); const p = paths(dir);
+  const d = seed(p, [{ title: 'A' }, { title: 'B' }]);
+  for (const [id, ch] of [['I1', 'ch-a'], ['I2', 'ch-b']]) { transitionIdea(d, id, 'taken', { actor: 'bot' }); transitionIdea(d, id, 'planned', { actor: 'team', change: ch }); }
+  saveIdeas(p, d);
+  addChange(dir, 'ch-a', { meta: { mcfly: { approval: 'pending', idea: 'I1' } } });
+  addChange(dir, 'ch-b', { meta: { mcfly: { approval: 'approved', idea: 'I2' } } });
+  const html = ideasView(p, cfg).join('\n');
+  assert.match(html, /📝 I1 → изменение ch-a, ждёт вашего решения в «Статусе»/);
+  assert.match(html, /🔧 I2 → изменение ch-b, одобрено — команда делает/);
+});

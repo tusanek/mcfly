@@ -41,6 +41,12 @@ export function withReplyQuestion(parsed, replyTo, qdata) {
   return ids.length === 1 ? { type: 'answer', id: ids[0], text: parsed.text } : parsed;
 }
 
+const ALREADY = {
+  planned: (take) => (take ? 'уже спланирован — план ждёт решения в «Статусе»' : 'уже спланирован — «⏸ Не сейчас» под планом в «Статусе»'),
+  discuss: () => 'уже отложен — обсудим в сессии',
+  rejected: () => 'уже отклонён в сессии',
+  done: () => 'уже сделан',
+};
 /** Ответ свайпом на сообщение с ровно одним отложенным пунктом (Iн) — причина «не сейчас» для него. */
 export function withReplyIdea(parsed, replyTo, idata) {
   if (parsed.type !== 'note' || !replyTo) return parsed;
@@ -62,6 +68,10 @@ export function applyMessages(p, messages, { now = new Date(), by = 'human', onR
       case 'take': case 'defer': {
         if (idata.error) { acks.push(broken); break; }
         const take = parsed.type === 'take';
+        // Старая кнопка по пункту, который уже ушёл дальше, — понятное «уже …»; «Не сейчас» по спланированному — только под планом
+        const was = findIdea(idata, parsed.id);
+        const already = was && ALREADY[was.status]?.(take);
+        if (already) { acks.push(`ℹ️ ${was.id} ${already}`); break; }
         const { idea, error } = transitionIdea(idata, parsed.id, take ? 'taken' : 'discuss', { actor: 'bot', note: parsed.note || '', now });
         if (!idea) { acks.push(`⚠️ ${parsed.id}: такого предложения нет`); break; }
         if (error) { acks.push(`ℹ️ ${idea.id}: ${error}`); break; }

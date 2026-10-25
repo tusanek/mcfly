@@ -307,9 +307,12 @@ export function ideasView(p, cfg, { page = 1 } = {}) {
   const v = ideasPage(data, cfg, page);
   const L = [...head];
   if (v.active.length) {
+    const approval = Object.fromEntries(listChanges(p.openspecChanges).map((c) => [c.name, c.mcfly.approval]));
     L.push('', ...v.active.map((x) => (x.status === 'taken'
       ? `⏳ ${escHtml(x.id)} — ждёт прогона: ${escHtml(x.title)}`
-      : `📝 ${escHtml(x.id)} → изменение ${escHtml(x.change || '?')}, ждёт вашего решения в «Статусе»`)));
+      : approval[x.change] === 'approved'
+        ? `🔧 ${escHtml(x.id)} → изменение ${escHtml(x.change || '?')}, одобрено — команда делает`
+        : `📝 ${escHtml(x.id)} → изменение ${escHtml(x.change || '?')}, ждёт вашего решения в «Статусе»`)));
   }
   if (v.shown.length) for (const x of v.shown) L.push('', ...ideaLines(x));
   else if (!v.active.length) L.push('', 'Предложений пока нет: команда добавит их в следующем прогоне, или напишите «идея: …»');

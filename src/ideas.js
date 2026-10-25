@@ -23,7 +23,11 @@ export function loadIdeas(p) {
   if (!exists(p.ideas)) return { ideas: [] };
   try {
     const doc = YAML.parse(readText(p.ideas, '')) || {};
-    return { ideas: Array.isArray(doc.ideas) ? doc.ideas : [] };
+    const ideas = Array.isArray(doc.ideas) ? doc.ideas : [];
+    // Кривой элемент после ручной правки — ошибка файла (как у YAML), а не падение бота и прогона на x.status
+    const bad = ideas.findIndex((x) => !x || typeof x !== 'object' || !/^I\d+$/.test(String(x.id)));
+    if (bad >= 0) return { ideas: [], error: `${IDEAS_FILE}: элемент ${bad + 1} без номера вида I1 (пустой или испорчен)` };
+    return { ideas };
   } catch (e) {
     return { ideas: [], error: `${IDEAS_FILE}: ${String(e.message || e).split('\n')[0]}` };
   }

@@ -34,3 +34,8 @@ test('0.7.0: buildLeadPrompt с ideas.enabled false — прежний шаг 2b
   assert.ok(!text.includes('mcfly ideas add'));
   assert.ok(!/\{\{\w+\}\}/.test(text));
 });
+test('0.7.0: шаг 1 промпта не велит перерабатывать отклонённые планы по пунктам', () => {
+  const text = buildLeadPrompt({ cfg, p: paths(bareProject()), runId: 'r', mode: 'day', deadline: new Date(), context: '' });
+  const step1 = text.split('\n').find((l) => l.startsWith('1. Ответы человека.'));
+  assert.match(step1, /кроме изменений с `mcfly\.idea`/);
+});
