@@ -25,6 +25,8 @@ export const DEFAULT_CONFIG = {
   links: {},
   // Действия владельца из Telegram (0.6.0): { <id>: { title, run, describe?, prepare?, offer?, followups?, timeout_minutes?, confirm?, during_run?, vpn? } }
   actions: {},
+  // Список предложений (0.7.0): enabled false — прежнее поведение (команда без одобренной работы планирует сама)
+  ideas: { enabled: true, backlog: '', per_run: 2, per_idle_run: 4, show: 7, research: true },
 };
 
 function merge(base, over) {
@@ -57,6 +59,12 @@ export function validate(cfg) {
   const modes = ['acceptEdits', 'auto', 'bypassPermissions', 'default', 'dontAsk', 'plan'];
   if (!modes.includes(cfg.run.permission_mode)) errors.push(`run.permission_mode: одно из ${modes.join(', ')}`);
   errors.push(...actionErrors(cfg.actions));
+  const ideas = cfg.ideas || {};
+  if (typeof ideas.enabled !== 'boolean') errors.push('ideas.enabled: true или false');
+  if (typeof ideas.research !== 'boolean') errors.push('ideas.research: true или false');
+  if (typeof ideas.backlog !== 'string') errors.push('ideas.backlog: строка — где бэклог владельца');
+  for (const k of ['per_run', 'per_idle_run']) if (!(Number.isInteger(ideas[k]) && ideas[k] >= 0)) errors.push(`ideas.${k}: целое число от 0`);
+  if (!(Number.isInteger(ideas.show) && ideas.show >= 1)) errors.push('ideas.show: целое число от 1');
   if (!cfg.links || typeof cfg.links !== 'object' || Array.isArray(cfg.links)) errors.push('links: словарь «подпись: адрес»');
   else for (const [k, v] of Object.entries(cfg.links)) if (!/^https?:\/\/[^\s"<>]+$/.test(String(v))) errors.push(`links.${k}: адрес http:// или https:// без пробелов, кавычек и <>`);
   if (errors.length) throw new Error('Ошибки в mcfly/config.yaml:\n- ' + errors.join('\n- '));
