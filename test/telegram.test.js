@@ -122,3 +122,9 @@ test('0.5.4: ответ не JSON (504 Gateway Timeout от прокси) — п
   const f = async () => ({ status: 504, statusText: 'Gateway Timeout', json: async () => { throw new SyntaxError('Unexpected token <'); } });
   await assert.rejects(createTelegram({ token: 'T', fetchImpl: f }).getUpdates(0, 25), /Telegram getUpdates: HTTP 504 Gateway Timeout/);
 });
+
+test('callbackText: ib, ix, il', () => {
+  assert.equal(callbackText('ib:I7'), 'берём I7');
+  assert.equal(callbackText('ix:I7'), 'не сейчас I7');
+  assert.equal(callbackText('il:2'), 'предложения 2');
+});

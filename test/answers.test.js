@@ -39,3 +39,63 @@ test('applyMessages: ответ «по умолчанию» берёт текс�
   assert.equal(loadQuestions(p).questions[0].answer, 'YAML');
   assert.match(acks[0], /Q1/);
 });
+
+import fs from 'node:fs';
+import { loadIdeas, saveIdeas, addIdea, transitionIdea } from '../src/ideas.js';
+const seedIdeas = (p, n = 1) => { const d = loadIdeas(p); for (let i = 1; i <= n; i++) addIdea(d, { title: `Идея ${i}`, benefit: 'польза', source: 'team', size: 'S' }); saveIdeas(p, d); return d; };
+
+test('parseMessage: берём, не сейчас, идея', () => {
+  assert.deepEqual(parseMessage('берём i7'), { type: 'take', id: 'I7' });
+  assert.deepEqual(parseMessage('Беру I7'), { type: 'take', id: 'I7' });
+  assert.deepEqual(parseMessage('Не сейчас I7 дорого'), { type: 'defer', id: 'I7', note: 'дорого' });
+  assert.deepEqual(parseMessage('💡 Тёмная тема сайта'), { type: 'idea', text: 'Тёмная тема сайта' });
+  assert.deepEqual(parseMessage('Идея: тёмная тема\nчтобы глаза не уставали'), { type: 'idea', text: 'тёмная тема\nчтобы глаза не уставали' });
+  assert.deepEqual(parseMessage('идея:'), { type: 'idea', text: '' });
+  assert.equal(parseMessage('берём').type, 'note');
+  assert.equal(parseMessage('идеальный вариант — кеш').type, 'note');
+});
+
+test('applyMessages: берём и не сейчас меняют список и пишут answers.md', () => {
+  const p = paths(bareProject()); seedIdeas(p, 2);
+  const acks = applyMessages(p, [{ text: 'берём I1' }, { text: 'не сейчас I2 позже' }]);
+  const ideas = loadIdeas(p).ideas;
+  assert.equal(ideas[0].status, 'taken'); assert.equal(ideas[1].status, 'discuss'); assert.equal(ideas[1].discuss_note, 'позже');
+  assert.equal(acks[0], '✅ I1 взято — план пришлёт ближайший прогон');
+  assert.equal(acks[1], '⏸ I2 отложено — обсудим в сессии');
+  assert.match(readText(p.answers), /— взято I1/); assert.match(readText(p.answers), /— не сейчас I2\nпозже/);
+});
+
+test('applyMessages: старая кнопка по спланированному пункту — «уже», файл прежний', () => {
+  const p = paths(bareProject()); const d = seedIdeas(p, 1);
+  transitionIdea(d, 'I1', 'taken', { actor: 'bot' }); transitionIdea(d, 'I1', 'planned', { actor: 'team', change: 'x' }); saveIdeas(p, d);
+  const before = fs.readFileSync(p.ideas, 'utf8');
+  const acks = applyMessages(p, [{ text: 'берём I1' }, { text: 'берём I5' }]);
+  assert.match(acks[0], /^ℹ️ I1: нельзя/); assert.equal(acks[1], '⚠️ I5: такого предложения нет');
+  assert.equal(fs.readFileSync(p.ideas, 'utf8'), before);
+});
+
+test('applyMessages: идея владельца и пустая идея', () => {
+  const p = paths(bareProject()); seedIdeas(p, 1);
+  const acks = applyMessages(p, [{ text: 'идея: Тёмная тема\nглаза не устают' }, { text: 'идея:' }]);
+  const added = loadIdeas(p).ideas[1];
+  assert.equal(acks[0], '💡 I2 записал в предложения');
+  assert.deepEqual([added.title, added.benefit, added.source, added.status], ['Тёмная тема', 'глаза не устают', 'owner-note', 'proposed']);
+  assert.equal(acks[1], '⚠️ Пустая идея — напишите текст после «идея:»');
+  assert.equal(loadIdeas(p).ideas.length, 2);
+});
+
+test('applyMessages: испорченный ideas.yaml — остальные сообщения применены', () => {
+  const p = paths(bareProject()); fs.writeFileSync(p.ideas, 'ideas: [oops\n');
+  const acks = applyMessages(p, [{ text: 'берём I1' }, { text: 'просто заметка' }]);
+  assert.match(acks[0], /^⚠️ mcfly\/ideas\.yaml.*список предложений не изменён$/);
+  assert.match(acks[1], /заметку/);
+  assert.equal(fs.readFileSync(p.ideas, 'utf8'), 'ideas: [oops\n');
+});
+
+test('ответ свайпом на отложенный пункт записывает причину', () => {
+  const p = paths(bareProject()); seedIdeas(p, 1);
+  applyMessages(p, [{ text: 'не сейчас I1' }]);
+  const acks = applyMessages(p, [{ text: 'слишком дорого сейчас', replyTo: '⏸ I1 отложено — обсудим в сессии' }]);
+  assert.equal(acks[0], '📝 I1: причина записана');
+  assert.equal(loadIdeas(p).ideas[0].discuss_note, 'слишком дорого сейчас');
+});

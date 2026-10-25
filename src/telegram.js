@@ -55,11 +55,15 @@ export function createTelegram({ token, fetchImpl = globalThis.fetch, timeoutMs 
 }
 /**
  * Кнопка → команда, как если бы человек написал её текстом: ap:имя, rj:имя, qd:Qn, rn:day («запусти»);
- * действия (0.6.0): ac:id («действие id»), ax:id:код («действие id да код»), an:id («действие id отмена»).
+ * действия (0.6.0): ac:id («действие id»), ax:id:код («действие id да код»), an:id («действие id отмена»);
+ * предложения (0.7.0): ib:Iн («берём Iн»), ix:Iн («не сейчас Iн»), il:N («предложения N»).
  */
 export function callbackText(data) {
-  const m = /^(ap|rj|qd|rn|ac|ax|an):(.+)$/.exec(String(data || ''));
+  const m = /^(ap|rj|qd|rn|ac|ax|an|ib|ix|il):(.+)$/.exec(String(data || ''));
   if (!m) return null;
+  if (m[1] === 'ib') return `берём ${m[2]}`;
+  if (m[1] === 'ix') return `не сейчас ${m[2]}`;
+  if (m[1] === 'il') return `предложения ${m[2]}`;
   if (m[1] === 'rn') return 'запусти';
   if (m[1] === 'ac') return `действие ${m[2]}`;
   if (m[1] === 'an') return `действие ${m[2]} отмена`;
