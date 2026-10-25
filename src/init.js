@@ -39,6 +39,7 @@ export function init({ projectDir, name, withTracker = false, skipOpenspec = fal
   put(p.config, tpl('config.yaml').replaceAll('{{PROJECT}}', project));
   put(p.progress, tpl('progress.md'));
   put(p.questions, 'questions: []\n');
+  put(p.ideas, tpl('ideas.yaml'));
   put(p.answers, tpl('answers.md'));
   put(p.metrics, '');
   put(path.join(p.root, '.env.example'), tpl('env.example'));

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs'; import path from 'node:path';
 import { init, upsertSection, mergeSettings, ensureGitignore } from '../src/init.js';
 import { tmpDir } from './helpers.js';
+import { parseConfig } from '../src/config.js';
 
 test('init создаёт файлы, идемпотентен и не перезаписывает', () => {
   const dir = tmpDir();
@@ -38,4 +39,13 @@ test('ensureGitignore добавляет только недостающее', (
   const dir = tmpDir(); fs.writeFileSync(path.join(dir, '.gitignore'), 'a\n');
   assert.deepEqual(ensureGitignore(dir, ['a', 'b']), ['b']);
   assert.deepEqual(ensureGitignore(dir, ['a', 'b']), []);
+});
+
+test('0.7.0: init создаёт ideas.yaml и раздел ideas в config', () => {
+  const dir = tmpDir();
+  init({ projectDir: dir, name: 'demo', skipOpenspec: true, log: () => {} });
+  assert.equal(fs.readFileSync(path.join(dir, 'mcfly', 'ideas.yaml'), 'utf8'), 'ideas: []\n');
+  const conf = fs.readFileSync(path.join(dir, 'mcfly', 'config.yaml'), 'utf8');
+  assert.match(conf, /^ideas:\n  enabled: true/m); assert.match(conf, /backlog: ""/);
+  assert.equal(parseConfig(conf).ideas.per_run, 2);
 });

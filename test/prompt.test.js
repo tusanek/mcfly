@@ -16,7 +16,7 @@ test('buildLeadPrompt содержит id, дедлайн и контекст', 
   assert.ok(!/\{\{\w+\}\}/.test(text), 'все плейсхолдеры подставлены');
 });
 test('шаблоны на месте', () => {
-  for (const f of ['config.yaml', 'progress.md', 'answers.md', 'env.example', 'settings.json', 'CLAUDE.snippet.md', 'mcp.tracker.json']) assert.ok(exists(path.join(MCFLY_ROOT, 'templates', f)), f);
+  for (const f of ['config.yaml', 'progress.md', 'answers.md', 'ideas.yaml', 'env.example', 'settings.json', 'CLAUDE.snippet.md', 'mcp.tracker.json']) assert.ok(exists(path.join(MCFLY_ROOT, 'templates', f)), f);
 });
 
 test('0.7.0: buildLeadPrompt с ideas — шаг «Предложения», план только по взятым', () => {
