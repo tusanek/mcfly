@@ -102,6 +102,16 @@ export function applyMessages(p, messages, { now = new Date(), by = 'human', onR
         if (!c) { appendText(p.answers, `\n## ${stamp} — заметка\n${msg.text}\n`); acks.push(`⚠️ изменение ${parsed.change} не найдено, записал как заметку`); break; }
         const approved = parsed.type === 'approve';
         setApproval(c, approved ? 'approved' : 'rejected', by, parsed.note, now);
+        // План по пункту (0.7.0): «отклонить» в Telegram — «не сейчас», пункт уходит на обсуждение в сессии, команда его не перерабатывает.
+        if (!approved && c.mcfly.idea && !idata.error) {
+          const r = transitionIdea(idata, c.mcfly.idea, 'discuss', { actor: 'bot', note: `план отклонён в Telegram: ${c.name}${parsed.note ? `, ${parsed.note}` : ''}`, now });
+          if (!r.error) {
+            ideasDirty = true;
+            appendText(p.answers, `\n## ${stamp} — не сейчас ${c.name} (${c.mcfly.idea})\n${parsed.note || '(без комментария)'}\n`);
+            acks.push(`⏸ ${c.name}: не сейчас — пункт ${r.idea.id} ждёт обсуждения в сессии`);
+            break;
+          }
+        }
         appendText(p.answers, `\n## ${stamp} — ${approved ? 'одобрено' : 'отклонено'} ${c.name}\n${parsed.note || '(без комментария)'}\n`);
         acks.push(`${approved ? '✅ одобрено' : '⛔ отклонено'}: ${c.name}`);
         break;

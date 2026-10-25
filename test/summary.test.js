@@ -312,3 +312,11 @@ test('0.7.0: сводка — новые предложения за перио�
   assert.match(html, /💡 Новые предложения: I2, I3/);
   assert.doesNotMatch(html, /I1/);
 });
+test('0.7.0: номера пунктов из файла экранируются в HTML', () => {
+  const esc = (s) => String(s).replace(/</g, '&lt;');
+  assert.equal(nextRunText([], [], () => '', esc, { taken: ['I1<b>'], proposed: 0, owner: 0 }), 'план по I1&lt;b>');
+  const p = paths(bareProject());
+  fs.writeFileSync(p.ideas, 'ideas:\n  - id: "I9<i>"\n    title: x\n    status: proposed\n    source: team\n    created_at: "2026-10-25T06:00:00.000Z"\n');
+  const html = composeSummary(p, cfg, { now: new Date(2026, 9, 25, 10), since: new Date(2026, 9, 24, 10) });
+  assert.match(html, /💡 Новые предложения: I9&lt;i&gt;/);
+});

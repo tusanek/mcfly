@@ -214,3 +214,13 @@ test('0.5.10: итог прогона — «Простыми словами» с
   fs.writeFileSync(path.join(p.runs, 'r1', 'summary.md'), '# Прогон r1\n## Простыми словами\nнет\n');
   assert.doesNotMatch(finishMessage(cfg, record(), p).text, /Простыми словами/);
 });
+
+import { loadIdeas as li4, saveIdeas as si4, addIdea as ai4, transitionIdea as ti4 } from '../src/ideas.js';
+test('0.7.0: «запусти» — взятый пункт запускает прогон, хотя изменение ждёт одобрения', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'add-y', { meta: pending('add-y') });
+  const d = li4(p); ai4(d, { title: 'X', benefit: 'y', source: 'team', size: 'S' }); ti4(d, 'I1', 'taken', { actor: 'bot' }); si4(p, d);
+  const tg = fakeTg([msg(1, 'запусти')]); const started = [];
+  await pullAnswers({ projectDir: dir, cfg: tgCfg, p, telegram: tg, log: () => {}, startRun: (x) => started.push(x) });
+  assert.deepEqual(started, [dir]); assert.match(tg.sent[0].text, /▶️ Запускаю/);
+});

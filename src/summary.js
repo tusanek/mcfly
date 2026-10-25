@@ -138,7 +138,7 @@ export function changeProgress(projectDir, c) {
 /** Что будет в следующем прогоне: какие изменения команда продолжит или чего ей не хватает. esc — экранирование имён для HTML. */
 export function nextRunText(work, pend, progress, esc = (t) => t, ideas = null) {
   if (work.length) return `команда продолжит ${work.map((c) => `${esc(c.name)} (${progress(c)})`).join(', ')}`;
-  if (ideas?.taken?.length) return `план по ${ideas.taken.join(', ')}`;
+  if (ideas?.taken?.length) return `план по ${ideas.taken.map(esc).join(', ')}`;
   if (pend.length) return `работы нет — одобрите ${pend.map((c) => esc(c.name)).join(', ')}`;
   if (ideas?.proposed > 0) return `работы нет — 💡 предложений ${ideas.proposed} (ваших ${ideas.owner}): выберите в «Предложениях»`;
   return 'работы нет — одобрите изменение или напишите команде заметку';
@@ -200,7 +200,7 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   L.push(...(ch.length ? ch : ['Открытых изменений нет']));
   if (cfg.ideas?.enabled && since) {
     const fresh = loadIdeas(p).ideas.filter((x) => new Date(x.created_at) > since).map((x) => x.id);
-    if (fresh.length) L.push(`💡 Новые предложения: ${fresh.join(', ')}`);
+    if (fresh.length) L.push(`💡 Новые предложения: ${fresh.map(escHtml).join(', ')}`);
   }
   L.push('', `<b>🗓 Следующий прогон:</b> ${nextRunText(work, pend, progress, escHtml, ideasBrief(p, cfg))}`);
   if (nightNew) {

@@ -126,3 +126,21 @@ test('0.5.1: shift write --file на несуществующий файл — �
   const r = cli(['shift', 'write', '--file', path.join(tmpDir(), 'нет.md')], sess);
   assert.equal(r.status, 1); assert.match(r.stderr, /файл не найден/);
 });
+
+import { paths as paths7 } from '../src/state.js';
+import { loadIdeas as li7, saveIdeas as si7, addIdea as ai7, transitionIdea as ti7 } from '../src/ideas.js';
+import { listChanges as lc7 } from '../src/approvals.js';
+test('0.7.0: approval request --idea — только для взятого пункта; пункт становится спланированным', () => {
+  const dir = tmpDir(); cli(['init', '--name', 'demo'], dir);
+  const p = paths7(dir); const d = li7(p);
+  ai7(d, { title: 'Взятый', benefit: 'y', source: 'team', size: 'S' }); ai7(d, { title: 'Не взятый', benefit: 'y', source: 'team', size: 'S' });
+  ti7(d, 'I1', 'taken', { actor: 'bot' }); si7(p, d);
+  addChange(dir, 'by-idea'); addChange(dir, 'other');
+  const bad = cli(['approval', 'request', 'other', '--idea', 'I2'], dir);
+  assert.equal(bad.status, 1); assert.match(bad.stderr, /I2 не взят владельцем \(статус: в списке\)/);
+  const ok = cli(['approval', 'request', 'by-idea', '--idea', 'i1'], dir);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(lc7(p.openspecChanges).find((c) => c.name === 'by-idea').mcfly.idea, 'I1');
+  const after = li7(p).ideas[0];
+  assert.deepEqual([after.status, after.change], ['planned', 'by-idea']);
+});

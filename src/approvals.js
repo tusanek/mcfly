@@ -27,8 +27,8 @@ function writeMeta(change, mcfly) {
   change.meta = meta; change.mcfly = mcfly;
   return change;
 }
-export function requestApproval(change, { category = 'spec', priority, now = new Date() } = {}) {
-  return writeMeta(change, { ...change.mcfly, approval: 'pending', category, ...(priority != null ? { priority: Number(priority) } : {}), requested_at: now.toISOString(), decided_at: '', by: '', note: '' });
+export function requestApproval(change, { category = 'spec', priority, now = new Date(), idea } = {}) {
+  return writeMeta(change, { ...change.mcfly, approval: 'pending', category, ...(priority != null ? { priority: Number(priority) } : {}), ...(idea ? { idea } : {}), requested_at: now.toISOString(), decided_at: '', by: '', note: '' });
 }
 export function setApproval(change, status, by, note = '', now = new Date(), { priority } = {}) {
   return writeMeta(change, { ...change.mcfly, approval: status, ...(priority != null ? { priority: Number(priority) } : {}), decided_at: now.toISOString(), by, note });
@@ -43,7 +43,8 @@ export function approvalDeadline(change, cfg) {
   const hours = isSmallChange(change, cfg) ? cfg.escalation.small_approval_deadline_hours : cfg.escalation.approval_deadline_hours;
   return new Date(new Date(change.mcfly.requested_at || 0).getTime() + hours * 3600_000);
 }
-export function isAutoApprovable(change, cfg) { return autoDefault(cfg, change.mcfly.category || 'spec'); }
+/** План по пункту списка предложений (mcfly.idea, 0.7.0) молчанием не одобряется — только кнопкой владельца. */
+export function isAutoApprovable(change, cfg) { return !change.mcfly.idea && autoDefault(cfg, change.mcfly.category || 'spec'); }
 /** Авто-одобряет просроченные pending-изменения (кроме категорий без auto_default). */
 export function expireApprovals(changes, cfg, now = new Date()) {
   const auto = [];

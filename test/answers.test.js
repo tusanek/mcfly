@@ -99,3 +99,17 @@ test('ответ свайпом на отложенный пункт запис�
   assert.equal(acks[0], '📝 I1: причина записана');
   assert.equal(loadIdeas(p).ideas[0].discuss_note, 'слишком дорого сейчас');
 });
+
+test('0.7.0: «Отклонить» плана по пункту — пункт на обсуждение; без mcfly.idea — как раньше', () => {
+  const dir = bareProject(); const p = paths(dir);
+  const d = seedIdeas(p, 1); transitionIdea(d, 'I1', 'taken', { actor: 'bot' }); transitionIdea(d, 'I1', 'planned', { actor: 'team', change: 'by-idea' }); saveIdeas(p, d);
+  addChange(dir, 'by-idea'); addChange(dir, 'plain');
+  const [a, b] = listChanges(p.openspecChanges);
+  requestApproval(a, { idea: 'I1' }); requestApproval(b, {});
+  const acks = applyMessages(p, [{ text: 'reject by-idea отклонено кнопкой в Telegram' }, { text: 'reject plain слишком сложно' }]);
+  assert.equal(acks[0], '⏸ by-idea: не сейчас — пункт I1 ждёт обсуждения в сессии');
+  assert.equal(acks[1], '⛔ отклонено: plain');
+  const idea = loadIdeas(p).ideas[0];
+  assert.equal(idea.status, 'discuss'); assert.equal(idea.discuss_note, 'план отклонён в Telegram: by-idea, отклонено кнопкой в Telegram');
+  assert.deepEqual(listChanges(p.openspecChanges).map((c) => c.mcfly.approval), ['rejected', 'rejected']);
+});

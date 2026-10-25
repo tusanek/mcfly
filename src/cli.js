@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { loadIdeas, saveIdeas, findIdea, transitionIdea, IDEA_STATUS_RU } from './ideas.js';
 import YAML from 'yaml';
 import { paths, loadState, saveState } from './state.js';
 import { loadConfig, autoDefault, isCategory } from './config.js';
@@ -49,7 +50,7 @@ export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
     project: { type: 'string' }, mode: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
-    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, yes: { type: 'boolean' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
+    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
   const projectDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
   const p = paths(projectDir);
@@ -126,7 +127,15 @@ export async function main(argv) {
       if (sub === 'request') {
         const category = values.category || 'spec';
         if (!isCategory(cfg, category)) { console.error(`Неизвестная категория "${category}". Допустимо: ${Object.keys(cfg.escalation.categories).join(', ')}`); return 1; }
-        requestApproval(c, { category, priority: values.priority, now }); appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_proposed', value: 1, change: c.name }); log(`Одобрение запрошено: ${c.name}. Человек увидит его в утренней сводке.`); return 0; }
+        let idea = null;
+        if (values.idea) {
+          // План по пункту списка (0.7.0): только по взятому владельцем пункту; пункт становится спланированным.
+          const idata = loadIdeas(p); if (idata.error) { console.error(idata.error); return 1; }
+          const it = findIdea(idata, values.idea);
+          if (!it || it.status !== 'taken') { console.error(`${String(values.idea).toUpperCase()} не взят владельцем (статус: ${it ? IDEA_STATUS_RU[it.status] || it.status : 'нет такого'})`); return 1; }
+          transitionIdea(idata, it.id, 'planned', { actor: 'team', change: c.name, now }); saveIdeas(p, idata); idea = it.id;
+        }
+        requestApproval(c, { category, priority: values.priority, now, idea }); appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_proposed', value: 1, change: c.name }); log(`Одобрение запрошено: ${c.name}. Человек увидит его в утренней сводке.`); return 0; }
       if (sub === 'set') {
         // Одобрение — решение человека: в прогоне команды (MCFLY_RUN_ID задаёт runner) агенты только запрашивают его.
         if (runIdEnv) { console.error('Одобрение ставит только человек: в прогоне команды approval set запрещён, используйте mcfly approval request.'); return 1; }

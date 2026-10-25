@@ -53,3 +53,17 @@ test('0.5.3: proposalExcerpt пропускает заголовки markdown и
   assert.equal(proposalExcerpt({ proposal: '## Зачем\n\n' + 'а'.repeat(300) }, 160).length, 160);
   assert.equal(proposalExcerpt({ proposal: '# Только заголовок\n' }), '');
 });
+
+import { isAutoApprovable } from '../src/approvals.js';
+test('0.7.0: план по пункту списка не одобряется по сроку; обычное изменение — как раньше', () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'by-idea'); addChange(dir, 'plain');
+  const now = new Date(2026, 9, 25, 10);
+  const [a, b] = listChanges(p.openspecChanges);
+  requestApproval(a, { now, idea: 'I3' }); requestApproval(b, { now });
+  assert.equal(listChanges(p.openspecChanges)[0].mcfly.idea, 'I3');
+  assert.equal(isAutoApprovable(listChanges(p.openspecChanges)[0], cfg), false);
+  const auto = expireApprovals(listChanges(p.openspecChanges), cfg, new Date(now.getTime() + 100 * 3600_000));
+  assert.deepEqual(auto.map((c) => c.name), ['plain']);
+  assert.equal(listChanges(p.openspecChanges)[0].mcfly.approval, 'pending');
+});

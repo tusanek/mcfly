@@ -14,6 +14,7 @@ import { summaryKeyboard } from './summary.js';
 import { enqueueNotice, flushNotices } from './notices.js';
 import { autoApproveAndStart } from './chain.js';
 import { ACTION_TYPES, handleActionMessage, spawnAction, ownerId } from './actions.js';
+import { ideasBrief } from './ideas.js';
 
 /** Дневной прогон отдельным процессом: опрос ответов не ждёт его конца. */
 export function spawnDayRun(projectDir, { chained = false } = {}) {
@@ -103,7 +104,8 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
       // Работы нет, а изменение ждёт одобрения: прогон лишь повторит «одобрите X» и потратит квоту (18.10 — два таких прогона).
       // «запусти всё равно» — запустить, например чтобы команда прочла заметку.
       const changes = listChanges(p.openspecChanges); const pend = pendingApprovals(changes);
-      if (!FORCE_RE.test(text) && !approvedWithWork(changes).length && pend.length) {
+      // Взятый пункт списка (0.7.0) — работа для прогона: он спланирует его, даже если другое изменение ждёт одобрения.
+      if (!FORCE_RE.test(text) && !approvedWithWork(changes).length && pend.length && !ideasBrief(p, cfg)?.taken.length) {
         wantKeyboard = true;
         return `⏸ Прогон не запущен: работы нет, ждёт одобрения ${pend.map((c) => c.name).join(', ')}. Одобрите кнопкой ниже — запустить можно сразу; «запусти всё равно» — запуск без одобрения.`;
       }
