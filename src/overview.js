@@ -282,13 +282,17 @@ export function helpView(p, cfg) {
 }
 
 const SIZE_RU = { S: 'S', M: 'M', L: 'L' };
+const IDEA_TEXT_MAX = 1500;
+const oneLine = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 const ideaOwner = (x) => (x.source === 'owner-backlog' || x.source === 'owner-note' ? 'ваш' : 'команда');
 /** Пункт списка: заголовок, название, что даст, откуда, что понадобится от владельца. */
 function ideaLines(x) {
   return [
     `💡 ${escHtml(x.id)} · ${ideaOwner(x)} · ${SIZE_RU[x.size] || escHtml(String(x.size || '?'))}`,
     `<b>${escHtml(x.title)}</b>`,
-    `Что даст: ${escHtml(truncate(String(x.benefit || ''), ITEM_MAX))}`,
+    // Описание целиком (0.7.1): владелец выбирает по нему; потолок — только чтобы строка влезла в сообщение Telegram
+    `Что даст: ${escHtml(truncate(oneLine(x.benefit), IDEA_TEXT_MAX))}`,
+    ...(x.how ? [`Как: ${escHtml(truncate(oneLine(x.how), IDEA_TEXT_MAX))}`] : []),
     ...(x.ref ? [`Откуда: ${escHtml(x.ref)}`] : []),
     ...(x.needs_owner ? [`🙋 От вас понадобится: ${escHtml(x.needs_owner)}`] : []),
   ];

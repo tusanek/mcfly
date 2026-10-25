@@ -319,3 +319,17 @@ test('0.7.0: «Предложения» — спланированный пун�
   assert.match(html, /📝 I1 → изменение ch-a, ждёт вашего решения в «Статусе»/);
   assert.match(html, /🔧 I2 → изменение ch-b, одобрено — команда делает/);
 });
+
+test('0.7.1: «Предложения» — «Что даст» целиком и строка «Как», длинный список режется на сообщения до 4000', () => {
+  const p = paths(bareProject());
+  const benefit = `Начало пользы. ${'польза '.repeat(80)}Конец пользы.`;
+  const how = `Начало как. ${'шаг '.repeat(60)}Конец как.`;
+  seed(p, Array.from({ length: 7 }, (_, i) => ({ title: `Длинная ${i + 1}`, benefit, how })));
+  const parts = ideasView(p, cfg);
+  const html = parts.join('\n');
+  assert.match(html, /Что даст: Начало пользы\.[^\n]*Конец пользы\./);
+  assert.match(html, /Как: Начало как\.[^\n]*Конец как\./);
+  assert.doesNotMatch(html, /…\n/);
+  assert.ok(parts.length > 1, 'длинный список — несколько сообщений');
+  for (const part of parts) assert.ok(part.length <= 4000, `кусок ${part.length}`);
+});
