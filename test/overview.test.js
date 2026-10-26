@@ -333,3 +333,9 @@ test('0.7.1: «Предложения» — «Что даст» целиком �
   assert.ok(parts.length > 1, 'длинный список — несколько сообщений');
   for (const part of parts) assert.ok(part.length <= 4000, `кусок ${part.length}`);
 });
+
+test('0.7.2: «помощь» — какие действия с подтверждением, какие сразу', () => {
+  const c = parseConfig('project: x\nactions:\n  deploy:\n    title: "🚀 Выкатить"\n    run: "true"\n  backup:\n    title: "📦 Копия данных"\n    run: "true"\n    confirm: false\n');
+  const html = helpView(paths(bareProject()), c).join('\n');
+  assert.match(html, /с подтверждением «✅ Да, выполнить»: 🚀 Выкатить; сразу, без подтверждения: 📦 Копия данных; итог приходит сообщением/);
+});

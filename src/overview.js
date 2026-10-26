@@ -7,7 +7,7 @@ import { listChanges, pendingApprovals, approvedWithWork, approvalDeadline, isAu
 import { autoDefault } from './config.js';
 import { parseSlot } from './window.js';
 import { currentRun } from './runner.js';
-import { hasActions, listActions } from './action-config.js';
+import { hasActions, listActions, getAction } from './action-config.js';
 import { currentAction, offerKeyboard, isTrusted } from './actions.js';
 import { loadIdeas, visibleIdeas, ideasBrief } from './ideas.js';
 import { escHtml, inline, splitHtml, reportSections, plainWords, humanItems, approvalCovered, isNone, changeProgress, nextRunText, runsByStatus, STATUS_RU, summaryKeyboard } from './summary.js';
@@ -251,6 +251,12 @@ export function lastView(p, cfg) {
   return toParts(html);
 }
 
+/** Действия для «помощи»: какие спрашивают «✅ Да, выполнить», какие запускаются сразу (confirm: false). */
+function actionsHelp(cfg) {
+  const titles = (list) => list.map((a) => escHtml(a.title)).join(', ');
+  const asks = listActions(cfg).filter((a) => a.confirm !== false); const now = listActions(cfg).filter((a) => a.confirm === false);
+  return [asks.length ? `с подтверждением «✅ Да, выполнить»: ${titles(asks)}` : '', now.length ? `сразу, без подтверждения: ${titles(now)}` : ''].filter(Boolean).join('; ');
+}
 /** ❓ Помощь: все команды бота с примерами. */
 export function helpView(p, cfg) {
   const start = cfg.run.telegram_start === false
@@ -275,7 +281,7 @@ export function helpView(p, cfg) {
     '↩️ Ответ свайпом на сообщение с одним вопросом — ответ на этот вопрос, «Q12:» писать не нужно',
     ...(cfg.ideas?.enabled ? ['✅ / ⏸ кнопки под предложениями — «Берём» (план пришлёт ближайший прогон) или «Не сейчас» (обсудим в сессии)', '💡 «идея: текст» — добавить свою идею в список предложений'] : []),
     '📝 Любой другой текст — заметка команде, её прочтёт ближайший прогон',
-    ...(hasActions(cfg) ? ['', '<b>Действия</b> (раздел actions в mcfly/config.yaml)', `🛠 «действия» или /actions — ${listActions(cfg).map((a) => escHtml(a.title)).join(', ')}; каждое с подтверждением «✅ Да, выполнить», итог приходит сообщением`] : []),
+    ...(hasActions(cfg) ? ['', '<b>Действия</b> (раздел actions в mcfly/config.yaml)', `🛠 «действия» или /actions — ${actionsHelp(cfg)}; итог приходит сообщением`] : []),
     '',
     '<i>Кнопки под сводкой и под «статусом» — те же одобрения и ответы одним нажатием. Кнопки внизу чата и меню «/» — команды выше.</i>',
   ].join('\n'));
@@ -353,7 +359,13 @@ export async function sendView(tg, chatId, view, p, cfg, opts = {}) {
   // «статус» с действиями: отдельным сообщением кнопки того, что можно сделать сейчас (offer вернул 0) — у одного сообщения одна клавиатура
   if (view === 'status' && hasActions(cfg) && opts.offers !== false) {
     const rows = await (opts.offerKeyboard || offerKeyboard)(p, cfg);
-    if (rows.length) await tg.sendMessage(chatId, '🛠 <b>Можно сделать кнопкой</b> — сначала бот покажет, что будет сделано', { html: true, keyboard: rows });
+    if (rows.length) {
+      // Подпись — по тому, спрашивают ли предложенные действия подтверждение (confirm: false — запуск сразу, 0.7.2)
+      const asks = rows.flat().map((b) => getAction(cfg, String(b.callback_data || '').replace(/^ac:/, ''))).filter(Boolean).map((a) => a.confirm !== false);
+      const note = asks.every((x) => !x) ? 'запускается сразу, итог придёт сообщением'
+        : asks.every(Boolean) ? 'сначала бот покажет, что будет сделано' : 'где нужно, бот сначала покажет, что будет сделано';
+      await tg.sendMessage(chatId, `🛠 <b>Можно сделать кнопкой</b> — ${note}`, { html: true, keyboard: rows });
+    }
   }
 }
 

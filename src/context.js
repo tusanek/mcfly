@@ -9,7 +9,7 @@ import { loadIdeas } from './ideas.js';
 
 export function isMcflyProject(p) { return exists(p.config); }
 
-export function buildContext(p, cfg, { progressLines = 15, handoff = false } = {}) {
+export function buildContext(p, cfg, { progressLines = 15, handoff = false, now = new Date() } = {}) {
   const L = [];
   const H_LIMIT = 6000;
   const h = handoff ? activeDayHandoff(p) : null;
@@ -64,8 +64,16 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false } = {
   L.push('', `Открытые вопросы к человеку (${q.length}):`);
   for (const x of q) L.push(`- ${x.id} [${x.category}] ${x.text} — ${autoDefault(cfg, x.category) ? `по умолчанию: ${x.default || '(нет)'} — срок ${fmtShort(new Date(x.deadline_at))}` : 'без ответа по умолчанию: не выполнять, ждать решения человека'}`);
   const answers = readText(p.answers, '').trim();
-  const recent = answers ? answers.split(/\n(?=## )/).slice(-5).join('\n') : '';
-  L.push('', 'Последние ответы и заметки человека:', recent || '(нет)');
+  const entries = answers ? answers.split(/\n(?=## )/) : [];
+  const recent = entries.slice(-5);
+  // Заметки владельца за 7 дней — отдельно (0.7.2): одобрения и запуски не должны вытеснять их из пяти последних записей
+  const weekAgo = now.getTime() - 7 * 24 * 3600_000;
+  const notes = entries.slice(0, -5).filter((e) => {
+    const m = /^## (\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}) — заметка человека/.exec(e.trim());
+    return m && new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime() >= weekAgo;
+  });
+  if (notes.length) L.push('', 'Заметки владельца за 7 дней (действуют, пока он их не отменил):', notes.map((e) => e.trim()).join('\n'));
+  L.push('', 'Последние ответы и заметки человека:', recent.join('\n') || '(нет)');
   const progress = readText(p.progress, '').trim().split('\n').slice(-progressLines).join('\n');
   L.push('', `Журнал (последние ${progressLines} строк):`, progress || '(пусто)');
   return L.join('\n');

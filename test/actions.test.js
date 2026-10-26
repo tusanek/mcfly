@@ -351,3 +351,12 @@ test('0.6.2: «статус» не владельца не запускает of
   assert.equal(await ensureBotMenu(p2, { ...c, telegram: { chat_id: '42' } }, tg2), false);
   assert.deepEqual(calls, [], 'пока не подтверждено — ни меню, ни объявления');
 });
+
+test('0.7.2: «Можно сделать кнопкой» — подпись по тому, спрашивает ли действие подтверждение', async () => {
+  const backup = { title: '📦 Копия данных', run: 'echo ok', confirm: false };
+  const c = withActions({ deploy, backup }); const { p } = trustedProject(c);
+  const send = async (rows) => { const sent = []; await sendView({ async sendMessage(_, text, opts) { sent.push({ text, opts }); return []; } }, '42', 'status', p, c, { offerKeyboard: () => rows }); return sent.at(-1).text; };
+  assert.equal(await send([[{ text: '📦 Копия данных', callback_data: 'ac:backup' }]]), '🛠 <b>Можно сделать кнопкой</b> — запускается сразу, итог придёт сообщением');
+  assert.equal(await send([[{ text: '🚀 Выкатить', callback_data: 'ac:deploy' }]]), '🛠 <b>Можно сделать кнопкой</b> — сначала бот покажет, что будет сделано');
+  assert.equal(await send([[{ text: '🚀 Выкатить', callback_data: 'ac:deploy' }], [{ text: '📦 Копия данных', callback_data: 'ac:backup' }]]), '🛠 <b>Можно сделать кнопкой</b> — где нужно, бот сначала покажет, что будет сделано');
+});

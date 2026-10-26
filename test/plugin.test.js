@@ -75,3 +75,9 @@ test('репортёр без Write и Edit возвращает тексты, �
   assert.match(read('skills', 'mcfly-process', 'SKILL.md'), /## Отчёт прогона/);
   assert.match(read('prompts', 'run.md'), /файлы записываешь и коммитишь ты/);
 });
+
+test('0.7.2: репортёр не переносит прежние хвосты без проверки', () => {
+  const text = fs.readFileSync(path.join(MCFLY_ROOT, 'agents', 'reporter.md'), 'utf8');
+  assert.match(text, /не переноси пункт из прошлого отчёта, не проверив/);
+  assert.match(text, /«прежние хвосты»/);
+});
