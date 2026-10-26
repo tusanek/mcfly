@@ -360,3 +360,11 @@ test('0.7.2: «Можно сделать кнопкой» — подпись п�
   assert.equal(await send([[{ text: '🚀 Выкатить', callback_data: 'ac:deploy' }]]), '🛠 <b>Можно сделать кнопкой</b> — сначала бот покажет, что будет сделано');
   assert.equal(await send([[{ text: '🚀 Выкатить', callback_data: 'ac:deploy' }], [{ text: '📦 Копия данных', callback_data: 'ac:backup' }]]), '🛠 <b>Можно сделать кнопкой</b> — где нужно, бот сначала покажет, что будет сделано');
 });
+
+test('0.7.3: во время прогона команды «Можно сделать» не предлагает действия, которые в прогон не запускаются', async () => {
+  const c = withActions({ deploy: { title: '🚀 Выкатить', run: 'x', offer: 'exit 0' }, backup: { title: '📦 Копия данных', run: 'x', offer: 'exit 0', confirm: false, during_run: true } });
+  const { p } = trustedProject(c);
+  assert.deepEqual((await offerKeyboard(p, c)).map((r) => r[0].callback_data), ['ac:deploy', 'ac:backup']);
+  const lock = acquireLock(p, 'r1');
+  try { assert.deepEqual((await offerKeyboard(p, c)).map((r) => r[0].callback_data), ['ac:backup']); } finally { releaseLock(p, lock); }
+});

@@ -339,7 +339,9 @@ export async function execAction({ p, cfg, id, send, ticket = null, interactive 
  */
 export async function offerKeyboard(p, cfg, { timeoutMs = OFFER_TIMEOUT_MS } = {}) {
   if (!isTrusted(p, cfg)) return []; // неподтверждённый раздел — никаких команд, даже offer
-  const list = listActions(cfg).filter((a) => a.offer);
+  // Во время прогона команды — только действия с during_run: остальные бот всё равно не запустит (0.7.3)
+  const run = currentRun(p);
+  const list = listActions(cfg).filter((a) => a.offer && (a.during_run || !run));
   const results = await Promise.all(list.map((a) => runCommand(a.offer, { cwd: p.projectDir, timeoutMs })));
   return list.filter((a, i) => results[i].code === 0 && !results[i].timedOut).map((a) => [{ text: a.title, callback_data: `ac:${a.id}` }]);
 }
