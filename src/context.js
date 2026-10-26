@@ -66,13 +66,14 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false, now 
   const answers = readText(p.answers, '').trim();
   const entries = answers ? answers.split(/\n(?=## )/) : [];
   const recent = entries.slice(-5);
-  // Заметки владельца за 7 дней — отдельно (0.7.2): одобрения и запуски не должны вытеснять их из пяти последних записей
-  const weekAgo = now.getTime() - 7 * 24 * 3600_000;
+  // Заметки владельца за 3 дня — отдельно (0.7.2): одобрения и запуски не должны вытеснять их из пяти последних записей;
+  // окно короткое — старые заметки обычно уже выполнены и сбивали бы приоритеты
+  const since = now.getTime() - 3 * 24 * 3600_000;
   const notes = entries.slice(0, -5).filter((e) => {
     const m = /^## (\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}) — заметка человека/.exec(e.trim());
-    return m && new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime() >= weekAgo;
+    return m && new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime() >= since;
   });
-  if (notes.length) L.push('', 'Заметки владельца за 7 дней (действуют, пока он их не отменил):', notes.map((e) => e.trim()).join('\n'));
+  if (notes.length) L.push('', 'Заметки владельца за 3 дня (новее — важнее):', notes.map((e) => e.trim()).join('\n'));
   L.push('', 'Последние ответы и заметки человека:', recent.join('\n') || '(нет)');
   const progress = readText(p.progress, '').trim().split('\n').slice(-progressLines).join('\n');
   L.push('', `Журнал (последние ${progressLines} строк):`, progress || '(пусто)');
