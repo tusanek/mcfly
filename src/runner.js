@@ -190,7 +190,7 @@ function decisionLines(cfg, p, changes) {
       : '   Ответа по умолчанию нет — команда ждёт вас');
   }
   for (const c of pendingApprovals(changes)) {
-    out.push(`📋 Одобрить ${c.name}: ${proposalExcerpt(c, EXCERPT_MAX)}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
+    out.push(`📋 Одобрить ${c.mcfly.idea ? `${changeTitle(p, c)} (${c.name})` : c.name}: ${proposalExcerpt(c, EXCERPT_MAX)}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
   }
   if (out.length) out.push('Кнопки ниже; свой ответ — текстом: «Q4: …»');
   return out;

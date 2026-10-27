@@ -298,7 +298,7 @@ test('0.7.0: nextRunText — план по взятым пунктам и под
 test('0.7.0: summaryKeyboard — «Не сейчас» для плана по пункту, кнопка «Предложения» без работы', () => {
   const dir = bareProject(); const p = paths(dir);
   addChange(dir, 'by-idea', { meta: { schema: 'spec-driven', mcfly: { approval: 'pending', category: 'spec', requested_at: new Date().toISOString(), idea: 'I1' } } });
-  assert.deepEqual(summaryKeyboard(p, cfg), [[{ text: '✅ Одобрить by-idea', callback_data: 'ap:by-idea' }, { text: '⏸ Не сейчас', callback_data: 'rj:by-idea' }]]);
+  assert.deepEqual(summaryKeyboard(p, cfg), [[{ text: '✅ Одобрить I1 (by-idea)', callback_data: 'ap:by-idea' }, { text: '⏸ Не сейчас', callback_data: 'rj:by-idea' }]]);
   const p2 = paths(bareProject()); const d = li(p2); ai(d, { title: 'X', benefit: 'y', source: 'team', size: 'S' }); si(p2, d);
   assert.deepEqual(summaryKeyboard(p2, cfg), [[{ text: '💡 Предложения', callback_data: 'il:1' }]]);
 });
@@ -340,4 +340,20 @@ test('0.7.4: следующая задача — только суть: до п�
   assert.equal(nextTask(p.projectDir, cx), '1.2 Замок и атомарная запись файла состояния');
   assert.equal(nextTask(p.projectDir, cy), '2.1 Две части страницы «На проверку»');
   assert.ok(nextTask(p.projectDir, cz).length <= 90);
+});
+
+test('0.7.5: следующая задача — номер «1.2.» не обрезается, «* [ ]» тоже задача', () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'a1', { tasks: '- [ ] 1.2. Поправить тест текста. Файлы: x.js\n' });
+  addChange(dir, 'a2', { tasks: '* [ ] 2.1 Две части страницы (D3)\n' });
+  const [a, b] = listChanges(p.openspecChanges);
+  assert.equal(nextTask(p.projectDir, a), '1.2. Поправить тест текста');
+  assert.equal(nextTask(p.projectDir, b), '2.1 Две части страницы');
+});
+test('0.7.5: одобрение плана по пункту — номер и название пункта в сводке и на кнопке', () => {
+  const dir = bareProject(); const p = paths(dir);
+  const d = li(p); ai(d, { title: 'Убрать «Прочее»', benefit: 'y', source: 'owner-note', size: 'S' }); si(p, d);
+  addChange(dir, 'review-page-no-other', { meta: { mcfly: { approval: 'pending', idea: 'I1', requested_at: new Date().toISOString() } } });
+  assert.match(composeSummary(p, cfg, { now: new Date(2026, 9, 27, 10) }), /Одобрить <b>I1 «Убрать «Прочее»»<\/b> \(review-page-no-other\)/);
+  assert.equal(summaryKeyboard(p, cfg)[0][0].text, '✅ Одобрить I1 (review-page-no-other)');
 });

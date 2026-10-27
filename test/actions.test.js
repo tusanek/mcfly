@@ -368,3 +368,10 @@ test('0.7.3: во время прогона команды «Можно сдел
   const lock = acquireLock(p, 'r1');
   try { assert.deepEqual((await offerKeyboard(p, c)).map((r) => r[0].callback_data), ['ac:backup']); } finally { releaseLock(p, lock); }
 });
+
+test('0.7.5: «Можно сделать кнопкой» — неизвестные кнопки не дают подпись «запускается сразу»', async () => {
+  const c = withActions({ deploy }); const { p } = trustedProject(c);
+  const sent = [];
+  await sendView({ async sendMessage(_, text) { sent.push(text); return []; } }, '42', 'status', p, c, { offerKeyboard: () => [[{ text: '?', callback_data: 'ac:нет' }]] });
+  assert.equal(sent.at(-1), '🛠 <b>Можно сделать кнопкой</b> — сначала бот покажет, что будет сделано');
+});

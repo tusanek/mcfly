@@ -70,7 +70,7 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false, now 
   // окно короткое — старые заметки обычно уже выполнены и сбивали бы приоритеты
   const since = now.getTime() - 3 * 24 * 3600_000;
   const notes = entries.slice(0, -5).filter((e) => {
-    const m = /^## (\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}) — заметка человека/.exec(e.trim());
+    const m = /^## (\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}) — заметка( человека)?(\s|$)/.exec(e.trim()); // из Telegram — «— заметка», руками — «— заметка человека»
     return m && new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime() >= since;
   });
   if (notes.length) L.push('', 'Заметки владельца за 3 дня (новее — важнее):', notes.map((e) => e.trim()).join('\n'));

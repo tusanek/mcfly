@@ -149,9 +149,11 @@ export function changeTitle(p, c, esc = (t) => t, { short = false } = {}) {
 /** Следующая открытая задача изменения (0.7.4): по ветке change/<имя>, иначе по tasks.md в main; null — открытых нет. */
 export function nextTask(projectDir, c) {
   const text = branchTasks(projectDir, c.name) ?? readText(path.join(c.dir, 'tasks.md'), '');
-  const m = /^\s*- \[ \]\s*(.+)$/m.exec(text || '');
-  // Только суть задачи: до первой точки с пробелом или открывающей скобки (дальше команда пишет файлы и ссылки на дизайн)
-  return m ? truncate(m[1].trim().split(/\.\s|\s\(/)[0].replace(/\.$/, ''), 90) : null;
+  const m = /^\s*[-*+] \[ \]\s*(.+)$/m.exec(text || '');
+  if (!m) return null;
+  // Только суть задачи: номер как есть, текст — до первой точки с пробелом или открывающей скобки (дальше файлы и ссылки на дизайн)
+  const [, num = '', rest] = /^(\d+(?:\.\d+)*\.?\s+)?(.*)$/.exec(m[1].trim());
+  return truncate(`${num}${rest.split(/\.\s|\s\(/)[0].replace(/\.$/, '')}`, 90);
 }
 /** Что будет в следующем прогоне: какие изменения команда продолжит или чего ей не хватает. esc — экранирование имён для HTML; label — подпись изменения. */
 export function nextRunText(work, pend, progress, esc = (t) => t, ideas = null, label = (c) => esc(c.name)) {
@@ -184,7 +186,7 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
       : `Вопрос <b>${escHtml(q.id)}</b>: ${escHtml(q.text)} — без ответа по умолчанию, команда ждёт вас`);
   }
   for (const c of pend) {
-    need.push(`Одобрить <b>${escHtml(c.name)}</b>: ${inline(proposalExcerpt(c, EXCERPT))}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
+    need.push(`Одобрить <b>${changeTitle(p, c, escHtml)}</b>${c.mcfly.idea ? ` (${escHtml(c.name)})` : ''}: ${inline(proposalExcerpt(c, EXCERPT))}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
   }
   // Пункты от человека — только из самого свежего отчёта с этим разделом (старые повторяются и устаревают) и из ночной передачи.
   const latest = [...reports].reverse().find(({ sec }) => sec['Нужно от человека'] || humanItems(sec).length);
@@ -272,7 +274,7 @@ export function summaryKeyboard(p, cfg) {
   const changes = listChanges(p.openspecChanges); const pend = pendingApprovals(changes);
   for (const c of pend) {
     // План по пункту списка (0.7.0): «отклонить» значит «не сейчас» — пункт уходит на обсуждение в сессии
-    if (fitsData(`ap:${c.name}`)) rows.push([{ text: `✅ Одобрить ${c.name}`, callback_data: `ap:${c.name}` }, { text: c.mcfly.idea ? '⏸ Не сейчас' : '❌ Отклонить', callback_data: `rj:${c.name}` }]);
+    if (fitsData(`ap:${c.name}`)) rows.push([{ text: `✅ Одобрить ${c.mcfly.idea ? `${c.mcfly.idea} (${c.name})` : c.name}`, callback_data: `ap:${c.name}` }, { text: c.mcfly.idea ? '⏸ Не сейчас' : '❌ Отклонить', callback_data: `rj:${c.name}` }]);
   }
   if (!pend.length && !approvedWithWork(changes).length && ideasBrief(p, cfg)?.proposed > 0) rows.push([{ text: '💡 Предложения', callback_data: 'il:1' }]);
   return rows;

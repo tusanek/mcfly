@@ -259,8 +259,9 @@ export function lastView(p, cfg) {
 /** Действия для «помощи»: какие спрашивают «✅ Да, выполнить», какие запускаются сразу (confirm: false). */
 function actionsHelp(cfg) {
   const titles = (list) => list.map((a) => escHtml(a.title)).join(', ');
-  const asks = listActions(cfg).filter((a) => a.confirm !== false); const now = listActions(cfg).filter((a) => a.confirm === false);
-  return [asks.length ? `с подтверждением «✅ Да, выполнить»: ${titles(asks)}` : '', now.length ? `сразу, без подтверждения: ${titles(now)}` : ''].filter(Boolean).join('; ');
+  const asks = listActions(cfg).filter((a) => a.confirm !== false);
+  const instant = listActions(cfg).filter((a) => a.confirm === false);
+  return [asks.length ? `с подтверждением «✅ Да, выполнить»: ${titles(asks)}` : '', instant.length ? `сразу, без подтверждения: ${titles(instant)}` : ''].filter(Boolean).join('; ');
 }
 /** ❓ Помощь: все команды бота с примерами. */
 export function helpView(p, cfg) {
@@ -367,7 +368,7 @@ export async function sendView(tg, chatId, view, p, cfg, opts = {}) {
     if (rows.length) {
       // Подпись — по тому, спрашивают ли предложенные действия подтверждение (confirm: false — запуск сразу, 0.7.2)
       const asks = rows.flat().map((b) => getAction(cfg, String(b.callback_data || '').replace(/^ac:/, ''))).filter(Boolean).map((a) => a.confirm !== false);
-      const note = asks.every((x) => !x) ? 'запускается сразу, итог придёт сообщением'
+      const note = asks.length && asks.every((x) => !x) ? 'запускается сразу, итог придёт сообщением'
         : asks.every(Boolean) ? 'сначала бот покажет, что будет сделано' : 'где нужно, бот сначала покажет, что будет сделано';
       await tg.sendMessage(chatId, `🛠 <b>Можно сделать кнопкой</b> — ${note}`, { html: true, keyboard: rows });
     }
