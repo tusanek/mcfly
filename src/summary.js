@@ -150,7 +150,8 @@ export function changeTitle(p, c, esc = (t) => t, { short = false } = {}) {
 export function nextTask(projectDir, c) {
   const text = branchTasks(projectDir, c.name) ?? readText(path.join(c.dir, 'tasks.md'), '');
   const m = /^\s*- \[ \]\s*(.+)$/m.exec(text || '');
-  return m ? truncate(m[1].trim(), 160) : null;
+  // Только суть задачи: до первой точки с пробелом или открывающей скобки (дальше команда пишет файлы и ссылки на дизайн)
+  return m ? truncate(m[1].trim().split(/\.\s|\s\(/)[0].replace(/\.$/, ''), 90) : null;
 }
 /** Что будет в следующем прогоне: какие изменения команда продолжит или чего ей не хватает. esc — экранирование имён для HTML; label — подпись изменения. */
 export function nextRunText(work, pend, progress, esc = (t) => t, ideas = null, label = (c) => esc(c.name)) {

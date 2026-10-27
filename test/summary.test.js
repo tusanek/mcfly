@@ -329,3 +329,15 @@ test('0.7.4: сводка — изменения с номером пункта'
   assert.match(html, /🔧 I1 «Убрать «Прочее»» — 1\/2/);
   assert.match(html, /команда продолжит I1 \(1\/2\)/);
 });
+
+import { nextTask } from '../src/summary.js';
+test('0.7.4: следующая задача — только суть: до первой точки или скобки, не длиннее 90 знаков', () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'x', { tasks: '- [x] 1.1 Готово\n- [ ] 1.2 Замок и атомарная запись файла состояния. Файлы: `scripts/docker-pull.sh`, `Test.java`. По design.md\n' });
+  addChange(dir, 'y', { tasks: '- [ ] 2.1 Две части страницы «На проверку» (D3, D4; требование docs-render)\n' });
+  addChange(dir, 'z', { tasks: `- [ ] 3.1 ${'длинно '.repeat(30)}\n` });
+  const [cx, cy, cz] = listChanges(p.openspecChanges);
+  assert.equal(nextTask(p.projectDir, cx), '1.2 Замок и атомарная запись файла состояния');
+  assert.equal(nextTask(p.projectDir, cy), '2.1 Две части страницы «На проверку»');
+  assert.ok(nextTask(p.projectDir, cz).length <= 90);
+});
