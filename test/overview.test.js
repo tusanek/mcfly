@@ -301,7 +301,7 @@ test('0.7.0: клавиатура — третий ряд «Предложени
 test('0.7.0: «Статус» — план по пункту само не одобрится; без работы — подсказка выбрать предложение', () => {
   const dir = bareProject(); const p = paths(dir);
   addChange(dir, 'auto-release', { meta: { schema: 'spec-driven', mcfly: { approval: 'pending', category: 'spec', requested_at: new Date().toISOString(), idea: 'I1' } } });
-  assert.match(statusView(p, cfg).join('\n'), /⏳ <b>auto-release<\/b> — ждёт вашего решения, само не одобрится \(по I1\)/);
+  assert.match(statusView(p, cfg).join('\n'), /⏳ <b>I1<\/b> — ждёт вашего решения, само не одобрится\n {3}<i>auto-release<\/i>/);
   const dir2 = bareProject(); const p2 = paths(dir2);
   seed(p2, [{ title: 'Ваша', source: 'owner-note' }, { title: 'Команды' }]);
   assert.match(statusView(p2, cfg).join('\n'), /работы нет — 💡 предложений 2 \(ваших 1\): выберите в «Предложениях»/);
@@ -338,4 +338,18 @@ test('0.7.2: «помощь» — какие действия с подтвер�
   const c = parseConfig('project: x\nactions:\n  deploy:\n    title: "🚀 Выкатить"\n    run: "true"\n  backup:\n    title: "📦 Копия данных"\n    run: "true"\n    confirm: false\n');
   const html = helpView(paths(bareProject()), c).join('\n');
   assert.match(html, /с подтверждением «✅ Да, выполнить»: 🚀 Выкатить; сразу, без подтверждения: 📦 Копия данных; итог приходит сообщением/);
+});
+
+test('0.7.4: «Статус» — у изменения номер и название пункта, имя и следующая задача', () => {
+  const dir = bareProject(); const p = paths(dir);
+  seed(p, [{ title: '«Как проверять»: убрать фразу' }]);
+  const tasks = '- [x] 1.1 Поменять текст\n- [ ] 2.1 Поправить тест текста\n- [ ] 2.2 Ещё\n';
+  addChange(dir, 'review-guide-reason-phrase', { tasks, meta: { mcfly: { approval: 'approved', idea: 'I1' } } });
+  addChange(dir, 'plain-change', { tasks, meta: { mcfly: { approval: 'approved' } } });
+  addChange(dir, 'by-idea-pending', { meta: { mcfly: { approval: 'pending', idea: 'I1', requested_at: new Date().toISOString() } } });
+  const html = statusView(p, cfg).join('\n');
+  assert.match(html, /🔧 <b>I1 ««Как проверять»: убрать фразу»<\/b> — одобрено, задач 1\/3\n {3}<i>review-guide-reason-phrase<\/i> · дальше: 2\.1 Поправить тест текста/);
+  assert.match(html, /🔧 <b>plain-change<\/b> — одобрено, задач 1\/3\n {3}дальше: 2\.1 Поправить тест текста/);
+  assert.match(html, /⏳ <b>I1 ««Как проверять»: убрать фразу»<\/b> — ждёт вашего решения, само не одобрится\n {3}<i>by-idea-pending<\/i>/);
+  assert.match(html, /Следующий прогон:<\/b>.* — команда продолжит plain-change \(1\/3\), I1 \(1\/3\)/);
 });

@@ -10,7 +10,7 @@ import { currentRun } from './runner.js';
 import { hasActions, listActions, getAction } from './action-config.js';
 import { currentAction, offerKeyboard, isTrusted } from './actions.js';
 import { loadIdeas, visibleIdeas, ideasBrief } from './ideas.js';
-import { escHtml, inline, splitHtml, reportSections, plainWords, humanItems, approvalCovered, isNone, changeProgress, nextRunText, runsByStatus, STATUS_RU, summaryKeyboard } from './summary.js';
+import { escHtml, inline, splitHtml, reportSections, plainWords, humanItems, approvalCovered, isNone, changeProgress, nextRunText, runsByStatus, STATUS_RU, summaryKeyboard, changeTitle, nextTask } from './summary.js';
 
 /**
  * Команды обзора для владельца в Telegram: «статус» (раньше «где мы»), «цели», «статистика», «последний прогон», «помощь».
@@ -97,13 +97,18 @@ export function lastUsageAt(p) {
   const r = runs(p).filter((x) => x.usage && x.usage.seven_day != null).at(-1);
   return r ? { usage: r.usage, at: new Date(r.ended_at || r.started_at) } : null;
 }
+// 0.7.4: изменение по пункту списка — «I40 «название»», под ним имя изменения; у одобренного с задачами — следующая задача
 const changeLine = (p, cfg, c) => {
   const st = c.mcfly.approval;
-  if (st === 'pending' && c.mcfly.idea) return `⏳ <b>${escHtml(c.name)}</b> — ждёт вашего решения, само не одобрится (по ${escHtml(c.mcfly.idea)})`;
-  if (st === 'pending') return `⏳ <b>${escHtml(c.name)}</b> — ждёт одобрения${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`;
-  if (st === 'rejected') return `⛔ ${escHtml(c.name)} — отклонено`;
-  if (st === 'approved') return `${c.tasksOpen > 0 ? '🔧' : '🏁'} <b>${escHtml(c.name)}</b> — одобрено, задач ${changeProgress(p.projectDir, c)}`;
-  return `⚪ ${escHtml(c.name)} — одобрение не запрошено, задач ${changeProgress(p.projectDir, c)}`;
+  const title = changeTitle(p, c, escHtml);
+  const next = st === 'approved' ? nextTask(p.projectDir, c) : null;
+  const sub = [c.mcfly.idea ? `<i>${escHtml(c.name)}</i>` : '', next ? `дальше: ${escHtml(next)}` : ''].filter(Boolean).join(' · ');
+  const tail = sub ? `\n   ${sub}` : '';
+  if (st === 'pending' && c.mcfly.idea) return `⏳ <b>${title}</b> — ждёт вашего решения, само не одобрится${tail}`;
+  if (st === 'pending') return `⏳ <b>${title}</b> — ждёт одобрения${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}${tail}`;
+  if (st === 'rejected') return `⛔ ${title} — отклонено${tail}`;
+  if (st === 'approved') return `${c.tasksOpen > 0 ? '🔧' : '🏁'} <b>${title}</b> — одобрено, задач ${changeProgress(p.projectDir, c)}${tail}`;
+  return `⚪ ${title} — одобрение не запрошено, задач ${changeProgress(p.projectDir, c)}${tail}`;
 };
 const toParts = (html) => splitHtml(html, MAX);
 
@@ -142,7 +147,7 @@ export function statusView(p, cfg, { now = new Date() } = {}) {
   }
 
   const slot = nextSlot(cfg.schedule.slots, now);
-  const plan = nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => changeProgress(p.projectDir, c), escHtml, ideasBrief(p, cfg));
+  const plan = nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => changeProgress(p.projectDir, c), escHtml, ideasBrief(p, cfg), (c) => changeTitle(p, c, escHtml, { short: true }));
   L.push('', `<b>🗓 Следующий прогон:</b> ${slot ? `${fmtShort(slot)} по расписанию` : 'расписания нет'} — ${plan}`);
 
   const u = lastUsageAt(p);

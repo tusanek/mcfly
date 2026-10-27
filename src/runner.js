@@ -17,7 +17,7 @@ import { listChanges, expireApprovals, approvedWithWork, pendingApprovals, propo
 import { pullAnswers, errorLine, spawnDayRun } from './pull.js';
 import { createTelegram } from './telegram.js';
 import { ensureVpn } from './vpn.js';
-import { STATUS_RU, plainWords, reportSections, humanItems, approvalCovered, isNone, nextRunText, changeProgress, summaryKeyboard } from './summary.js';
+import { STATUS_RU, plainWords, reportSections, humanItems, approvalCovered, isNone, nextRunText, changeProgress, summaryKeyboard, changeTitle } from './summary.js';
 import { ideasBrief, loadIdeas, saveIdeas, syncDoneIdeas } from './ideas.js';
 import { enqueueNotice } from './notices.js';
 import { dirtyFiles, teamWorktrees, branchProgress, changedTrackedFiles } from './git.js';
@@ -214,7 +214,7 @@ export function finishMessage(cfg, record, p) {
   const done = (sec['Сделано'] || []).filter((l) => !isNone(l));
   const need = humanItems(sec).filter((l) => !approvalCovered(l, changes));
   const decide = decisionLines(cfg, p, changes);
-  const next = `Дальше: ${record.chain && record.chain.startsWith('следующий') ? `${record.chain}` : nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => changeProgress(p.projectDir, c), undefined, ideasBrief(p, cfg))}${record.chain && !record.chain.startsWith('следующий') ? ` (${record.chain})` : ''}`;
+  const next = `Дальше: ${record.chain && record.chain.startsWith('следующий') ? `${record.chain}` : nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => changeProgress(p.projectDir, c), undefined, ideasBrief(p, cfg), (c) => changeTitle(p, c, undefined, { short: true }))}${record.chain && !record.chain.startsWith('следующий') ? ` (${record.chain})` : ''}`;
   // Решения — главное: если не влезает, урезается «Сделано», а не вопросы.
   const plain = plainWords(sec);
   const assemble = (doneMax) => {

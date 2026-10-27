@@ -61,8 +61,10 @@ export function teamWorktrees(projectDir) {
 }
 
 /** Задачи изменения в невлитой ветке change/<имя> ({done, open}) или null, если ветки нет. */
+/** Текст tasks.md изменения на ветке change/<имя> или null, если ветки нет. */
+export function branchTasks(projectDir, name) { return git(projectDir, ['show', `change/${name}:openspec/changes/${name}/tasks.md`]); }
 export function branchProgress(projectDir, name) {
-  const tasks = git(projectDir, ['show', `change/${name}:openspec/changes/${name}/tasks.md`]);
+  const tasks = branchTasks(projectDir, name);
   return tasks === null ? null : countTasks(tasks);
 }
 

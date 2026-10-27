@@ -7,7 +7,7 @@ import { loadIdeas, ideasBrief } from './ideas.js';
 import { expectedSlots, slotKey } from './window.js';
 import { loadState, saveState } from './state.js';
 import { createTelegram, chunk } from './telegram.js';
-import { branchProgress } from './git.js';
+import { branchProgress, branchTasks } from './git.js';
 import { autoDefault } from './config.js';
 import { latestShift } from './shift-files.js';
 import { enqueueNotice } from './notices.js';
@@ -135,9 +135,26 @@ export function changeProgress(projectDir, c) {
   const x = branchProgress(projectDir, c.name) || { done: c.tasksDone, open: c.tasksOpen };
   return `${x.done}/${x.done + x.open}`;
 }
-/** Что будет в следующем прогоне: какие изменения команда продолжит или чего ей не хватает. esc — экранирование имён для HTML. */
-export function nextRunText(work, pend, progress, esc = (t) => t, ideas = null) {
-  if (work.length) return `команда продолжит ${work.map((c) => `${esc(c.name)} (${progress(c)})`).join(', ')}`;
+/**
+ * Название изменения для человека (0.7.4): «I40 «название пункта»», если изменение сделано по пункту списка предложений;
+ * short — только номер пункта. Иначе — имя изменения. esc — экранирование для HTML.
+ */
+export function changeTitle(p, c, esc = (t) => t, { short = false } = {}) {
+  const id = c.mcfly?.idea;
+  if (!id) return esc(c.name);
+  if (short) return esc(id);
+  const x = loadIdeas(p).ideas.find((i) => String(i.id) === String(id));
+  return x ? `${esc(id)} «${esc(truncate(String(x.title || ''), 80))}»` : esc(id);
+}
+/** Следующая открытая задача изменения (0.7.4): по ветке change/<имя>, иначе по tasks.md в main; null — открытых нет. */
+export function nextTask(projectDir, c) {
+  const text = branchTasks(projectDir, c.name) ?? readText(path.join(c.dir, 'tasks.md'), '');
+  const m = /^\s*- \[ \]\s*(.+)$/m.exec(text || '');
+  return m ? truncate(m[1].trim(), 160) : null;
+}
+/** Что будет в следующем прогоне: какие изменения команда продолжит или чего ей не хватает. esc — экранирование имён для HTML; label — подпись изменения. */
+export function nextRunText(work, pend, progress, esc = (t) => t, ideas = null, label = (c) => esc(c.name)) {
+  if (work.length) return `команда продолжит ${work.map((c) => `${label(c)} (${progress(c)})`).join(', ')}`;
   if (ideas?.taken?.length) return `план по ${ideas.taken.map(esc).join(', ')}`;
   if (pend.length) return `работы нет — одобрите ${pend.map((c) => esc(c.name)).join(', ')}`;
   if (ideas?.proposed > 0) return `работы нет — 💡 предложений ${ideas.proposed} (ваших ${ideas.owner}): выберите в «Предложениях»`;
@@ -194,7 +211,7 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   // 3. Изменения и следующий прогон.
   L.push('', '<b>📦 Изменения</b>');
   const period = aggregate(records, { since });
-  const ch = [...work.map((c) => `🔧 ${escHtml(c.name)} — ${progress(c)}`), ...pend.map((c) => `⏳ ${escHtml(c.name)} — ждёт одобрения`)];
+  const ch = [...work.map((c) => `🔧 ${changeTitle(p, c, escHtml)} — ${progress(c)}`), ...pend.map((c) => `⏳ ${changeTitle(p, c, escHtml)} — ждёт одобрения`)];
   const done = [period.events.changes_archived ? `изменений ${period.events.changes_archived}` : '', period.events.tasks_done ? `задач ${period.events.tasks_done}` : ''].filter(Boolean);
   if (done.length) ch.push(`🏁 За период завершено: ${done.join(', ')}`);
   L.push(...(ch.length ? ch : ['Открытых изменений нет']));
@@ -202,7 +219,7 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
     const fresh = loadIdeas(p).ideas.filter((x) => new Date(x.created_at) > since).map((x) => x.id);
     if (fresh.length) L.push(`💡 Новые предложения: ${fresh.map(escHtml).join(', ')}`);
   }
-  L.push('', `<b>🗓 Следующий прогон:</b> ${nextRunText(work, pend, progress, escHtml, ideasBrief(p, cfg))}`);
+  L.push('', `<b>🗓 Следующий прогон:</b> ${nextRunText(work, pend, progress, escHtml, ideasBrief(p, cfg), (c) => changeTitle(p, c, escHtml, { short: true }))}`);
   if (nightNew) {
     const lines = shiftSection(nightNew.path, 'Предложение на день');
     if (lines.length) L.push('', '<b>🌅 Предложение на день</b>', ...lines.map(inline));

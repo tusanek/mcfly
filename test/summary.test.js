@@ -320,3 +320,12 @@ test('0.7.0: номера пунктов из файла экранируютс�
   const html = composeSummary(p, cfg, { now: new Date(2026, 9, 25, 10), since: new Date(2026, 9, 24, 10) });
   assert.doesNotMatch(html, /I9<i>/, 'кривой номер не попадает в HTML: файл с ним не читается');
 });
+
+test('0.7.4: сводка — изменения с номером пункта', () => {
+  const dir = bareProject(); const p = paths(dir);
+  const d = li(p); ai(d, { title: 'Убрать «Прочее»', benefit: 'y', source: 'owner-note', size: 'S' }); si(p, d);
+  addChange(dir, 'review-page-no-other', { meta: { mcfly: { approval: 'approved', idea: 'I1' } } });
+  const html = composeSummary(p, cfg, { now: new Date(2026, 9, 27, 10), since: new Date(2026, 9, 26, 10) });
+  assert.match(html, /🔧 I1 «Убрать «Прочее»» — 1\/2/);
+  assert.match(html, /команда продолжит I1 \(1\/2\)/);
+});
