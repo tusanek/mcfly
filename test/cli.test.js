@@ -169,3 +169,35 @@ test('0.7.0: mcfly ideas set — в прогоне команды запреще
   const bad = cli(['ideas', 'set', 'I1', 'done'], dir);
   assert.equal(bad.status, 1); assert.match(bad.stderr, /proposed \| taken \| rejected/);
 });
+
+test('0.7.6: approval pause/resume — только человек, дата в будущем, только одобренное; коммит метаданных', () => {
+  const dir = tmpDir();
+  cli(['init', '--name', 'demo'], dir);
+  addChange(dir, 'zen', { tasks: '- [ ] 1.1\n' }); addChange(dir, 'raw', { tasks: '- [ ] 1.1\n' });
+  gitRepo(dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'проект');
+  assert.equal(cli(['approval', 'set', 'zen', 'approved'], dir).status, 0);
+  const inRun = spawnSync(process.execPath, [bin, 'approval', 'pause', 'zen', '--until', '2099-02-01'], { cwd: dir, encoding: 'utf8', env: { ...process.env, MCFLY_PROJECT_DIR: '', MCFLY_RUN_ID: '20260930-0000' } });
+  assert.equal(inRun.status, 1); assert.match(inRun.stderr, /Откладывает только человек/);
+  for (const [args, re] of [[['approval', 'pause', 'zen'], /--until ГГГГ-ММ-ДД/], [['approval', 'pause', 'zen', '--until', '01.02.2099'], /--until ГГГГ-ММ-ДД/], [['approval', 'pause', 'zen', '--until', '2020-01-01'], /уже прошла/], [['approval', 'pause', 'raw', '--until', '2099-02-01'], /не одобрено/]]) {
+    const r = cli(args, dir); assert.equal(r.status, 1, args.join(' ')); assert.match(r.stderr, re);
+  }
+  const r = cli(['approval', 'pause', 'zen', '--until', '2099-02-01', '--note', 'ждём версию с весами'], dir);
+  assert.equal(r.status, 0); assert.match(r.stdout, /zen: отложено до 01\.02\.2099/);
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore(zen): отложено до 2099-02-01');
+  const meta = fs.readFileSync(path.join(dir, 'openspec', 'changes', 'zen', '.openspec.yaml'), 'utf8');
+  assert.match(meta, /paused_until: 2099-02-01/); assert.match(meta, /pause_note: ждём версию с весами/); assert.match(meta, /approval: approved/);
+  const back = cli(['approval', 'resume', 'zen'], dir);
+  assert.equal(back.status, 0); assert.match(back.stdout, /zen: снова в работе/);
+  assert.doesNotMatch(fs.readFileSync(path.join(dir, 'openspec', 'changes', 'zen', '.openspec.yaml'), 'utf8'), /paused_until|pause_note|paused_at/);
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore(zen): возвращено в работу');
+});
+test('0.7.6: metric add — ключ «tasks_done 7» и нечисловое значение отклоняются с подсказкой', () => {
+  const dir = tmpDir();
+  cli(['init', '--name', 'demo'], dir);
+  const bad = cli(['metric', 'add', '--key', 'tasks_done 7'], dir);
+  assert.equal(bad.status, 1); assert.match(bad.stderr, /mcfly metric add --key tasks_done --value <n>/);
+  const nan = cli(['metric', 'add', '--key', 'tasks_done', '--value', 'семь'], dir);
+  assert.equal(nan.status, 1); assert.match(nan.stderr, /--value — число/);
+  assert.equal(cli(['metric', 'add', '--key', 'tasks_done', '--value', '7'], dir).status, 0);
+  assert.equal(fs.readFileSync(path.join(dir, 'mcfly', 'metrics.jsonl'), 'utf8').trim().split('\n').length, 1);
+});

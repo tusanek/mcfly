@@ -55,7 +55,24 @@ export function expireApprovals(changes, cfg, now = new Date()) {
   return auto;
 }
 export const pendingApprovals = (changes) => changes.filter((c) => c.mcfly.approval === 'pending');
-export const approvedWithWork = (changes) => changes.filter((c) => c.mcfly.approval === 'approved' && c.tasksOpen > 0);
+/** Дата ГГГГ-ММ-ДД, с которой отложенное изменение снова в работе (0.7.6); null — не отложено или дата кривая. */
+export function pausedUntil(change) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(change.mcfly?.paused_until || ''));
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+}
+export const isPaused = (change, now = new Date()) => { const d = pausedUntil(change); return Boolean(d) && now < d; };
+const hasWork = (c) => c.mcfly.approval === 'approved' && c.tasksOpen > 0;
+/** Одобренные с открытыми задачами — работа команды; отложенные владельцем до даты (mcfly.paused_until) в неё не входят. */
+export const approvedWithWork = (changes, now = new Date()) => changes.filter((c) => hasWork(c) && !isPaused(c, now));
+export const pausedChanges = (changes, now = new Date()) => changes.filter((c) => hasWork(c) && isPaused(c, now));
+/** Отложить изменение до даты (решение человека): команда его не берёт, сводка показывает «отложено до». */
+export function setPause(change, until, note = '', now = new Date()) {
+  return writeMeta(change, { ...change.mcfly, paused_until: until, pause_note: note, paused_at: now.toISOString() });
+}
+export function clearPause(change) {
+  const { paused_until: _u, pause_note: _n, paused_at: _a, ...rest } = change.mcfly;
+  return writeMeta(change, rest);
+}
 /** Первый абзац текста proposal: заголовки markdown («# …», «## Why») и пустые строки пропускаются. */
 export function proposalExcerpt(change, n = 600) {
   const para = [];

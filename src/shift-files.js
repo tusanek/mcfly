@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readText, writeText, pad2, fmtLocal } from './util.js';
 import { branchProgress, teamWorktrees, shiftBranches, branchSha } from './git.js';
-import { listChanges, priorityOf } from './approvals.js';
+import { listChanges, priorityOf, isPaused } from './approvals.js';
 
 const NAME = /^(\d{8}-\d{4})-(day|night)(?:-(\d+))?\.md$/;
 export const REQUIRED = ['# Смена:', '## Изменения', ['## Порядок', '## Предложение на день'], '## Нужны решения человека', '## Заметки'];
@@ -63,7 +63,8 @@ export function renderAutoHandoff(p, kind, now, { runs = [] } = {}) {
   const L = [`# Смена: ${kind === 'day' ? 'день → ночь' : 'ночь → день'}, ${fmtLocal(now)} (источник: авто)`];
   if (kind === 'night' && runs.length) L.push(`Прогоны: ${runs.map((id) => `runs/${id}`).join(', ')}`);
   L.push('## Изменения');
-  const active = approved.filter((c) => { const b = branchProgress(p.projectDir, c.name); return (b ? b.open : c.tasksOpen) > 0; });
+  const paused = approved.filter((c) => isPaused(c, now));
+  const active = approved.filter((c) => { const b = branchProgress(p.projectDir, c.name); return !paused.includes(c) && (b ? b.open : c.tasksOpen) > 0; });
   for (const c of active) {
     const b = branchProgress(p.projectDir, c.name);
     const x = b || { done: c.tasksDone, open: c.tasksOpen };
@@ -75,6 +76,7 @@ export function renderAutoHandoff(p, kind, now, { runs = [] } = {}) {
       L.push(`- Не трогать: ${s.branch} — не сдано днём (коммитов ${s.ahead}${s.dirty ? `, незакоммиченных файлов ${s.dirty}` : ''}), не повторять эту работу`);
     }
   }
+  for (const c of paused) L.push(`### ${c.name} — отложено владельцем до ${c.mcfly.paused_until}: не брать`);
   if (!active.length) L.push('- одобренных изменений с открытыми задачами нет');
   L.push(kind === 'day' ? '## Порядок' : '## Предложение на день');
   L.push(...(active.length ? active.map((c, i) => `${i + 1}. ${c.name}`) : ['- нет']));

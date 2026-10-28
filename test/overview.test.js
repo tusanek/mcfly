@@ -353,3 +353,13 @@ test('0.7.4: «Статус» — у изменения номер и назва
   assert.match(html, /⏳ <b>I1 ««Как проверять»: убрать фразу»<\/b> — ждёт вашего решения, само не одобрится\n {3}<i>by-idea-pending<\/i>/);
   assert.match(html, /Следующий прогон:<\/b>.* — команда продолжит plain-change \(1\/3\), I1 \(1\/3\)/);
 });
+
+import { setPause as sp } from '../src/approvals.js';
+test('0.7.6: «Статус» — отложенное изменение «⏸ … отложено до», в следующий прогон не идёт', () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'zen', { tasks: '- [ ] 1.1\n', meta: { schema: 'spec-driven', mcfly: { approval: 'approved', idea: 'I52' } } });
+  sp(listChanges(p.openspecChanges)[0], '2027-02-01', '', new Date(2026, 9, 28));
+  const html = statusView(p, cfg, { now: new Date(2026, 9, 28, 10, 0) }).join('\n');
+  assert.match(html, /⏸ <b>I52<\/b> — отложено до 01\.02\.2027, задач 0\/1\n   <i>zen<\/i>/);
+  assert.doesNotMatch(html, /продолжит I52/);
+});

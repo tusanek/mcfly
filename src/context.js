@@ -1,6 +1,6 @@
 import { readText, fmtShort, exists, truncate } from './util.js';
 import { loadQuestions, openQuestions } from './questions.js';
-import { listChanges, pendingApprovals, approvedWithWork, priorityOf } from './approvals.js';
+import { listChanges, pendingApprovals, approvedWithWork, pausedChanges, priorityOf } from './approvals.js';
 import { branchProgress, teamWorktrees } from './git.js';
 import { autoDefault } from './config.js';
 import { activeDayHandoff, validateHandoff } from './shift-files.js';
@@ -31,7 +31,12 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false, now 
   const pend = pendingApprovals(changes);
   L.push('', `Ожидают одобрения (${pend.length}):`);
   for (const c of pend) L.push(`- ${c.name} (запрошено ${c.mcfly.requested_at ? fmtShort(new Date(c.mcfly.requested_at)) : '?'})`);
-  const other = changes.filter((c) => !work.includes(c) && !pend.includes(c));
+  const paused = pausedChanges(changes);
+  if (paused.length) {
+    L.push('', `Отложены владельцем до даты — не брать, не планировать заново (${paused.length}):`);
+    for (const c of paused) L.push(`- ${c.name}: до ${c.mcfly.paused_until}${c.mcfly.pause_note ? ` — ${truncate(String(c.mcfly.pause_note).replace(/\s+/g, ' '), 160)}` : ''}`);
+  }
+  const other = changes.filter((c) => !work.includes(c) && !pend.includes(c) && !paused.includes(c));
   if (other.length) { L.push('', 'Прочие изменения:'); for (const c of other) L.push(`- ${c.name}: одобрение=${c.mcfly.approval || 'не запрошено'}, задач открыто ${c.tasksOpen}`); }
   const worktrees = teamWorktrees(p.projectDir);
   const team = worktrees.filter((w) => w.team); const others = worktrees.filter((w) => !w.team);

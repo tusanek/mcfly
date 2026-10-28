@@ -105,3 +105,19 @@ test('0.7.5: заметки из Telegram («— заметка») тоже по
   fs.writeFileSync(p.answers, ['# Ответы', '## 2026-10-25 16:10 — заметка\nИЗ-ТЕЛЕГРАМА', ...Array.from({ length: 6 }, (_, i) => `## 2026-10-26 1${i}:00 — одобрено c-${i}\n(без комментария)`)].join('\n\n') + '\n');
   assert.match(buildContext(p, cfg, { now: new Date(2026, 9, 26, 17, 0) }), /Заметки владельца за 3 дня[^\n]*\n## 2026-10-25 16:10 — заметка\nИЗ-ТЕЛЕГРАМА/);
 });
+
+import { setPause } from '../src/approvals.js';
+import { renderAutoHandoff } from '../src/shift-files.js';
+test('0.7.6: отложенное до даты изменение — в контексте отдельным списком «не брать», не в работе; в авто-передаче — «не брать»', () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'zen', { tasks: '- [ ] 1.1\n- [ ] 2.1\n' }); addChange(dir, 'ddm', { tasks: '- [ ] a\n' });
+  for (const c of listChanges(p.openspecChanges)) { requestApproval(c); setApproval(c, 'approved', 'human'); }
+  setPause(listChanges(p.openspecChanges).find((c) => c.name === 'zen'), '2099-02-01', 'ждём версию\nс весами');
+  const text = buildContext(p, cfg);
+  assert.match(text, /Одобренные изменения с открытыми задачами \(1\):\n- ddm/);
+  assert.match(text, /Отложены владельцем до даты — не брать, не планировать заново \(1\):\n- zen: до 2099-02-01 — ждём версию с весами/);
+  assert.doesNotMatch(text, /Прочие изменения:[\s\S]*zen/);
+  const handoff = renderAutoHandoff(p, 'day', new Date(2026, 9, 28, 2, 0));
+  assert.match(handoff, /### zen — отложено владельцем до 2099-02-01: не брать/);
+  assert.match(handoff, /## Порядок\n1\. ddm\n/);
+});

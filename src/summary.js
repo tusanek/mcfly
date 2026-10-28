@@ -1,8 +1,8 @@
 import path from 'node:path';
-import { readText, fmtShort, fmtDuration, truncate, pad2 } from './util.js';
+import { readText, fmtShort, fmtDay, fmtDuration, truncate, pad2 } from './util.js';
 import { readMetrics, aggregate, formatEvents, runStats } from './metrics.js';
 import { loadQuestions, openQuestions } from './questions.js';
-import { listChanges, pendingApprovals, approvedWithWork, proposalExcerpt, approvalDeadline, isAutoApprovable } from './approvals.js';
+import { listChanges, pendingApprovals, approvedWithWork, pausedChanges, pausedUntil, proposalExcerpt, approvalDeadline, isAutoApprovable } from './approvals.js';
 import { loadIdeas, ideasBrief } from './ideas.js';
 import { expectedSlots, slotKey } from './window.js';
 import { loadState, saveState } from './state.js';
@@ -11,6 +11,7 @@ import { branchProgress, branchTasks } from './git.js';
 import { autoDefault } from './config.js';
 import { latestShift } from './shift-files.js';
 import { enqueueNotice } from './notices.js';
+import { listActions } from './action-config.js';
 
 export const STATUS_RU = { ok: 'ок', missed: 'пропущен', error: 'ошибка', timeout: 'остановлен по времени', quota: 'остановлен: лимит квоты', network: 'не выполнен: нет доступа к API (VPN?)', locked: 'не запущен (шёл другой прогон)' };
 
@@ -97,12 +98,34 @@ const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * тоже лишний — ждущие одобрения стоят сверху, а когда их нет, строка «Следующий прогон» сама подсказывает одобрить изменение.
  */
 export function approvalCovered(item, changes) {
-  if (!/^\s*одобр/i.test(item)) return false;
+  const lead = /^\s*одобр/i.test(item);
+  // 0.7.6: и «Нажать кнопку одобрения X» — просьба об одобрении, если в ней названо изменение («выкатить после одобрения X» — нет)
+  if (!lead && !/^\s*наж(ать|мите)\s+кнопк[уи]\s+одобрени/i.test(item)) return false;
   const named = changes.filter((c) => new RegExp(`(^|[^\\w-])${escRe(c.name)}($|[^\\w-])`).test(item));
   // Без имён лишний только пункт про изменения вообще; «одобрить выкат на прод» — настоящая просьба, остаётся.
-  if (!named.length) return /изменени/i.test(item);
+  if (!named.length) return lead && /изменени/i.test(item);
   return named.every((c) => c.mcfly.approval);
 }
+const IDEA_ID = /(?<![\p{L}\p{N}])I\d+(?!\p{N})/gu;
+/**
+ * «Решить по I54, I55», «Одобрить или отклонить I53» лишние, когда ни один названный пункт уже не ждёт решения в списке (0.7.6):
+ * взятый, сделанный, отклонённый — решён; спланированный ждёт одобрения плана — это пункт «Одобрить» сверху сводки.
+ */
+export function ideasCovered(item, ideas) {
+  if (!/^\s*(решить|одобрить|отклонить|взять|выбрать)/i.test(item)) return false;
+  const ids = [...new Set(item.match(IDEA_ID) || [])];
+  if (!ids.length) return false;
+  return ids.every((id) => { const x = ideas.find((i) => String(i.id) === id); return x && x.status !== 'proposed'; });
+}
+/** Название кнопки без значка: «🚀 Выкатить» → «Выкатить». */
+const bareTitle = (t) => String(t || '').replace(/^[^\p{L}\p{N}$]+/u, '').trim();
+/** «Нажать «🚀 Выкатить»» лишний, когда все названные в пункте кнопки владелец уже нажал после отчёта и они прошли успешно. */
+export function actionsCovered(item, acts, records, after) {
+  const named = acts.filter((a) => bareTitle(a.title).length >= 4 && item.includes(bareTitle(a.title)));
+  return named.length > 0 && named.every((a) => records.some((r) => r.type === 'action' && r.id === a.id && r.status === 'ok' && new Date(r.started_at) > after));
+}
+/** Конец прогона: ended_at, иначе начало плюс длительность. */
+const runEnd = (r) => (r.ended_at ? new Date(r.ended_at) : new Date(new Date(r.started_at).getTime() + Number(r.duration_ms || 0)));
 /** Разбивает HTML по строкам на куски не длиннее max, не разрывая <blockquote>; кусок длиннее max — простым текстом. */
 export function splitHtml(html, max = TG_MAX) {
   const units = []; let cur = []; let depth = 0;
@@ -170,13 +193,17 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   const changes = listChanges(p.openspecChanges);
   const questions = openQuestions(loadQuestions(p));
   const pend = pendingApprovals(changes);
-  const work = approvedWithWork(changes);
+  const work = approvedWithWork(changes, now);
   const progress = (c) => changeProgress(p.projectDir, c);
   const reports = runs.filter((r) => !['missed', 'locked'].includes(r.status))
     .map((r) => ({ r, sec: reportSections(readText(path.join(p.runs, r.id || '', 'summary.md'), '')) })).filter((x) => x.sec)
     .sort((a, b) => new Date(a.r.started_at) - new Date(b.r.started_at));
   const night = latestShift(p, 'night'); const day = latestShift(p, 'day');
   const nightNew = night && (!since || shiftTime(night) > since) ? night : null;
+  // 0.7.6: передача смены устарела, если после её прогонов был отчёт новее — пункты и план дня берём из него.
+  const nightText = nightNew ? readText(nightNew.path, '') : '';
+  const nightCurrent = nightNew && !reports.some(({ r }) => new Date(r.started_at) > shiftTime(nightNew) && !nightText.includes(String(r.id))) ? nightNew : null;
+  const ideaList = loadIdeas(p).ideas;
 
   // 1. Что нужно от человека — первым и с номерами.
   const need = [];
@@ -188,10 +215,13 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   for (const c of pend) {
     need.push(`Одобрить <b>${changeTitle(p, c, escHtml)}</b>${c.mcfly.idea ? ` (${escHtml(c.name)})` : ''}: ${inline(proposalExcerpt(c, EXCERPT))}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
   }
-  // Пункты от человека — только из самого свежего отчёта с этим разделом (старые повторяются и устаревают) и из ночной передачи.
+  // Пункты от человека — только из самого свежего отчёта с этим разделом (старые повторяются и устаревают) и из ночной передачи,
+  // если отчёта новее неё нет. Сделанное после отчёта (одобрено, решено по пунктам, кнопка нажата) — не показываем.
   const latest = [...reports].reverse().find(({ sec }) => sec['Нужно от человека'] || humanItems(sec).length);
-  const fromShift = nightNew ? shiftSection(nightNew.path, 'Нужны решения человека', 20).map((l) => l.replace(/^([-*]|\d+\.)\s+/, '')).filter((l) => !isNone(l)) : [];
-  const items = [...(latest ? humanItems(latest.sec) : []), ...fromShift].filter((x) => !approvalCovered(x, changes));
+  const fromShift = nightCurrent ? shiftSection(nightCurrent.path, 'Нужны решения человека', 20).map((l) => l.replace(/^([-*]|\d+\.)\s+/, '')).filter((l) => !isNone(l)) : [];
+  const acts = listActions(cfg); const after = latest ? runEnd(latest.r) : (since || new Date(0));
+  const items = [...(latest ? humanItems(latest.sec) : []), ...fromShift]
+    .filter((x) => !approvalCovered(x, changes) && !ideasCovered(x, ideaList) && !actionsCovered(x, acts, records, after));
   for (const item of dedupe(items)) need.push(inline(item));
   const L = [`☀️ <b>${escHtml(cfg.project)}</b> · ${pad2(now.getDate())}.${pad2(now.getMonth() + 1)}`, ''];
   if (need.length) {
@@ -214,24 +244,29 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   // 3. Изменения и следующий прогон.
   L.push('', '<b>📦 Изменения</b>');
   const period = aggregate(records, { since });
-  const ch = [...work.map((c) => `🔧 ${changeTitle(p, c, escHtml)} — ${progress(c)}`), ...pend.map((c) => `⏳ ${changeTitle(p, c, escHtml)} — ждёт одобрения`)];
+  const ch = [...work.map((c) => `🔧 ${changeTitle(p, c, escHtml)} — ${progress(c)}`), ...pend.map((c) => `⏳ ${changeTitle(p, c, escHtml)} — ждёт одобрения`),
+    ...pausedChanges(changes, now).map((c) => `⏸ ${changeTitle(p, c, escHtml)} — отложено до ${fmtDay(pausedUntil(c))}`)];
   const done = [period.events.changes_archived ? `изменений ${period.events.changes_archived}` : '', period.events.tasks_done ? `задач ${period.events.tasks_done}` : ''].filter(Boolean);
   if (done.length) ch.push(`🏁 За период завершено: ${done.join(', ')}`);
   L.push(...(ch.length ? ch : ['Открытых изменений нет']));
   if (cfg.ideas?.enabled && since) {
-    const fresh = loadIdeas(p).ideas.filter((x) => new Date(x.created_at) > since).map((x) => x.id);
-    if (fresh.length) L.push(`💡 Новые предложения: ${fresh.map(escHtml).join(', ')}`);
+    // 0.7.6: поимённо только то, что ещё ждёт решения или работы; решённое — числом
+    const fresh = ideaList.filter((x) => new Date(x.created_at) > since);
+    const ids = (st) => fresh.filter((x) => x.status === st).map((x) => escHtml(x.id)).join(', ');
+    const parts = [ids('proposed') && `ждут решения: ${ids('proposed')}`, ids('taken') && `взяты, команда спланирует: ${ids('taken')}`].filter(Boolean);
+    if (fresh.length) L.push(`💡 Новых предложений: ${fresh.length}${parts.length ? ` — ${parts.join('; ')}` : ''}`);
   }
   L.push('', `<b>🗓 Следующий прогон:</b> ${nextRunText(work, pend, progress, escHtml, ideasBrief(p, cfg), (c) => changeTitle(p, c, escHtml, { short: true }))}`);
-  if (nightNew) {
-    const lines = shiftSection(nightNew.path, 'Предложение на день');
+  if (nightCurrent) {
+    const lines = shiftSection(nightCurrent.path, 'Предложение на день');
     if (lines.length) L.push('', '<b>🌅 Предложение на день</b>', ...lines.map(inline));
   }
   if (day && (!since || shiftTime(day) > since) && /\(источник: авто\)/.test(readText(day.path, '').split('\n')[0])) L.push('⚠️ смену не сдали — ночь шла по авто-передаче');
 
   // 4. Подробности свёрнуты: отчёты команды и метрики.
   const total = aggregate(records);
-  const metrics = `<blockquote expandable>📊 За период: ${escHtml(formatEvents(period.events))}; ${escHtml(runsByStatus(period))}, ~$${period.cost_usd}\nВсего: ${escHtml(formatEvents(total.events))}; ${escHtml(runsByStatus(total))}, ~$${total.cost_usd}</blockquote>`;
+  const agents = (a) => (a.subagents ? `, субагентов ${a.subagents}` : '');
+  const metrics = `<blockquote expandable>📊 За период: ${escHtml(formatEvents(period.events))}; ${escHtml(runsByStatus(period))}${agents(period)}, ~$${period.cost_usd}\nВсего: ${escHtml(formatEvents(total.events))}; ${escHtml(runsByStatus(total))}${agents(total)}, ~$${total.cost_usd}</blockquote>`;
   const head = L.join('\n');
   // Блоки «Отчёт» делят остаток лимита поровну. Если на блок меньше MIN_BLOCK или в какой-то блок не влез ни один пункт,
   // старые отчёты не показываются (остаётся строка «Ещё отчётов»): лучше два полезных блока, чем шесть «…».

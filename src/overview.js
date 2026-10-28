@@ -1,9 +1,9 @@
 import path from 'node:path';
 import fs from 'node:fs';
-import { readText, writeText, fmtShort, fmtDuration, truncate, pad2, commandText } from './util.js';
+import { readText, writeText, fmtShort, fmtDay, fmtDuration, truncate, pad2, commandText } from './util.js';
 import { readMetrics, aggregate } from './metrics.js';
 import { loadQuestions, openQuestions } from './questions.js';
-import { listChanges, pendingApprovals, approvedWithWork, approvalDeadline, isAutoApprovable } from './approvals.js';
+import { listChanges, pendingApprovals, approvedWithWork, approvalDeadline, isAutoApprovable, isPaused, pausedUntil } from './approvals.js';
 import { autoDefault } from './config.js';
 import { parseSlot } from './window.js';
 import { currentRun } from './runner.js';
@@ -98,7 +98,7 @@ export function lastUsageAt(p) {
   return r ? { usage: r.usage, at: new Date(r.ended_at || r.started_at) } : null;
 }
 // 0.7.4: изменение по пункту списка — «I40 «название»», под ним имя изменения; у одобренного с задачами — следующая задача
-const changeLine = (p, cfg, c) => {
+const changeLine = (p, cfg, c, now = new Date()) => {
   const st = c.mcfly.approval;
   const title = changeTitle(p, c, escHtml);
   const next = st === 'approved' ? nextTask(p.projectDir, c) : null;
@@ -107,6 +107,7 @@ const changeLine = (p, cfg, c) => {
   if (st === 'pending' && c.mcfly.idea) return `⏳ <b>${title}</b> — ждёт вашего решения, само не одобрится${tail}`;
   if (st === 'pending') return `⏳ <b>${title}</b> — ждёт одобрения${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}${tail}`;
   if (st === 'rejected') return `⛔ ${title} — отклонено${tail}`;
+  if (st === 'approved' && isPaused(c, now)) return `⏸ <b>${title}</b> — отложено до ${escHtml(fmtDay(pausedUntil(c)))}, задач ${changeProgress(p.projectDir, c)}${c.mcfly.idea ? `\n   <i>${escHtml(c.name)}</i>` : ''}`;
   if (st === 'approved') return `${c.tasksOpen > 0 ? '🔧' : '🏁'} <b>${title}</b> — одобрено, задач ${changeProgress(p.projectDir, c)}${tail}`;
   return `⚪ ${title} — одобрение не запрошено, задач ${changeProgress(p.projectDir, c)}${tail}`;
 };
@@ -127,7 +128,7 @@ export function statusView(p, cfg, { now = new Date() } = {}) {
   if (act) L.push(`🛠 <b>Идёт действие</b> «${escHtml(act.title || act.id)}» с ${fmtShort(act.since)} — итог придёт сообщением`);
 
   const changes = listChanges(p.openspecChanges);
-  L.push('', `<b>📦 Изменения (${changes.length})</b>`, ...(changes.length ? changes.map((c) => changeLine(p, cfg, c)) : ['Открытых изменений нет']));
+  L.push('', `<b>📦 Изменения (${changes.length})</b>`, ...(changes.length ? changes.map((c) => changeLine(p, cfg, c, now)) : ['Открытых изменений нет']));
 
   const q = openQuestions(loadQuestions(p));
   if (q.length) {
@@ -147,7 +148,7 @@ export function statusView(p, cfg, { now = new Date() } = {}) {
   }
 
   const slot = nextSlot(cfg.schedule.slots, now);
-  const plan = nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => changeProgress(p.projectDir, c), escHtml, ideasBrief(p, cfg), (c) => changeTitle(p, c, escHtml, { short: true }));
+  const plan = nextRunText(approvedWithWork(changes, now), pendingApprovals(changes), (c) => changeProgress(p.projectDir, c), escHtml, ideasBrief(p, cfg), (c) => changeTitle(p, c, escHtml, { short: true }));
   L.push('', `<b>🗓 Следующий прогон:</b> ${slot ? `${fmtShort(slot)} по расписанию` : 'расписания нет'} — ${plan}`);
 
   const u = lastUsageAt(p);

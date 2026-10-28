@@ -12,7 +12,7 @@ import { pullAnswers, pollAnswers } from './pull.js';
 import { buildContext, isMcflyProject } from './context.js';
 import { loadQuestions, saveQuestions, addQuestion, expireQuestions, openQuestions } from './questions.js';
 import { branchProgress, commitPaths } from './git.js';
-import { listChanges, requestApproval, setApproval, pendingApprovals } from './approvals.js';
+import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause } from './approvals.js';
 import { appendMetric, readMetrics, aggregate, formatEvents } from './metrics.js';
 import { createTelegram, extractMessages } from './telegram.js';
 import * as schedule from './schedule.js';
@@ -39,6 +39,8 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   question list | question expire
   approval request <изменение> [--category <c>] [--priority <n>]
   approval set <изменение> approved|rejected [--note <t>] [--priority <n>]   (меньше = раньше; по умолчанию 100)
+  approval pause <изменение> --until <ГГГГ-ММ-ДД> [--note <t>] | approval resume <изменение>
+                                                  отложить одобренное изменение до даты (команда не берёт) / вернуть в работу
   approval list
   shift start <изменение> | shift merge           дневная работа в ветке shift/<изменение>-… и её слияние в change/<изменение>
   shift write [--file <путь>] | shift auto [--kind day|night]   записать передачу смены / показать авто-передачу
@@ -54,7 +56,7 @@ export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
     project: { type: 'string' }, mode: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
-    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
+    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
   const projectDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
   const p = paths(projectDir);
@@ -164,18 +166,38 @@ export async function main(argv) {
           transitionIdea(idata, it.id, 'planned', { actor: 'team', change: c.name, now }); saveIdeas(p, idata); idea = it.id;
         }
         requestApproval(c, { category, priority: values.priority, now, idea }); appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_proposed', value: 1, change: c.name }); log(`Одобрение запрошено: ${c.name}. Человек увидит его в утренней сводке.`); return 0; }
+      // Решение человека сразу в истории; во время прогона HEAD под агентами не двигаем — метаданные закоммитит прогон.
+      const commitMeta = (message) => {
+        if (exists(p.lock)) { log('Не закоммичено: идёт прогон, метаданные одобрения закоммитит он.'); return 0; }
+        const committed = commitPaths(projectDir, [path.relative(projectDir, path.join(c.dir, '.openspec.yaml'))], message);
+        log(!committed.ok ? `Не закоммичено (закоммитит ближайший прогон): ${committed.error}` : committed.committed ? 'Закоммичено.' : 'Изменений нет, коммит не нужен.'); return 0;
+      };
       if (sub === 'set') {
         // Одобрение — решение человека: в прогоне команды (MCFLY_RUN_ID задаёт runner) агенты только запрашивают его.
         if (runIdEnv) { console.error('Одобрение ставит только человек: в прогоне команды approval set запрещён, используйте mcfly approval request.'); return 1; }
         const st = rest[1]; if (!['approved', 'rejected'].includes(st)) { console.error('Статус: approved | rejected'); return 1; } setApproval(c, st, 'human-cli', values.note || '', now, { priority: values.priority }); log(`${c.name}: ${st}${values.priority ? ', приоритет ' + values.priority : ''}`);
-        // решение человека сразу в истории; во время прогона HEAD под агентами не двигаем — метаданные закоммитит прогон
-        if (exists(p.lock)) { log('Не закоммичено: идёт прогон, метаданные одобрения закоммитит он.'); return 0; }
-        const committed = commitPaths(projectDir, [path.relative(projectDir, path.join(c.dir, '.openspec.yaml'))], `chore(${c.name}): одобрение человека — ${st}`);
-        log(!committed.ok ? `Не закоммичено (закоммитит ближайший прогон): ${committed.error}` : committed.committed ? 'Закоммичено.' : 'Изменений нет, коммит не нужен.'); return 0; }
+        return commitMeta(`chore(${c.name}): одобрение человека — ${st}`); }
+      if (sub === 'pause' || sub === 'resume') {
+        // 0.7.6: отложить одобренное изменение до даты — тоже решение человека; агенты пишут о стоп-условии в отчёте.
+        if (runIdEnv) { console.error(`Откладывает только человек: в прогоне команды approval ${sub} запрещён — напишите о стоп-условии в отчёте.`); return 1; }
+        if (sub === 'resume') { clearPause(c); log(`${c.name}: снова в работе`); return commitMeta(`chore(${c.name}): возвращено в работу`); }
+        const until = String(values.until || ''); const d = new Date(`${until}T00:00:00`);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(until) || Number.isNaN(d.getTime())) { console.error('Нужна дата: --until ГГГГ-ММ-ДД'); return 1; }
+        if (d <= now) { console.error(`Дата ${until} уже прошла: отложить можно только на будущее`); return 1; }
+        if (c.mcfly.approval !== 'approved') { console.error(`${c.name} не одобрено: откладывать нечего`); return 1; }
+        setPause(c, until, values.note || '', now); log(`${c.name}: отложено до ${until.split('-').reverse().join('.')}`);
+        return commitMeta(`chore(${c.name}): отложено до ${until}`);
+      }
       break;
     }
     case 'metric': {
-      if (sub === 'add') { if (!values.key) { console.error('Нужен --key'); return 1; } appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: values.key, value: values.value ? Number(values.value) : 1, change: values.change || '' }); log(`метрика ${values.key} записана`); return 0; }
+      if (sub === 'add') {
+        if (!values.key) { console.error('Нужен --key'); return 1; }
+        // 0.7.6: «--key "tasks_done 7"» давал битое событие — ключ только из латиницы и «_», число отдельно в --value
+        if (!/^[a-z_]+$/.test(values.key)) { console.error(`Ключ — латиница и «_»; число — в --value: mcfly metric add --key ${String(values.key).split(/\s+/)[0]} --value <n>`); return 1; }
+        if (values.value != null && !Number.isFinite(Number(values.value))) { console.error('--value — число'); return 1; }
+        appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: values.key, value: values.value ? Number(values.value) : 1, change: values.change || '' }); log(`метрика ${values.key} записана`); return 0;
+      }
       log(JSON.stringify(aggregate(readMetrics(p)), null, 2)); return 0;
     }
     case 'telegram': {

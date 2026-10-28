@@ -302,15 +302,18 @@ test('0.7.0: summaryKeyboard — «Не сейчас» для плана по п
   const p2 = paths(bareProject()); const d = li(p2); ai(d, { title: 'X', benefit: 'y', source: 'team', size: 'S' }); si(p2, d);
   assert.deepEqual(summaryKeyboard(p2, cfg), [[{ text: '💡 Предложения', callback_data: 'il:1' }]]);
 });
-test('0.7.0: сводка — новые предложения за период', () => {
+test('0.7.6: сводка — новые предложения за период: поимённо только ждущие решения и взятые, решённые — числом', () => {
   const p = paths(bareProject()); const d = li(p);
   ai(d, { title: 'Старая', benefit: 'y', source: 'team', size: 'S', now: new Date(2026, 9, 1) });
   ai(d, { title: 'Новая', benefit: 'y', source: 'team', size: 'S', now: new Date(2026, 9, 25, 9) });
   ai(d, { title: 'Ещё новая', benefit: 'y', source: 'research', ref: 'https://x.y', size: 'S', now: new Date(2026, 9, 25, 9) });
+  ai(d, { title: 'Взятая', benefit: 'y', source: 'team', size: 'S', now: new Date(2026, 9, 25, 9) });
+  ai(d, { title: 'Сделанная', benefit: 'y', source: 'team', size: 'S', now: new Date(2026, 9, 25, 9) });
+  d.ideas[3].status = 'taken'; d.ideas[4].status = 'done';
   si(p, d);
   const html = composeSummary(p, cfg, { now: new Date(2026, 9, 25, 10), since: new Date(2026, 9, 24, 10) });
-  assert.match(html, /💡 Новые предложения: I2, I3/);
-  assert.doesNotMatch(html, /I1/);
+  assert.match(html, /💡 Новых предложений: 4 — ждут решения: I2, I3; взяты, команда спланирует: I4\n/);
+  assert.doesNotMatch(html, /I1\b|I5/);
 });
 test('0.7.0: номера пунктов из файла экранируются в HTML', () => {
   const esc = (s) => String(s).replace(/</g, '&lt;');
@@ -356,4 +359,99 @@ test('0.7.5: одобрение плана по пункту — номер и �
   addChange(dir, 'review-page-no-other', { meta: { mcfly: { approval: 'pending', idea: 'I1', requested_at: new Date().toISOString() } } });
   assert.match(composeSummary(p, cfg, { now: new Date(2026, 9, 27, 10) }), /Одобрить <b>I1 «Убрать «Прочее»»<\/b> \(review-page-no-other\)/);
   assert.equal(summaryKeyboard(p, cfg)[0][0].text, '✅ Одобрить I1 (review-page-no-other)');
+});
+
+// 0.7.6: сводка 28.10 10:30 — 10 пунктов «Нужно от вас», верны 2: пункты ночной передачи при отчёте новее, сделанное после отчёта.
+import { pausedChanges, setPause } from '../src/approvals.js';
+const DAY = new Date(2026, 9, 28, 10, 30); const DAY_SINCE = new Date(2026, 9, 27, 10, 30);
+const NIGHT_SHIFT = '# Смена: ночь → день, 2026-10-28 06:10 (источник: команда)\nПрогоны: runs/20261028-0200, runs/20261028-0600\n## Изменения\n- нет\n## Предложение на день\n- Вместе с Claude: после кнопки I53 сделать «🚀 Выкатить».\n## Нужны решения человека\n- Одобрить или отклонить I53 кнопкой\n- Решить по I54, I55\n## Заметки\n- нет\n';
+const cfgActs = { ...cfg, actions: { deploy: { title: '🚀 Выкатить', run: 'true' }, 'tmp-clean': { title: '🧹 Чистка $TMPDIR', run: 'true' } } };
+function day28(dir, { deployAt = null, deployStatus = 'ok' } = {}) {
+  const p = paths(dir);
+  for (const [id, slot, at] of [['20261028-0600', '06:00', new Date(2026, 9, 28, 6, 0)], ['20261028-0758', null, new Date(2026, 9, 28, 7, 59)]]) {
+    run(p, { id, slot, mode: slot ? 'night' : 'day', started_at: at.toISOString(), ended_at: new Date(at.getTime() + 60 * 60_000).toISOString(), status: 'ok' });
+  }
+  report(p, '20261028-0600', '# Прогон\n## Сделано\n- ничего\n## Нужно от человека\n- Одобрить или отклонить I53 кнопкой\n');
+  report(p, '20261028-0758', '# Прогон\n## Сделано\n- I55: сжатие\n## Нужно от человека\n- Нажать кнопку одобрения docs-site-restart (I58).\n- Решить по I60 и I61: брать I61 до выката или выкатывать как есть.\n- Нажать кнопку «🚀 Выкатить» в боте: выйдут I53 и I57.\n- Раздать «На проверку» 28–29.10.\n- По желанию нажать кнопку «🧹 Чистка $TMPDIR» в боте.\n');
+  writeShift(p, 'night', NIGHT_SHIFT, new Date(2026, 9, 28, 6, 0));
+  const d = li(p);
+  for (const t of ['I1', 'I2', 'I3']) ai(d, { title: `пункт ${t}`, benefit: 'y', source: 'team', size: 'S', now: new Date(2026, 9, 20) });
+  d.ideas = []; // номера нужны как в отчёте: I53–I61
+  for (const [n, status, change] of [[53, 'done'], [54, 'done'], [55, 'done'], [58, 'planned', 'docs-site-restart'], [60, 'taken'], [61, 'taken']]) {
+    d.ideas.push({ id: `I${n}`, title: `пункт I${n}`, benefit: 'y', source: 'team', size: 'S', status, created_at: new Date(2026, 9, 27, 20).toISOString(), ...(change ? { change } : {}) });
+  }
+  si(p, d);
+  addChange(dir, 'docs-site-restart', { meta: { schema: 'spec-driven', mcfly: { approval: 'approved', category: 'spec', idea: 'I58', requested_at: new Date(2026, 9, 28, 7).toISOString() } } });
+  if (deployAt) appendMetric(p, { type: 'action', id: 'deploy', status: deployStatus, exit_code: deployStatus === 'ok' ? 0 : 1, started_at: deployAt.toISOString(), ended_at: deployAt.toISOString(), duration_ms: 1 });
+  return p;
+}
+
+test('0.7.6: пункты и план дня из ночной передачи не показываются, когда после неё был отчёт', () => {
+  const p = day28(bareProject());
+  const html = composeSummary(p, cfgActs, { now: DAY, since: DAY_SINCE });
+  assert.doesNotMatch(html, /Одобрить или отклонить I53|Решить по I54/);
+  assert.doesNotMatch(html, /🌅 Предложение на день/);
+});
+test('0.7.6: передача смены новее всех отчётов — её пункты и план дня в сводке', () => {
+  const dir = bareProject(); const p = paths(dir);
+  run(p, { id: '20261028-0600', slot: '06:00', started_at: new Date(2026, 9, 28, 6, 0).toISOString(), status: 'ok' });
+  report(p, '20261028-0600', '# Прогон\n## Сделано\n- ничего\n## Нужно от человека\n- Раздать «На проверку»\n');
+  writeShift(p, 'night', NIGHT_SHIFT.replace('Решить по I54, I55', 'Решить по I99'), new Date(2026, 9, 28, 6, 0));
+  const html = composeSummary(p, cfg, { now: DAY, since: DAY_SINCE });
+  assert.match(needBlock(html), /Решить по I99/);
+  assert.match(html, /<b>🌅 Предложение на день<\/b>/);
+});
+test('0.7.6: одобренное, решённое по пунктам и нажатое после отчёта — не в «Нужно от вас»', () => {
+  const p = day28(bareProject(), { deployAt: new Date(2026, 9, 28, 9, 47) });
+  const need = needBlock(composeSummary(p, cfgActs, { now: DAY, since: DAY_SINCE }));
+  assert.match(need, /Нужно от вас \(2\)/);
+  assert.match(need, /1\. Раздать «На проверку» 28–29\.10\./);
+  assert.match(need, /2\. По желанию нажать кнопку «🧹 Чистка \$TMPDIR» в боте\./);
+});
+test('0.7.6: кнопка не нажата, нажата до конца отчёта или упала — пункт остаётся; нерешённый пункт списка — тоже', () => {
+  for (const opt of [{}, { deployAt: new Date(2026, 9, 28, 8, 30) }, { deployAt: new Date(2026, 9, 28, 9, 47), deployStatus: 'error' }]) {
+    const need = needBlock(composeSummary(day28(bareProject(), opt), cfgActs, { now: DAY, since: DAY_SINCE }));
+    assert.match(need, /Нажать кнопку «🚀 Выкатить» в боте/, JSON.stringify(opt));
+  }
+  const dir = bareProject(); const p = day28(dir);
+  const d = li(p); d.ideas.find((x) => x.id === 'I61').status = 'proposed'; si(p, d);
+  const need = needBlock(composeSummary(p, cfgActs, { now: DAY, since: DAY_SINCE }));
+  assert.match(need, /Решить по I60 и I61/);
+});
+test('0.7.6: план по пункту ждёт одобрения — пункт «Одобрить I58» сверху, «Нажать кнопку одобрения X» его не повторяет', () => {
+  const dir = bareProject(); const p = day28(dir);
+  const [c] = listChanges(p.openspecChanges); requestApproval(c, { idea: 'I58' });
+  const need = needBlock(composeSummary(p, cfgActs, { now: DAY, since: DAY_SINCE }));
+  assert.match(need, /1\. Одобрить <b>I58 «пункт I58»<\/b> \(docs-site-restart\)/);
+  assert.doesNotMatch(need, /Нажать кнопку одобрения/);
+});
+test('0.7.6: отложенное до даты изменение — «⏸ … отложено до», не в следующем прогоне', () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'zensical-migration', { tasks: '- [ ] 1.1\n- [ ] 2.1\n', meta: { schema: 'spec-driven', mcfly: { approval: 'approved', idea: 'I52' } } });
+  const [c] = listChanges(p.openspecChanges); setPause(c, '2027-02-01', 'ждём Zensical с весами поиска', DAY);
+  assert.equal(pausedChanges(listChanges(p.openspecChanges), DAY).length, 1);
+  const html = composeSummary(p, cfg, { now: DAY, since: DAY_SINCE });
+  assert.match(html, /⏸ I52 — отложено до 01\.02\.2027/);
+  assert.doesNotMatch(html, /🔧 I52|продолжит I52/);
+  assert.match(html, /<b>🗓 Следующий прогон:<\/b> работы нет/);
+  // после даты — снова в работе
+  const later = composeSummary(p, cfg, { now: new Date(2027, 1, 1, 10), since: new Date(2027, 0, 31, 10) });
+  assert.match(later, /🔧 I52 — 0\/2/);
+});
+test('0.7.6: субагенты — по записям прогонов; события субагентов и ходов от агентов и битые ключи не печатаются', () => {
+  const p = paths(bareProject());
+  run(p, { id: '20261028-0758', started_at: new Date(2026, 9, 28, 7, 59).toISOString(), status: 'ok', cost_usd: 1, subagents: { spawned: 28, background: 0, failed: 0, killed: 0 } });
+  run(p, { id: '20261028-0717', started_at: new Date(2026, 9, 28, 7, 17).toISOString(), status: 'ok', cost_usd: 1, subagents: { spawned: 9 } });
+  const ev = (key, value) => appendMetric(p, { type: 'event', at: new Date(2026, 9, 28, 8).toISOString(), run_id: '20261028-0758', key, value });
+  ev('subagents', 5); ev('turns', 6); ev('tasks_done', 18); ev('tasks_done 7', null); ev('ideas_added', 2);
+  const html = composeSummary(p, cfg, { now: DAY, since: DAY_SINCE });
+  assert.match(html, /📊 За период: 25 задач закрыто, 2 предложений добавлено; прогонов 2 \(ок 2\), субагентов 37, ~\$2/);
+  assert.doesNotMatch(html, /subagents|turns|tasks_done/);
+});
+import { approvalCovered } from '../src/summary.js';
+test('0.7.6: approvalCovered — «Нажать кнопку одобрения X» покрыт, «Выкатить после одобрения X» — нет', () => {
+  const changes = [{ name: 'docs-site-restart', mcfly: { approval: 'approved' } }];
+  assert.equal(approvalCovered('Нажать кнопку одобрения docs-site-restart (I58).', changes), true);
+  assert.equal(approvalCovered('Нажать «🚀 Выкатить» после одобрения docs-site-restart', changes), false);
+  assert.equal(approvalCovered('Нажать кнопку одобрения docs-site-restart', [{ name: 'docs-site-restart', mcfly: {} }]), false);
 });

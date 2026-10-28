@@ -17,6 +17,8 @@ export const commandText = (text) => String(text || '').trim().replace(/^[^\p{L}
   .toLowerCase().replace(/ё/g, 'е').replace(/[\s?!.]+$/u, '').replace(/\s+/g, ' ');
 export function pad2(n) { return String(n).padStart(2, '0'); }
 export function fmtLocal(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
+/** «01.02.2027» — дата без времени. */
+export function fmtDay(d) { return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()}`; }
 export function fmtShort(d) { return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
 export function runId(d) { return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}`; }
 export function fmtDuration(ms) { const m = Math.round(ms / 60000); return m < 60 ? `${m} мин` : `${Math.floor(m / 60)} ч ${pad2(m % 60)} мин`; }

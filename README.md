@@ -38,6 +38,7 @@ cd ~/mcfly && npm install && npm link   # даёт команду mcfly в PATH
 | `mcfly status` | Состояние проекта |
 | `mcfly question add --category <c> --text <t> --default <d>` | Эскалация человеку (используют агенты) |
 | `mcfly approval request\|set\|list` | Одобрения изменений OpenSpec |
+| `mcfly approval pause <изменение> --until <ГГГГ-ММ-ДД> [--note <t>]` / `approval resume <изменение>` | Отложить одобренное изменение до даты: команда его не берёт, сводка показывает «⏸ отложено до» (только человек) |
 | `mcfly metric add --key <k> [--value <n>]` | Метрики (используют агенты) |
 | `mcfly shift start <изменение>\|merge\|write [--file]\|auto` | Передача смены: дневная ветка `shift/<изменение>-…`, слияние в `change/<изменение>`, запись передачи, авто-передача |
 | `mcfly telegram pair` | Привязка чата |
