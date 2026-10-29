@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs';
 import { readText, fmtShort, fmtDay, fmtDuration, truncate, pad2 } from './util.js';
 import { readMetrics, aggregate, formatEvents, runStats } from './metrics.js';
 import { loadQuestions, openQuestions } from './questions.js';
@@ -156,6 +157,21 @@ export function actionsCovered(item, acts, records, after) {
 }
 /** Конец прогона: ended_at, иначе начало плюс длительность. */
 const runEnd = (r) => (r.ended_at ? new Date(r.ended_at) : new Date(new Date(r.started_at).getTime() + Number(r.duration_ms || 0)));
+/**
+ * Пункты «Нужно от человека» из текста агентов, которые ещё актуальны: без одобрений и решений по списку (их показывает состояние),
+ * без кнопок, нажатых после `after`, без повторов. Один отбор для сводки, «Статуса» и «Последнего прогона» (0.7.10: «Статус»
+ * просил «🚀 Выкатить» после выката — у него был свой, старый отбор).
+ */
+export function textNeeds(items, { cfg, records, changes, ideaList, after }) {
+  const acts = listActions(cfg);
+  return dedupe(items.filter((x) => !isNone(x) && !approvalCovered(x, changes, ideaList) && !ideasCovered(x, ideaList) && !actionsCovered(x, acts, records, after)));
+}
+/** textNeeds для отчёта rep ({ id, sec, record } из latestReport): кнопки считаются нажатыми, если нажаты после конца его прогона. */
+export function reportNeeds(p, cfg, rep) {
+  if (!rep) return [];
+  const after = rep.record ? runEnd(rep.record) : new Date(fs.statSync(path.join(p.runs, rep.id, 'summary.md')).mtimeMs);
+  return textNeeds(humanItems(rep.sec), { cfg, records: readMetrics(p), changes: listChanges(p.openspecChanges), ideaList: loadIdeas(p).ideas, after });
+}
 /** Разбивает HTML по строкам на куски не длиннее max, не разрывая <blockquote>; кусок длиннее max — простым текстом. */
 export function splitHtml(html, max = TG_MAX) {
   const units = []; let cur = []; let depth = 0;
@@ -256,10 +272,9 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   // сделанное после отчёта (кнопка нажата) — тоже. Остальное — снимок на конец прогона, поэтому с подписью источника.
   const latest = [...reports].reverse().find(({ sec }) => sec['Нужно от человека'] || humanItems(sec).length);
   const fromShift = nightCurrent ? shiftSection(nightCurrent.path, 'Нужны решения человека', 20).map((l) => l.replace(/^([-*]|\d+\.)\s+/, '')).filter((l) => !isNone(l)) : [];
-  const acts = listActions(cfg); const after = latest ? runEnd(latest.r) : (since || new Date(0));
-  const items = [...(latest ? humanItems(latest.sec) : []), ...fromShift]
-    .filter((x) => !approvalCovered(x, changes, ideaList) && !ideasCovered(x, ideaList) && !actionsCovered(x, acts, records, after));
-  const kept = dedupe(items); const fromText = kept.map(inline);
+  const after = latest ? runEnd(latest.r) : (since || new Date(0));
+  const kept = textNeeds([...(latest ? humanItems(latest.sec) : []), ...fromShift], { cfg, records, changes, ideaList, after });
+  const fromText = kept.map(inline);
   // Подпись — по тем источникам, чьи пункты остались после отбора и повторов
   const fromReport = latest ? humanItems(latest.sec) : [];
   const srcLatest = kept.some((x) => fromReport.includes(x)) ? `отчёту ${latest.r.slot || hhmm(new Date(latest.r.started_at))}` : '';

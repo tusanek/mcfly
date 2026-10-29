@@ -363,3 +363,20 @@ test('0.7.6: «Статус» — отложенное изменение «⏸ 
   assert.match(html, /⏸ <b>I52<\/b> — отложено до 01\.02\.2027, задач 0\/1\n   <i>zen<\/i>/);
   assert.doesNotMatch(html, /продолжит I52/);
 });
+
+test('0.7.10: «Статус» и «Последний прогон» фильтруют «Нужно от вас» так же, как сводка: нажатый выкат, решённые пункты списка, повторы', () => {
+  const dir = bareProject(); const p = paths(dir);
+  const c = { ...cfg, actions: { deploy: { title: '🚀 Выкатить', run: 'true' } } };
+  report(dir, '20261029-2038', '# Прогон\n## Сделано\n- I80: план\n## Нужно от человека\n- Нажать «🚀 Выкатить» вечером (I72, I74), затем раздать «На проверку»\n- Решить по предложениям I81, I82\n- Включить дайджест: добавить бота в группу\n- Включить дайджест — добавить бота в группу\n');
+  metric(dir, { type: 'run', id: '20261029-2038', status: 'ok', started_at: new Date(2026, 9, 29, 20, 38).toISOString(), ended_at: new Date(2026, 9, 29, 22, 25).toISOString(), duration_ms: 6420_000 });
+  fs.writeFileSync(path.join(dir, 'mcfly', 'ideas.yaml'), 'ideas:\n  - id: I81\n    title: a\n    status: proposed\n  - id: I82\n    title: b\n    status: taken\n');
+  const view = (now) => statusView(p, c, { now }).join('\n');
+  // до выката — просьба нажать остаётся
+  assert.match(view(new Date(2026, 9, 29, 23, 0)), /Нажать «🚀 Выкатить»/);
+  metric(dir, { type: 'action', id: 'deploy', status: 'ok', exit_code: 0, started_at: new Date(2026, 9, 29, 23, 36).toISOString(), ended_at: new Date(2026, 9, 29, 23, 44).toISOString(), duration_ms: 480_000 });
+  for (const html of [view(new Date(2026, 9, 29, 23, 45)), lastView(p, c).join('\n')]) {
+    assert.doesNotMatch(html, /Выкатить/);
+    assert.doesNotMatch(html, /Решить по предложениям I81/);
+    assert.equal((html.match(/Включить дайджест/g) || []).length, 1);
+  }
+});

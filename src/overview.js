@@ -10,7 +10,7 @@ import { currentRun } from './runner.js';
 import { hasActions, listActions, getAction } from './action-config.js';
 import { currentAction, offerKeyboard, isTrusted } from './actions.js';
 import { loadIdeas, visibleIdeas, ideasBrief } from './ideas.js';
-import { escHtml, inline, splitHtml, reportSections, plainWords, humanItems, approvalCovered, isNone, changeProgress, nextRunText, runsByStatus, STATUS_RU, summaryKeyboard, changeTitle, nextTask } from './summary.js';
+import { escHtml, inline, splitHtml, reportSections, plainWords, reportNeeds, isNone, changeProgress, nextRunText, runsByStatus, STATUS_RU, summaryKeyboard, changeTitle, nextTask } from './summary.js';
 
 /**
  * Команды обзора для владельца в Telegram: «статус» (раньше «где мы»), «цели», «статистика», «последний прогон», «помощь».
@@ -140,7 +140,7 @@ export function statusView(p, cfg, { now = new Date() } = {}) {
   } else L.push('', '❓ Открытых вопросов нет');
 
   const rep = latestReport(p);
-  const need = rep ? humanItems(rep.sec).filter((x) => !isNone(x) && !approvalCovered(x, changes)) : [];
+  const need = reportNeeds(p, cfg, rep);
   if (need.length) {
     L.push('', `<b>🙋 Нужно от вас</b> <i>(отчёт ${escHtml(rep.record ? at(rep.record.started_at) : rep.id)})</i>`);
     L.push(...need.slice(0, NEED_MAX).map((x, i) => `${i + 1}. ${inline(truncate(x, ITEM_MAX))}`));
@@ -248,7 +248,7 @@ export function lastView(p, cfg) {
   const plain = plainWords(rep.sec, 1500);
   if (plain) L.push('', '<b>🗣 Простыми словами</b>', escHtml(plain));
   const done = (rep.sec['Сделано'] || []).filter((l) => !isNone(l));
-  const need = humanItems(rep.sec);
+  const need = reportNeeds(p, cfg, rep);
   const tail = need.length ? ['', '<b>🙋 Нужно от вас</b>', ...need.map((x, i) => `${i + 1}. ${inline(truncate(x, ITEM_MAX))}`)] : ['', '🙋 От вас ничего не нужно'];
   const doneLines = (n) => (done.length ? ['', '<b>✅ Сделано</b>', ...done.slice(0, n).map((l) => `• ${inline(truncate(l, ITEM_MAX))}`), ...(done.length > n ? [`• … ещё ${done.length - n} — mcfly/runs/${escHtml(rep.id)}/summary.md`] : [])] : []);
   // «Нужно от вас» важнее — если не влезает, урезается «Сделано».
