@@ -135,15 +135,18 @@ export function approvalCovered(item, changes, ideas = []) {
   return named.every((c) => c.mcfly.approval) && ids.every(ideaSettled);
 }
 /**
- * «Решить по I54, I55», «Одобрить или отклонить I53» лишние, когда ни один названный пункт уже не ждёт решения в списке (0.7.6):
- * взятый, сделанный, отклонённый — решён; спланированный ждёт одобрения плана — это пункт «Одобрить» сверху сводки.
+ * «Решить по I54, I55», «Одобрить или отклонить I53», «Предложения I75, I76» — решение по пунктам списка. С 0.7.8 такой пункт текста
+ * не печатается вовсе, если все номера есть в списке: ждущие решения сводка показывает сама строкой «Решить по предложениям» из
+ * mcfly/ideas.yaml, решённые не нужны. Номер не из списка — пункт остаётся.
  */
 export function ideasCovered(item, ideas) {
-  if (!/^\s*(решить|одобрить|отклонить|взять|выбрать)/i.test(item)) return false;
+  if (!/^\s*(решить|одобрить|отклонить|взять|выбрать|предложени)/i.test(item)) return false;
   const ids = [...new Set(item.match(IDEA_ID) || [])];
   if (!ids.length) return false;
-  return ids.every((id) => { const x = ideas.find((i) => String(i.id) === id); return x && x.status !== 'proposed'; });
+  return ids.every((id) => ideas.some((i) => String(i.id) === id));
 }
+/** «I75, I76, I77» — не больше max номеров, остальные числом. */
+const idList = (ids, max = 8) => (ids.length > max ? `${ids.slice(0, max).join(', ')} и ещё ${ids.length - max}` : ids.join(', '));
 /** Название кнопки без значка: «🚀 Выкатить» → «Выкатить». */
 const bareTitle = (t) => String(t || '').replace(/^[^\p{L}\p{N}$]+/u, '').trim();
 /** «Нажать «🚀 Выкатить»» лишний, когда все названные в пункте кнопки владелец уже нажал после отчёта и они прошли успешно. */
@@ -227,9 +230,12 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
     .sort((a, b) => new Date(a.r.started_at) - new Date(b.r.started_at));
   const night = latestShift(p, 'night'); const day = latestShift(p, 'day');
   const nightNew = night && (!since || shiftTime(night) > since) ? night : null;
+  const cur = currentRun(p);
   // 0.7.6: передача смены устарела, если после её прогонов был отчёт новее — пункты и план дня берём из него.
+  // 0.7.8: и после любого прогона, даже без отчёта (остановлен по времени, идёт сейчас): он мог сделать то, что передача предлагает.
   const nightText = nightNew ? readText(nightNew.path, '') : '';
-  const nightCurrent = nightNew && !reports.some(({ r }) => new Date(r.started_at) > shiftTime(nightNew) && !nightText.includes(String(r.id))) ? nightNew : null;
+  const laterRuns = [...runs.filter((r) => !['missed', 'locked'].includes(r.status)).map((r) => ({ id: r.id, at: new Date(r.started_at) })), ...(cur?.id ? [{ id: cur.id, at: cur.since }] : [])];
+  const nightCurrent = nightNew && !laterRuns.some((r) => r.at > shiftTime(nightNew) && !nightText.includes(String(r.id))) ? nightNew : null;
   const ideaList = loadIdeas(p).ideas;
 
   // 1. Что нужно от человека — первым и с номерами.
@@ -242,17 +248,28 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   for (const c of pend) {
     need.push(`Одобрить <b>${changeTitle(p, c, escHtml)}</b>${c.mcfly.idea ? ` (${escHtml(c.name)})` : ''}: ${inline(proposalExcerpt(c, EXCERPT))}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
   }
+  // 0.7.8: предложения, ждущие решения, — из mcfly/ideas.yaml, а не из текста отчётов (текст устаревает, как только владелец решил)
+  const proposedIds = cfg.ideas?.enabled ? ideaList.filter((x) => x.status === 'proposed').map((x) => escHtml(x.id)) : [];
+  if (proposedIds.length) need.push(`Решить по предложениям: ${idList(proposedIds)} — кнопка «💡 Предложения»`);
   // Пункты от человека — только из самого свежего отчёта с этим разделом (старые повторяются и устаревают) и из ночной передачи,
-  // если отчёта новее неё нет. Сделанное после отчёта (одобрено, решено по пунктам, кнопка нажата) — не показываем.
+  // если прогона новее неё нет. Одобрения и решения по пунктам списка в тексте не печатаются — они выше, из состояния;
+  // сделанное после отчёта (кнопка нажата) — тоже. Остальное — снимок на конец прогона, поэтому с подписью источника.
   const latest = [...reports].reverse().find(({ sec }) => sec['Нужно от человека'] || humanItems(sec).length);
   const fromShift = nightCurrent ? shiftSection(nightCurrent.path, 'Нужны решения человека', 20).map((l) => l.replace(/^([-*]|\d+\.)\s+/, '')).filter((l) => !isNone(l)) : [];
   const acts = listActions(cfg); const after = latest ? runEnd(latest.r) : (since || new Date(0));
   const items = [...(latest ? humanItems(latest.sec) : []), ...fromShift]
     .filter((x) => !approvalCovered(x, changes, ideaList) && !ideasCovered(x, ideaList) && !actionsCovered(x, acts, records, after));
-  for (const item of dedupe(items)) need.push(inline(item));
+  const kept = dedupe(items); const fromText = kept.map(inline);
+  // Подпись — по тем источникам, чьи пункты остались после отбора и повторов
+  const fromReport = latest ? humanItems(latest.sec) : [];
+  const srcLatest = kept.some((x) => fromReport.includes(x)) ? `отчёту ${latest.r.slot || hhmm(new Date(latest.r.started_at))}` : '';
+  const srcShift = kept.some((x) => fromShift.includes(x)) ? `передаче смены ${hhmm(shiftTime(nightCurrent))}` : '';
+  const source = [srcLatest, srcShift].filter(Boolean).join(' и ');
   const L = [`☀️ <b>${escHtml(cfg.project)}</b> · ${pad2(now.getDate())}.${pad2(now.getMonth() + 1)}`, ''];
-  if (need.length) {
-    L.push(`<b>🙋 Нужно от вас (${need.length})</b>`, ...need.map((x, i) => `${i + 1}. ${x}`));
+  const needCount = need.length + fromText.length;
+  if (needCount) {
+    L.push(`<b>🙋 Нужно от вас (${needCount})</b>`, ...need.map((x, i) => `${i + 1}. ${x}`));
+    if (fromText.length) L.push(`<i>По ${escHtml(source)}:</i>`, ...fromText.map((x, i) => `${need.length + i + 1}. ${x}`));
     if (questions.length || pend.length) L.push('<i>Кнопки — под сообщением; свой ответ: «Q1: текст»</i>');
   } else L.push('<b>🙋 От вас ничего не нужно</b>');
 
@@ -265,7 +282,6 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   const covered = new Set(runs.filter((r) => r.slot).map((r) => slotKey(new Date(r.started_at), r.slot)));
   const expected = since ? expectedSlots(since, now, cfg.schedule.slots).filter((e) => !covered.has(e.key)) : [];
   // 0.7.7: запись прогона появляется в конце — идущий прогон показываем по mcfly/.lock, иначе сводка во время него о нём молчит
-  const cur = currentRun(p);
   const live = cur?.id && !runs.some((r) => r.id === cur.id) && (!since || cur.since > since)
     ? [{ at: cur.since, line: `▶️ ${hhmm(cur.since)} — идёт ${fmtDuration(Math.max(0, now - cur.since))}` }] : [];
   const lines = [...runs.map((r) => ({ at: new Date(r.started_at), line: runLine(r) })), ...live, ...expected.map((e) => ({ at: e.at || now, line: runLine({ status: 'missed', slot: e.slot, started_at: (e.at || now).toISOString() }) }))]
@@ -287,6 +303,12 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
     const parts = [ids('proposed') && `ждут решения: ${ids('proposed')}`, ids('taken') && `взяты, команда спланирует: ${ids('taken')}`].filter(Boolean);
     if (fresh.length) L.push(`💡 Новых предложений: ${fresh.length}${parts.length ? ` — ${parts.join('; ')}` : ''}`);
   }
+  // 0.7.8: число предложений — по списку (mcfly/ideas.yaml), а не по событиям ideas_added, которые агенты записывают сами и забывают
+  const total = aggregate(records);
+  if (cfg.ideas?.enabled) {
+    const added = (from) => ideaList.filter((x) => !from || new Date(x.created_at) > from).length;
+    for (const [agg, from] of [[period, since], [total, null]]) { if (added(from)) agg.events.ideas_added = added(from); else delete agg.events.ideas_added; }
+  }
   L.push('', `<b>🗓 Следующий прогон:</b> ${nextRunText(work, pend, progress, escHtml, ideasBrief(p, cfg), (c) => changeTitle(p, c, escHtml, { short: true }))}`);
   if (nightCurrent) {
     const lines = shiftSection(nightCurrent.path, 'Предложение на день');
@@ -295,7 +317,6 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   if (day && (!since || shiftTime(day) > since) && /\(источник: авто\)/.test(readText(day.path, '').split('\n')[0])) L.push('⚠️ смену не сдали — ночь шла по авто-передаче');
 
   // 4. Подробности свёрнуты: отчёты команды и метрики.
-  const total = aggregate(records);
   const agents = (a) => (a.subagents ? `, субагентов ${a.subagents}` : '');
   const metrics = `<blockquote expandable>📊 За период: ${escHtml(formatEvents(period.events))}; ${escHtml(runsByStatus(period))}${agents(period)}, ~$${period.cost_usd}\nВсего: ${escHtml(formatEvents(total.events))}; ${escHtml(runsByStatus(total))}${agents(total)}, ~$${total.cost_usd}</blockquote>`;
   const head = L.join('\n');

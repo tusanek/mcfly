@@ -313,7 +313,9 @@ test('0.7.6: сводка — новые предложения за перио�
   si(p, d);
   const html = composeSummary(p, cfg, { now: new Date(2026, 9, 25, 10), since: new Date(2026, 9, 24, 10) });
   assert.match(html, /💡 Новых предложений: 4 — ждут решения: I2, I3; взяты, команда спланирует: I4\n/);
-  assert.doesNotMatch(html, /I1\b|I5/);
+  assert.doesNotMatch(html.slice(html.indexOf('📦')), /I1\b|I5/);
+  // 0.7.8: в «Нужно от вас» — все ждущие решения, и старые тоже
+  assert.match(needBlock(html), /Решить по предложениям: I1, I2, I3 — кнопка «💡 Предложения»/);
 });
 test('0.7.0: номера пунктов из файла экранируются в HTML', () => {
   const esc = (s) => String(s).replace(/</g, '&lt;');
@@ -415,8 +417,10 @@ test('0.7.6: кнопка не нажата, нажата до конца отч
   }
   const dir = bareProject(); const p = day28(dir);
   const d = li(p); d.ideas.find((x) => x.id === 'I61').status = 'proposed'; si(p, d);
+  // 0.7.8: нерешённый пункт списка — строкой из состояния, текст отчёта о нём не печатается
   const need = needBlock(composeSummary(p, cfgActs, { now: DAY, since: DAY_SINCE }));
-  assert.match(need, /Решить по I60 и I61/);
+  assert.match(need, /Решить по предложениям: I61 — кнопка/);
+  assert.doesNotMatch(need, /Решить по I60 и I61/);
 });
 test('0.7.6: план по пункту ждёт одобрения — пункт «Одобрить I58» сверху, «Нажать кнопку одобрения X» его не повторяет', () => {
   const dir = bareProject(); const p = day28(dir);
@@ -445,7 +449,8 @@ test('0.7.6: субагенты — по записям прогонов; соб
   const ev = (key, value) => appendMetric(p, { type: 'event', at: new Date(2026, 9, 28, 8).toISOString(), run_id: '20261028-0758', key, value });
   ev('subagents', 5); ev('turns', 6); ev('tasks_done', 18); ev('tasks_done 7', null); ev('ideas_added', 2);
   const html = composeSummary(p, cfg, { now: DAY, since: DAY_SINCE });
-  assert.match(html, /📊 За период: 25 задач закрыто, 2 предложений добавлено; прогонов 2 \(ок 2\), субагентов 37, ~\$2/);
+  // 0.7.8: «предложений добавлено» — по списку предложений (здесь пустому), событие агента не считается
+  assert.match(html, /📊 За период: 25 задач закрыто; прогонов 2 \(ок 2\), субагентов 37, ~\$2/);
   assert.doesNotMatch(html, /subagents|turns|tasks_done/);
 });
 import { approvalCovered } from '../src/summary.js';
@@ -507,4 +512,36 @@ test('0.7.7: идущий прогон без записи в метриках �
   assert.match(html, /▶️ 07:42 — идёт 3 ч 01 мин/);
   fs.unlinkSync(p.lock);
   assert.doesNotMatch(composeSummary(p, cfg, { now: D29, since: D29_SINCE }), /▶️/);
+});
+
+// 0.7.8: «Нужно от вас» — из состояния, текст агентов — только то, чего в состоянии нет, и с подписью источника.
+test('0.7.8: предложения, ждущие решения, — одной строкой из списка; пункты текста о них не печатаются', () => {
+  const p = day29(bareProject());
+  const need = needBlock(composeSummary(p, cfg, { now: D29, since: D29_SINCE }));
+  assert.match(need, /1\. Решить по предложениям: I75, I76 — кнопка «💡 Предложения»/);
+  assert.equal((need.match(/I75/g) || []).length, 1, need);
+  // решённые — строки нет
+  const d = li(p); for (const x of d.ideas) if (x.status === 'proposed') x.status = 'taken'; si(p, d);
+  assert.doesNotMatch(needBlock(composeSummary(p, cfg, { now: D29, since: D29_SINCE })), /предложени/i);
+});
+test('0.7.8: под строками из состояния — пункты отчёта с подписью «По отчёту 06:00»', () => {
+  const need = needBlock(composeSummary(day29(bareProject()), cfg, { now: D29, since: D29_SINCE }));
+  assert.match(need, /Нужно от вас \(3\)<\/b>\n1\. Решить по предложениям: I75, I76[^\n]*\n<i>По отчёту 06:00:<\/i>\n2\. Решить, запускать ли реальный прогон describe-from-code[^\n]*\n3\. Раздать «На проверку» после выката/);
+});
+test('0.7.8: передача смены устарела, если после неё был любой прогон — даже без отчёта', () => {
+  const dir = bareProject(); const p = paths(dir);
+  run(p, { id: '20261029-0600', slot: '06:00', started_at: new Date(2026, 9, 29, 6, 0).toISOString(), status: 'ok' });
+  report(p, '20261029-0600', '# Прогон\n## Сделано\n- x\n## Нужно от человека\n- нет\n');
+  writeShift(p, 'night', SHIFT29.replace('## Предложение на день\n- нет', '## Предложение на день\n1. После одобрений: I71'), new Date(2026, 9, 29, 6, 10));
+  assert.match(composeSummary(p, cfg, { now: D29, since: D29_SINCE }), /🌅 Предложение на день/);
+  run(p, { id: '20261029-0742', started_at: new Date(2026, 9, 29, 7, 42).toISOString(), status: 'timeout' });
+  const html = composeSummary(p, cfg, { now: D29, since: D29_SINCE });
+  assert.doesNotMatch(html, /🌅 Предложение на день|Реальный прогон describe-from-code/);
+});
+test('0.7.8: «предложений добавлено» — по списку предложений, а не по записям агентов', () => {
+  const p = day29(bareProject());
+  appendMetric(p, { type: 'event', at: new Date(2026, 9, 29, 6, 5).toISOString(), run_id: '20261029-0600', key: 'ideas_added', value: 2 });
+  const html = composeSummary(p, cfg, { now: D29, since: D29_SINCE });
+  assert.match(html, /💡 Новых предложений: 5/);
+  assert.match(html, /📊 За период: 5 предложений добавлено/);
 });
