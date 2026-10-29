@@ -81,3 +81,14 @@ test('0.7.2: репортёр не переносит прежние хвост�
   assert.match(text, /не переноси пункт из прошлого отчёта, не проверив/);
   assert.match(text, /«прежние хвосты»/);
 });
+
+test('каждый агент знает правило машины владельца: поиск без «/» и «~», docker только по задаче', () => {
+  const rule = /Машина владельца/;
+  for (const f of fs.readdirSync(path.join(MCFLY_ROOT, 'agents'))) {
+    const text = fs.readFileSync(path.join(MCFLY_ROOT, 'agents', f), 'utf8');
+    assert.match(text, rule, `agents/${f}`);
+    assert.match(text, /`find \/`/, `agents/${f}`);
+    assert.match(text, /[Dd]ocker/, `agents/${f}`);
+  }
+  assert.match(fs.readFileSync(path.join(MCFLY_ROOT, 'skills', 'mcfly-process', 'SKILL.md'), 'utf8'), /## Машина владельца/);
+});
