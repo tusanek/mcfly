@@ -455,3 +455,56 @@ test('0.7.6: approvalCovered — «Нажать кнопку одобрения 
   assert.equal(approvalCovered('Нажать «🚀 Выкатить» после одобрения docs-site-restart', changes), false);
   assert.equal(approvalCovered('Нажать кнопку одобрения docs-site-restart', [{ name: 'docs-site-restart', mcfly: {} }]), false);
 });
+
+// 0.7.7: сводка 29.10 10:43 — «Кнопки одобрения: …» из передачи после одобрения, один пункт двумя словами, идущий прогон не виден.
+const D29 = new Date(2026, 9, 29, 10, 43); const D29_SINCE = new Date(2026, 9, 28, 10, 30);
+const SHIFT29 = '# Смена: ночь → день, 2026-10-29 06:10 (источник: команда)\nПрогоны: runs/20261029-0600\n## Изменения\n- нет\n## Предложение на день\n- нет\n## Нужны решения человека\n- Кнопки одобрения: team-digest-chat, I71, I72\n- Реальный прогон describe-from-code (~0,3 млн токенов LiteLLM): да или нет\n- Предложения I75, I76\n## Заметки\n- нет\n';
+function day29(dir) {
+  const p = paths(dir);
+  run(p, { id: '20261029-0600', slot: '06:00', mode: 'night', started_at: new Date(2026, 9, 29, 6, 0).toISOString(), ended_at: new Date(2026, 9, 29, 6, 11).toISOString(), status: 'ok' });
+  report(p, '20261029-0600', '# Прогон\n## Сделано\n- планы\n## Нужно от человека\n- Нажать кнопки одобрения: `team-digest-chat`, `review-live-decided-marks`\n- Решить, запускать ли реальный прогон describe-from-code (около 0,3 млн токенов LiteLLM)\n- Решить по предложениям I75, I76\n- Раздать «На проверку» после выката\n');
+  writeShift(p, 'night', SHIFT29, new Date(2026, 9, 29, 6, 10));
+  const d = li(p); d.ideas = [];
+  for (const [n, status, change] of [[69, 'planned', 'team-digest-chat'], [71, 'done'], [72, 'planned', 'review-live-decided-marks'], [75, 'proposed'], [76, 'proposed']]) {
+    d.ideas.push({ id: `I${n}`, title: `пункт I${n}`, benefit: 'y', source: 'team', size: 'S', status, created_at: new Date(2026, 9, 28, 20).toISOString(), ...(change ? { change } : {}) });
+  }
+  si(p, d);
+  for (const [name, idea] of [['team-digest-chat', 'I69'], ['review-live-decided-marks', 'I72']]) {
+    addChange(dir, name, { tasks: '- [ ] 1.1\n', meta: { schema: 'spec-driven', mcfly: { approval: 'approved', category: 'spec', idea } } });
+  }
+  return p;
+}
+test('0.7.7: «Кнопки одобрения: X, I71, I72» — лишний, когда изменения одобрены, а пункты сделаны или их планы одобрены', () => {
+  const p = day29(bareProject());
+  const need = needBlock(composeSummary(p, cfg, { now: D29, since: D29_SINCE }));
+  assert.doesNotMatch(need, /одобрения/i);
+  const changes = listChanges(p.openspecChanges); const ideas = li(p).ideas;
+  assert.equal(approvalCovered('Кнопки одобрения: team-digest-chat, I71, I72', changes, ideas), true);
+  // план пункта ещё ждёт одобрения или пункт не спланирован — остаётся
+  assert.equal(approvalCovered('Кнопки одобрения: I75', changes, ideas), false);
+  assert.equal(approvalCovered('Кнопки одобрения: I99', changes, ideas), false);
+  assert.equal(approvalCovered('Кнопки одобрения: team-digest-chat, I75', changes, ideas), false);
+});
+test('0.7.7: один пункт из отчёта и из передачи разными словами — один раз, полный', () => {
+  const need = needBlock(composeSummary(day29(bareProject()), cfg, { now: D29, since: D29_SINCE }));
+  assert.match(need, /Нужно от вас \(3\)/);
+  assert.equal((need.match(/describe-from-code/g) || []).length, 1);
+  assert.match(need, /Решить, запускать ли реальный прогон describe-from-code/);
+  assert.equal((need.match(/I75/g) || []).length, 1);
+  assert.match(need, /Раздать «На проверку» после выката/);
+});
+test('0.7.7: dedupe не склеивает разные просьбы с общими словами', () => {
+  const p = paths(bareProject());
+  run(p, { id: '20261029-0600', slot: '06:00', started_at: new Date(2026, 9, 29, 6, 0).toISOString(), status: 'ok' });
+  report(p, '20261029-0600', '# Прогон\n## Сделано\n- x\n## Нужно от человека\n- Вечером нажать «🚀 Выкатить» (I74, I66)\n- После выката перезапустить бота продукта на Mac\n- После слияния I69: бот в общий чат, перезапуск бота\n- Решить по предложениям I75, I76\n- Решить по предложениям I77, I78\n');
+  assert.match(needBlock(composeSummary(p, cfg, { now: D29, since: D29_SINCE })), /Нужно от вас \(5\)/);
+});
+test('0.7.7: идущий прогон без записи в метриках — строка «▶️ … идёт» в «Прогонах»', () => {
+  const dir = bareProject(); const p = day29(dir);
+  fs.mkdirSync(path.join(p.runs, '20261029-0742'), { recursive: true });
+  fs.writeFileSync(p.lock, JSON.stringify({ pid: process.pid, at: new Date(2026, 9, 29, 7, 42).toISOString(), id: '20261029-0742', pull_lock: true }));
+  const html = composeSummary(p, cfg, { now: D29, since: D29_SINCE });
+  assert.match(html, /▶️ 07:42 — идёт 3 ч 01 мин/);
+  fs.unlinkSync(p.lock);
+  assert.doesNotMatch(composeSummary(p, cfg, { now: D29, since: D29_SINCE }), /▶️/);
+});

@@ -12,6 +12,7 @@ import { autoDefault } from './config.js';
 import { latestShift } from './shift-files.js';
 import { enqueueNotice } from './notices.js';
 import { listActions } from './action-config.js';
+import { currentRun } from './runner.js';
 
 export const STATUS_RU = { ok: 'ок', missed: 'пропущен', error: 'ошибка', timeout: 'остановлен по времени', quota: 'остановлен: лимит квоты', network: 'не выполнен: нет доступа к API (VPN?)', locked: 'не запущен (шёл другой прогон)' };
 
@@ -82,31 +83,57 @@ export function humanItems(sec) {
 /** Пункт для сравнения: регистр, «ё», `код`, <code>, пунктуация и пробелы не важны. */
 // Точка между цифрами — часть числа («1.2» и «1.2.1» — разные версии), остальная пунктуация не важна.
 const normItem = (t) => String(t).toLowerCase().replace(/ё/g, 'е').replace(/<\/?code>|`/g, '').replace(/(\d)\.(?=\d)/g, '$1d').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-/** Повтор — совпадение после нормализации или вхождение по словам (от 20 символов); остаётся более полный пункт на месте первого. */
+/** Основы слов пункта: первые 5 букв, чтобы «предложения» и «предложениям» совпали. */
+const stems = (n) => new Set(n.split(' ').filter(Boolean).map((w) => w.slice(0, 5)));
+const numbered = (n) => n.split(' ').filter((w) => /\d/.test(w)).sort().join(' ');
+/**
+ * Пересказ того же пункта (0.7.7): отчёт и передача смены пишут одну просьбу разными словами — общих основ не меньше половины всех
+ * и от трёх, а числа и номера (версии, I75, «задача 3») одни и те же.
+ */
+function sameAsk(a, b) {
+  if (numbered(a) !== numbered(b)) return false;
+  const x = stems(a); const y = stems(b); const common = [...x].filter((w) => y.has(w)).length;
+  return common >= 3 && common / (x.size + y.size - common) >= 0.5;
+}
+/**
+ * Повтор — совпадение после нормализации, вхождение по словам (от 20 символов) или пересказ (sameAsk);
+ * остаётся более полный пункт на месте первого.
+ */
 function dedupe(items) {
   const out = [];
   for (const item of items) {
     const n = normItem(item); if (!n) continue;
-    const i = out.findIndex((o) => { const [a, b] = [normItem(o), n].sort((x, y) => x.length - y.length); return a === b || (a.length >= 20 && ` ${b} `.includes(` ${a} `)); });
+    const i = out.findIndex((o) => { const [a, b] = [normItem(o), n].sort((x, y) => x.length - y.length); return a === b || (a.length >= 20 && ` ${b} `.includes(` ${a} `)) || sameAsk(a, b); });
     if (i < 0) out.push(item); else if (n.length > normItem(out[i]).length) out[i] = item;
   }
   return out;
 }
 const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const IDEA_ID = /(?<![\p{L}\p{N}])I\d+(?!\p{N})/gu;
 /**
  * «Одобрить X» лишний: X уже в списке одобрений сверху или решён. Пункт без имён открытых изменений («одобрения трёх изменений»)
  * тоже лишний — ждущие одобрения стоят сверху, а когда их нет, строка «Следующий прогон» сама подсказывает одобрить изменение.
+ * 0.7.7: пункты списка (I71) в просьбе — по их изменению: сделан, план одобрен или изменение уже в архиве — решён.
  */
-export function approvalCovered(item, changes) {
+export function approvalCovered(item, changes, ideas = []) {
   const lead = /^\s*одобр/i.test(item);
-  // 0.7.6: и «Нажать кнопку одобрения X» — просьба об одобрении, если в ней названо изменение («выкатить после одобрения X» — нет)
-  if (!lead && !/^\s*наж(ать|мите)\s+кнопк[уи]\s+одобрени/i.test(item)) return false;
+  // 0.7.6: и «Нажать кнопку одобрения X» — просьба об одобрении, если в ней названо изменение («выкатить после одобрения X» — нет);
+  // 0.7.7: и «Кнопки одобрения: X, I71» без глагола (так пишет передача смены)
+  if (!lead && !/^\s*(наж(ать|мите)\s+)?кнопк[уи]\s+одобрени/i.test(item)) return false;
   const named = changes.filter((c) => new RegExp(`(^|[^\\w-])${escRe(c.name)}($|[^\\w-])`).test(item));
+  const ids = [...new Set(item.match(IDEA_ID) || [])];
   // Без имён лишний только пункт про изменения вообще; «одобрить выкат на прод» — настоящая просьба, остаётся.
-  if (!named.length) return lead && /изменени/i.test(item);
-  return named.every((c) => c.mcfly.approval);
+  if (!named.length && !ids.length) return lead && /изменени/i.test(item);
+  // Номер не из списка при названном изменении — его пометка («docs-site-restart (I58)»), решает изменение.
+  const ideaSettled = (id) => {
+    const x = ideas.find((i) => String(i.id) === id); if (!x) return named.length > 0;
+    if (x.status === 'done') return true;
+    if (!x.change) return false;
+    const c = changes.find((ch) => ch.name === x.change);
+    return !c || !!c.mcfly.approval;
+  };
+  return named.every((c) => c.mcfly.approval) && ids.every(ideaSettled);
 }
-const IDEA_ID = /(?<![\p{L}\p{N}])I\d+(?!\p{N})/gu;
 /**
  * «Решить по I54, I55», «Одобрить или отклонить I53» лишние, когда ни один названный пункт уже не ждёт решения в списке (0.7.6):
  * взятый, сделанный, отклонённый — решён; спланированный ждёт одобрения плана — это пункт «Одобрить» сверху сводки.
@@ -221,7 +248,7 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   const fromShift = nightCurrent ? shiftSection(nightCurrent.path, 'Нужны решения человека', 20).map((l) => l.replace(/^([-*]|\d+\.)\s+/, '')).filter((l) => !isNone(l)) : [];
   const acts = listActions(cfg); const after = latest ? runEnd(latest.r) : (since || new Date(0));
   const items = [...(latest ? humanItems(latest.sec) : []), ...fromShift]
-    .filter((x) => !approvalCovered(x, changes) && !ideasCovered(x, ideaList) && !actionsCovered(x, acts, records, after));
+    .filter((x) => !approvalCovered(x, changes, ideaList) && !ideasCovered(x, ideaList) && !actionsCovered(x, acts, records, after));
   for (const item of dedupe(items)) need.push(inline(item));
   const L = [`☀️ <b>${escHtml(cfg.project)}</b> · ${pad2(now.getDate())}.${pad2(now.getMonth() + 1)}`, ''];
   if (need.length) {
@@ -237,7 +264,11 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   L.push('', '<b>🌙 Прогоны</b>');
   const covered = new Set(runs.filter((r) => r.slot).map((r) => slotKey(new Date(r.started_at), r.slot)));
   const expected = since ? expectedSlots(since, now, cfg.schedule.slots).filter((e) => !covered.has(e.key)) : [];
-  const lines = [...runs.map((r) => ({ at: new Date(r.started_at), line: runLine(r) })), ...expected.map((e) => ({ at: e.at || now, line: runLine({ status: 'missed', slot: e.slot, started_at: (e.at || now).toISOString() }) }))]
+  // 0.7.7: запись прогона появляется в конце — идущий прогон показываем по mcfly/.lock, иначе сводка во время него о нём молчит
+  const cur = currentRun(p);
+  const live = cur?.id && !runs.some((r) => r.id === cur.id) && (!since || cur.since > since)
+    ? [{ at: cur.since, line: `▶️ ${hhmm(cur.since)} — идёт ${fmtDuration(Math.max(0, now - cur.since))}` }] : [];
+  const lines = [...runs.map((r) => ({ at: new Date(r.started_at), line: runLine(r) })), ...live, ...expected.map((e) => ({ at: e.at || now, line: runLine({ status: 'missed', slot: e.slot, started_at: (e.at || now).toISOString() }) }))]
     .sort((a, b) => a.at - b.at).map((x) => x.line);
   L.push(...(lines.length ? lines : ['прогонов не было']));
 
