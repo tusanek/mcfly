@@ -58,7 +58,14 @@ export async function main(argv) {
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
     change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
-  const projectDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
+  const givenDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
+  // init — в указанном каталоге, shift — сам различает сессию и основное дерево; остальные — в основном дереве проекта
+  let projectDir = givenDir;
+  if (cmd && cmd !== 'init' && cmd !== 'shift') {
+    const { projectRoot } = await import('./shift-git.js');
+    projectDir = projectRoot(givenDir);
+    if (projectDir !== givenDir) console.error(`mcfly: ${givenDir} — worktree сессии, работаю с основным деревом проекта ${projectDir}`);
+  }
   const p = paths(projectDir);
   const log = (...a) => console.log(...a);
   if (!cmd || values.help) { log(HELP); return 0; }

@@ -18,6 +18,17 @@ export function mainCheckout(dir) {
   const list = out(dir, ['worktree', 'list', '--porcelain']) || '';
   return fs.realpathSync(/^worktree (.+)$/m.exec(list)?.[1] || dir);
 }
+/**
+ * Каталог проекта для команд mcfly: из worktree сессии (не основное дерево) — основное дерево, там состояние mcfly
+ * (вопросы, предложения, метрики) и ключ подтверждения кнопок. 0.7.12: `mcfly action trust` из вкладки терминала сессии
+ * подтверждал кнопки для папки сессии, а бот проверяет основное дерево — кнопки оставались выключенными.
+ */
+export function projectRoot(dir) {
+  const top = out(dir, ['rev-parse', '--show-toplevel']);
+  if (!top) return dir;
+  const main = mainCheckout(dir);
+  return fs.realpathSync(top) === main ? dir : main;
+}
 /** Общие проверки дневной команды: worktree сессии, не основное дерево, нет прогона. */
 function guard(sessionDir) {
   const top = out(sessionDir, ['rev-parse', '--show-toplevel']);

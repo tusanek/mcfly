@@ -201,3 +201,23 @@ test('0.7.6: metric add — ключ «tasks_done 7» и нечисловое з
   assert.equal(cli(['metric', 'add', '--key', 'tasks_done', '--value', '7'], dir).status, 0);
   assert.equal(fs.readFileSync(path.join(dir, 'mcfly', 'metrics.jsonl'), 'utf8').trim().split('\n').length, 1);
 });
+
+import { bareProject as bp13 } from './helpers.js';
+function pws13() {
+  const dir = bp13(); gitRepo(dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'проект');
+  const sess = path.join(tmpDir(), 'sess');
+  git(dir, 'worktree', 'add', '-q', '-b', 'claude/sess', sess, 'main');
+  return { dir, sess };
+}
+test('0.7.12: из worktree сессии команды работают с основным деревом проекта — там состояние mcfly и подтверждение кнопок', () => {
+  const { dir, sess } = pws13();
+  const read = (d) => { try { return fs.readFileSync(path.join(d, 'mcfly', 'metrics.jsonl'), 'utf8'); } catch { return ''; } };
+  for (const [args, cwd] of [[['metric', 'add', '--key', 'from_cwd'], sess], [['metric', 'add', '--key', 'from_flag', '--project', sess], dir]]) {
+    const r = cli(args, cwd); assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /worktree сессии/);
+  }
+  assert.match(read(dir), /from_cwd/); assert.match(read(dir), /from_flag/);
+  assert.equal(read(sess), '');
+  // в основном дереве — без подсказки
+  const r = cli(['metric', 'add', '--key', 'from_main'], dir); assert.equal(r.status, 0); assert.doesNotMatch(r.stderr, /worktree сессии/);
+});
