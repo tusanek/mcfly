@@ -92,3 +92,12 @@ test('каждый агент знает правило машины владе�
   }
   assert.match(fs.readFileSync(path.join(MCFLY_ROOT, 'skills', 'mcfly-process', 'SKILL.md'), 'utf8'), /## Машина владельца/);
 });
+
+test('0.7.11: полный набор тестов проекта — только тестировщик и devops; разработчик и ревьюер гоняют свои тесты', () => {
+  const read = (...p) => fs.readFileSync(path.join(MCFLY_ROOT, ...p), 'utf8');
+  assert.match(read('skills', 'mcfly-process', 'SKILL.md'), /## Ворота качества[\s\S]*Полный набор тестов проекта запускают только тестировщик/);
+  assert.doesNotMatch(read('agents', 'developer.md'), /весь набор тестов проекта проходят/);
+  assert.match(read('agents', 'developer.md'), /полный набор не запускай/i);
+  assert.match(read('agents', 'reviewer.md'), /полный набор не запускай/);
+  assert.match(read('agents', 'tester.md'), /один раз за круг/);
+});
