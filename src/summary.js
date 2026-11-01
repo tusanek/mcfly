@@ -85,16 +85,17 @@ export function humanItems(sec) {
 // Точка между цифрами — часть числа («1.2» и «1.2.1» — разные версии), остальная пунктуация не важна.
 const normItem = (t) => String(t).toLowerCase().replace(/ё/g, 'е').replace(/<\/?code>|`/g, '').replace(/(\d)\.(?=\d)/g, '$1d').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 /** Основы слов пункта: первые 5 букв, чтобы «предложения» и «предложениям» совпали. */
-const stems = (n) => new Set(n.split(' ').filter(Boolean).map((w) => w.slice(0, 5)));
+const stems = (n) => new Set(n.split(' ').filter((w) => w.length >= 4).map((w) => w.slice(0, 5)));
 const numbered = (n) => n.split(' ').filter((w) => /\d/.test(w)).sort().join(' ');
 /**
  * Пересказ того же пункта (0.7.7): отчёт и передача смены пишут одну просьбу разными словами — общих основ не меньше половины всех
- * и от трёх, а числа и номера (версии, I75, «задача 3») одни и те же.
+ * и от трёх, а числа и номера (версии, I75, «задача 3») одни и те же. Основы — слова от 4 букв; все основы одного пункта есть
+ * в другом (0.7.13: «на сервере» и «на стенде», «локально» — разные просьбы, у каждой своё слово).
  */
 function sameAsk(a, b) {
   if (numbered(a) !== numbered(b)) return false;
   const x = stems(a); const y = stems(b); const common = [...x].filter((w) => y.has(w)).length;
-  return common >= 3 && common / (x.size + y.size - common) >= 0.5;
+  return common >= 3 && common === Math.min(x.size, y.size) && common / (x.size + y.size - common) >= 0.5;
 }
 /**
  * Повтор — совпадение после нормализации, вхождение по словам (от 20 символов) или пересказ (sameAsk);
