@@ -24,3 +24,19 @@ export function runId(d) { return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${
 export function fmtDuration(ms) { const m = Math.round(ms / 60000); return m < 60 ? `${m} мин` : `${Math.floor(m / 60)} ч ${pad2(m % 60)} мин`; }
 export function truncate(s, n) { return s.length <= n ? s : s.slice(0, n - 1) + '…'; }
 export function localDateKey(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+/**
+ * Короткая блокировка файла lock на время fn (чтение-изменение-запись файла состояния несколькими процессами).
+ * Блокировка старше 5 с считается брошенной (держатель упал посреди записи) и снимается; ждёт до ~2 с, потом бросает.
+ */
+export function withFileLock(lock, fn) {
+  ensureDir(path.dirname(lock));
+  for (let i = 0; ; i++) {
+    try { fs.closeSync(fs.openSync(lock, 'wx')); break; } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      try { if (Date.now() - fs.statSync(lock).mtimeMs > 5_000) { fs.unlinkSync(lock); continue; } } catch { continue; }
+      if (i > 400) throw new Error(`${path.basename(lock)} занят`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+    }
+  }
+  try { return fn(); } finally { try { fs.unlinkSync(lock); } catch {} }
+}

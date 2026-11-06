@@ -5,6 +5,7 @@ import { viewOf } from './overview.js';
 import { commandText } from './util.js';
 import { parseActionText } from './action-config.js';
 import { loadIdeas, saveIdeas, addIdea, transitionIdea, findIdea } from './ideas.js';
+import { parseReminder, addReminder, cancelReminder, snoozeReminder, whenText } from './reminders.js';
 
 export function parseMessage(text) {
   const t = String(text || '').trim();
@@ -15,6 +16,11 @@ export function parseMessage(text) {
   if ((m = /^не\s+сейчас\s+(I\d+)\s*([\s\S]*)$/i.exec(t))) return { type: 'defer', id: m[1].toUpperCase(), note: m[2].trim() };
   if ((m = /^(?:approve|ok|одобряю|одобрить|да)\s+([\w.-]+)\s*([\s\S]*)$/i.exec(t))) return { type: 'approve', change: m[1], note: m[2].trim() };
   if ((m = /^(?:reject|отклоняю|отклонить|нет)\s+([\w.-]+)\s*([\s\S]*)$/i.exec(t))) return { type: 'reject', change: m[1], note: m[2].trim() };
+  // Напоминания (0.8.0): «напомни 19:00 текст», «напоминания» (список — отвечает pull.js), кнопки rs:/rx: — «отложить Rн», «отменить Rн».
+  if ((m = /^напомни(?:те|ть)?(?=[\s,:]|$)[\s,:]*([\s\S]*)$/i.exec(t))) return { type: 'remind', text: m[1].trim() };
+  if ((m = /^(?:отменить|отмени)\s+(R\d+)\s*$/i.exec(t))) return { type: 'remindCancel', id: m[1].toUpperCase() };
+  if ((m = /^отложить\s+(R\d+)\s*$/i.exec(t))) return { type: 'remindSnooze', id: m[1].toUpperCase() };
+  if (/^(?:\/reminders|напоминания)$/.test(commandText(t))) return { type: 'reminders' };
   // Действия владельца (0.6.0): «действия», «действие deploy», кнопки ac:/ax:/an: — отвечает pull.js (actions.js), сюда не пишутся.
   const action = parseActionText(t);
   if (action) return action;
@@ -130,7 +136,17 @@ export function applyMessages(p, messages, { now = new Date(), by = 'human', onR
         appendText(p.answers, `\n## ${stamp} — запрос ручного запуска\n${parsed.text}\n`);
         acks.push(onRun ? onRun(parsed.text) : '▶️ Запрос записан. Запуск с ноутбука: mcfly run --mode day');
         break;
-      case 'view': case 'actions': case 'action': case 'actionYes': case 'actionNo': break;
+      // Напоминания живут в mcfly/logs/reminders.json, в answers.md не пишутся: команде они не нужны.
+      case 'remind': {
+        const r = parseReminder(parsed.text, now);
+        if (r.error) { acks.push(r.error); break; }
+        const x = addReminder(p, { at: r.at, text: r.text, now });
+        acks.push(`🔔 ${x.id}: напомню ${whenText(r.at, now)} — ${x.text}`);
+        break;
+      }
+      case 'remindCancel': acks.push(cancelReminder(p, parsed.id, now)); break;
+      case 'remindSnooze': acks.push(snoozeReminder(p, parsed.id, now)); break;
+      case 'reminders': case 'view': case 'actions': case 'action': case 'actionYes': case 'actionNo': break;
       default:
         appendText(p.answers, `\n## ${stamp} — заметка\n${parsed.text}\n`);
         acks.push('📝 Записал как заметку для команды');

@@ -15,6 +15,7 @@ import { enqueueNotice, flushNotices } from './notices.js';
 import { autoApproveAndStart } from './chain.js';
 import { ACTION_TYPES, handleActionMessage, spawnAction, ownerId } from './actions.js';
 import { ideasBrief } from './ideas.js';
+import { deliverDueReminders, remindersView } from './reminders.js';
 
 /** Дневной прогон отдельным процессом: опрос ответов не ждёт его конца. */
 export function spawnDayRun(projectDir, { chained = false } = {}) {
@@ -138,6 +139,12 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
     try { await sendView(tg, cfg.telegram.chat_id, view, p, cfg, { now, offers: String(m.fromId) === ownerId(cfg), page: parsed.page }); }
     catch (e) { log(`Ответ на «${view}» не отправлен: ${errorLine(e)}`); }
   }
+  // «напоминания» и /reminders (0.8.0): список с кнопками отмены — простым текстом, у одного сообщения одна клавиатура
+  for (const m of messages) {
+    if (parseMessage(m.text).type !== 'reminders') continue;
+    try { const v = remindersView(p, now); await tg.sendMessage(cfg.telegram.chat_id, v.text, { keyboard: v.keyboard }); }
+    catch (e) { log(`Список напоминаний не отправлен: ${errorLine(e)}`); }
+  }
   // Действия владельца (0.6.0): список, подтверждение с одноразовым кодом, запуск отдельным процессом — после записи offset.
   const owner = ownerId(cfg); // только от владельца, см. ownerId
   for (const m of messages) {
@@ -184,6 +191,11 @@ export async function pollAnswers({ projectDir, cfg, p, log = console.log, teleg
     }
   } catch (e) { log(`Авто-одобрение не выполнено: ${errorLine(e)}`); }
   while (left() >= 1_000) {
+    // Напоминания (0.8.0): срок проверяется на каждом круге (длинный опрос — до 25 с); Mac проснулся — просроченные уходят сразу.
+    if (tg) {
+      try { await deliverDueReminders({ p, cfg, now: new Date(clock()), log, send: (text, keyboard) => tg.sendMessage(cfg.telegram.chat_id, text, { keyboard }) }); }
+      catch (e) { log(`Напоминания не проверены: ${errorLine(e)}`); }
+    }
     const cur = currentRun(p);
     if (cur && !cur.pullLock) {
       if (!oldRunNoted) { log(`Идёт прогон ${cur.id || ''} старой версии mcfly — ответы из Telegram заберу после него.`); oldRunNoted = true; }

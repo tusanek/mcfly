@@ -295,7 +295,7 @@ test('0.7.0: клавиатура — третий ряд «Предложени
   for (const t of ['💡 Предложения', 'предложения', 'идеи', '/ideas']) assert.equal(viewOf(t), 'ideas', t);
   assert.deepEqual(parseMessage('💡 Предложения'), { type: 'view', view: 'ideas' });
   assert.deepEqual(parseMessage('предложения 2'), { type: 'view', view: 'ideas', page: 2 });
-  assert.equal(MENU_REV, '0.7.0');
+  assert.equal(MENU_REV, '0.8.0');
 });
 
 test('0.7.0: «Статус» — план по пункту само не одобрится; без работы — подсказка выбрать предложение', () => {

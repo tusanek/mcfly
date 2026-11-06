@@ -50,6 +50,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   action list | trust | run <id> [--yes]          действия владельца из раздела actions: список, подтверждение раздела
                                                   (только в терминале), запуск из терминала (итог и в Telegram)
   action prepare|exec <id> --ticket <t>           служебные: их запускает бот после нажатия кнопки
+  remind list | remind rm <Rн>                    напоминания владельцу (ставятся в боте: «напомни 19:00 текст»)
 Общие флаги: --project <dir> (по умолчанию текущий каталог или MCFLY_PROJECT_DIR)`;
 
 export async function main(argv) {
@@ -261,6 +262,23 @@ export async function main(argv) {
         const r = await execAction({ p, cfg, id: a.id, send, interactive: true, echo: (l) => log(l) });
         log(`Итог: ${r.status}${r.code != null ? ` (код ${r.code})` : ''}`);
         return r.status === 'ok' ? 0 : 1;
+      }
+      break;
+    }
+    case 'remind': {
+      // Ставятся сообщением боту («напомни 19:00 …»); здесь — посмотреть и отменить.
+      const { pendingReminders, cancelReminder, whenText } = await import('./reminders.js');
+      if (sub === 'list' || !sub) {
+        const list = pendingReminders(p);
+        if (!list.length) log('Напоминаний нет. Поставить — в боте: «напомни 19:00 текст».');
+        for (const r of list) log(`${r.id} — ${whenText(new Date(r.at), now)} (${fmtShort(new Date(r.at))}): ${r.text}`);
+        return 0;
+      }
+      if (sub === 'rm') {
+        if (runIdEnv) { console.error('Напоминания владельца отменяет только он: в прогоне команды mcfly remind rm запрещён.'); return 1; }
+        const id = String(rest[0] || '').toUpperCase();
+        if (!/^R\d+$/.test(id)) { console.error('Укажите номер: mcfly remind rm R3 (список — mcfly remind list)'); return 1; }
+        const line = cancelReminder(p, id, now); log(line); return line.startsWith('✖️') ? 0 : 1;
       }
       break;
     }

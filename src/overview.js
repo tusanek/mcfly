@@ -38,6 +38,7 @@ export const BOT_COMMANDS = [
   { command: 'stats', description: '📊 Статистика за 7 дней и всего' },
   { command: 'last', description: '📰 Последний прогон простыми словами' },
   { command: 'ideas', description: '💡 Предложения: что команда может сделать дальше' },
+  { command: 'reminders', description: '🔔 Напоминания: список и отмена; поставить — «напомни 19:00 текст»' },
   { command: 'run', description: '▶️ Запустить прогон' },
   { command: 'help', description: '❓ Все команды с примерами' },
 ];
@@ -52,7 +53,7 @@ export function mainKeyboard(cfg) {
   return third.length ? [...MAIN_KEYBOARD, third] : MAIN_KEYBOARD;
 }
 /** Ревизия меню: другая — задание answers один раз обновит меню и пришлёт клавиатуру (метка в mcfly/logs, она вне git). */
-export const MENU_REV = '0.7.0';
+export const MENU_REV = '0.8.0';
 /** Ревизия с учётом действий: появились (и подтверждены) или пропали — меню и клавиатура обновятся один раз. */
 const menuRev = (cfg) => `${MENU_REV}${hasActions(cfg) ? '+actions' : ''}`;
 const menuMark = (p) => path.join(p.logs, '.bot-menu');
@@ -287,6 +288,8 @@ export function helpView(p, cfg) {
     '💬 «Q12: ответ» — ответ на вопрос команды; «Q12: по умолчанию» — согласиться с ответом по умолчанию',
     '↩️ Ответ свайпом на сообщение с одним вопросом — ответ на этот вопрос, «Q12:» писать не нужно',
     ...(cfg.ideas?.enabled ? ['✅ / ⏸ кнопки под предложениями — «Берём» (план пришлёт ближайший прогон) или «Не сейчас» (обсудим в сессии)', '💡 «идея: текст» — добавить свою идею в список предложений'] : []),
+    '🔔 «напомни 19:00 текст» — напоминание в этот чат (ещё «завтра 10:00», «08.11 10:00», «через 2 ч»); названа кнопка из «🛠 Действия» — она будет под напоминанием, рядом «⏰ Через час»',
+    '🔔 «напоминания» или /reminders — что поставлено, с кнопками отмены',
     '📝 Любой другой текст — заметка команде, её прочтёт ближайший прогон',
     ...(hasActions(cfg) ? ['', '<b>Действия</b> (раздел actions в mcfly/config.yaml)', `🛠 «действия» или /actions — ${actionsHelp(cfg)}; итог приходит сообщением`] : []),
     '',
@@ -387,8 +390,8 @@ export async function ensureBotMenu(p, cfg, tg) {
   if (readText(menuMark(p), '').trim() === rev) return false;
   await tg.setMyCommands(botCommands(cfg));
   const text = rev.endsWith('+actions')
-    ? `🆕 mcfly ${escHtml(cfg.project)}: «Где мы» теперь 📍 «Статус» (со ссылками проекта); 🛠 «действия»: ${listActions(cfg).map((a) => escHtml(a.title)).join(', ')}. Действия с подтверждением, итог приходит сообщением; в «статус» — кнопки того, что можно сделать сейчас.`
-    : `🆕 mcfly ${escHtml(cfg.project)}: команды обзора — 📍 «статус» (раньше «где мы»), 🎯 «цели», 📊 «статистика», 📰 «последний прогон», ❓ «помощь». Кнопки — внизу чата, все команды — в меню «/».`;
+    ? `🆕 mcfly ${escHtml(cfg.project)}: «Где мы» теперь 📍 «Статус» (со ссылками проекта); 🛠 «действия»: ${listActions(cfg).map((a) => escHtml(a.title)).join(', ')}. Действия с подтверждением, итог приходит сообщением; в «статус» — кнопки того, что можно сделать сейчас. 🔔 Напоминания: «напомни 19:00 нажать ${listActions(cfg)[0] ? escHtml(listActions(cfg)[0].title) : 'кнопку'}», список — «напоминания».`
+    : `🆕 mcfly ${escHtml(cfg.project)}: команды обзора — 📍 «статус» (раньше «где мы»), 🎯 «цели», 📊 «статистика», 📰 «последний прогон», ❓ «помощь». Кнопки — внизу чата, все команды — в меню «/». 🔔 Напоминания: «напомни 19:00 текст», список — «напоминания».`;
   await tg.sendMessage(cfg.telegram.chat_id, text, { html: true, replyKeyboard: mainKeyboard(cfg) });
   writeText(menuMark(p), `${rev}\n`);
   return true;

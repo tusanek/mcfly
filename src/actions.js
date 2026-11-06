@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { ensureDir, readJson, writeJson, fmtDuration, truncate, pad2, runId } from './util.js';
+import { ensureDir, readJson, writeJson, fmtDuration, truncate, pad2, runId, withFileLock } from './util.js';
 import { appendMetric } from './metrics.js';
 import { enqueueNotice } from './notices.js';
 import { currentRun } from './runner.js';
@@ -77,19 +77,7 @@ const statePath = (p) => path.join(p.logs, 'actions-state.json');
  * Чтение-изменение-запись файла кодов под короткой блокировкой: код пишет процесс подготовки, забирает задание answers —
  * без неё использованный код мог «воскреснуть» (подготовка записала бы прочитанную до этого копию).
  */
-function withStateLock(p, fn) {
-  ensureDir(p.logs);
-  const lock = `${statePath(p)}.lock`;
-  for (let i = 0; ; i++) {
-    try { fs.closeSync(fs.openSync(lock, 'wx')); break; } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      try { if (Date.now() - fs.statSync(lock).mtimeMs > 5_000) { fs.unlinkSync(lock); continue; } } catch { continue; }
-      if (i > 400) throw new Error('файл кодов действий занят');
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
-    }
-  }
-  try { return fn(); } finally { try { fs.unlinkSync(lock); } catch {} }
-}
+const withStateLock = (p, fn) => withFileLock(`${statePath(p)}.lock`, fn);
 function loadState(p) { const s = readJson(statePath(p), {}) || {}; return { codes: s.codes || {}, tickets: s.tickets || {} }; }
 function saveState(p, st) {
   ensureDir(p.logs);
