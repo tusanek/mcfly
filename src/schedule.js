@@ -76,40 +76,111 @@ export function staleLabels(files, project, plannedLabels) {
   return ownLabels(files, project).filter((label) => !plannedLabels.includes(label));
 }
 
-function removeJob(dir, uid, label) {
-  spawnSync('launchctl', ['bootout', `gui/${uid}/${label}`], { encoding: 'utf8' });
-  fs.unlinkSync(path.join(dir, `${label}.plist`));
+/** Вызов launchctl. Тесты подменяют его (опция `launchctl`), чтобы не трогать настоящие задания. */
+export function runLaunchctl(args) {
+  const r = spawnSync('launchctl', args, { encoding: 'utf8' });
+  return { status: r.status ?? 1, out: String(r.stderr || r.stdout || '').trim() };
+}
+/** Синхронная пауза: install синхронный, а ждать выгрузку задания надо до 30 с. */
+export function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+
+const UNLOAD_WAIT_MS = 30_000; const POLL_MS = 500; const LOAD_ATTEMPTS = 5; const RETRY_PAUSE_MS = 2_000;
+/** Общие опции работы с launchd; всё подменяемо в тестах. */
+function lc(opts) {
+  return { launchctl: runLaunchctl, sleep: sleepSync, now: Date.now, uid: process.getuid(), agentsDir: launchAgentsDir(), log: console.log, ...opts };
+}
+/** Знает ли launchd задание: `launchctl print` по метке без ошибки. */
+function isLoaded(label, o) { return o.launchctl(['print', `gui/${o.uid}/${label}`]).status === 0; }
+/** Ждать, пока launchd отпустит задание, не дольше 30 с. */
+function waitUnloaded(label, o) {
+  const deadline = o.now() + UNLOAD_WAIT_MS;
+  while (isLoaded(label, o)) { if (o.now() >= deadline) return false; o.sleep(POLL_MS); }
+  return true;
+}
+/**
+ * Выгрузить задание и дождаться, пока оно исчезнет. bootout возвращается сразу, а процесс ещё уходит:
+ * 07.11 bootstrap сразу после bootout упал (ошибка 5 «Input/output error»), и answers пропал до повторного install.
+ */
+export function unloadJob(label, opts) {
+  const o = lc(opts);
+  if (!isLoaded(label, o)) return true;
+  o.launchctl(['bootout', `gui/${o.uid}/${label}`]);
+  return waitUnloaded(label, o);
+}
+/**
+ * Загрузить задание (прежнее уже выгружено); при сбое — ещё попытки с паузой.
+ * Если после сбоя launchd всё же знает метку — загрузилось наше задание: прежнее выгружено до вызова.
+ */
+export function loadJob(label, file, opts) {
+  const o = lc(opts); let error = '';
+  for (let i = 1; i <= LOAD_ATTEMPTS; i++) {
+    const r = o.launchctl(['bootstrap', `gui/${o.uid}`, file]);
+    if (r.status === 0) return { ok: true };
+    error = r.out || `код ${r.status}`;
+    if (i < LOAD_ATTEMPTS) o.sleep(RETRY_PAUSE_MS);
+    if (isLoaded(label, o)) return { ok: true };
+  }
+  return { ok: false, error };
 }
 
-export function install(cfg, { projectDir, mcflyBin, logsDir, dryRun = false, log = console.log }) {
+function removeJob(label, o) {
+  const ok = unloadJob(label, o);
+  fs.rmSync(path.join(o.agentsDir, `${label}.plist`), { force: true });
+  return ok;
+}
+
+/** Ставит задания плана; возвращает { jobs, failed } — failed: метки, которые не работают после установки. */
+export function install(cfg, opts) {
+  const o = lc(opts); const { projectDir, mcflyBin, logsDir, dryRun = false, log } = o;
   const jobs = planJobs(cfg, { projectDir, node: process.execPath, mcflyBin, logsDir, pathEnv: defaultPathEnv(), home: os.homedir() });
-  ensureDir(logsDir);
-  const dir = ensureDir(launchAgentsDir()); const uid = process.getuid();
-  for (const label of staleLabels(fs.readdirSync(dir), cfg.project, jobs.map((j) => j.label))) {
+  const failed = [];
+  if (!dryRun) ensureDir(logsDir);
+  const dir = dryRun ? o.agentsDir : ensureDir(o.agentsDir);
+  for (const label of staleLabels(exists(dir) ? fs.readdirSync(dir) : [], cfg.project, jobs.map((j) => j.label))) {
     if (dryRun) { log(`[dry-run] удалить ${label} (слота нет в конфигурации)`); continue; }
-    removeJob(dir, uid, label);
-    log(`✓ удалено ${label} (слота нет в конфигурации)`);
+    if (removeJob(label, o)) log(`✓ удалено ${label} (слота нет в конфигурации)`);
+    else { failed.push(label); log(`✗ ${label}: plist удалён, но задание не выгрузилось за 30 с — выполните mcfly schedule install ещё раз`); }
   }
   for (const j of jobs) {
     const file = path.join(dir, `${j.label}.plist`);
     if (dryRun) { log(`[dry-run] ${file} → ${jobWhen(j)}`); continue; }
-    if (exists(file)) spawnSync('launchctl', ['bootout', `gui/${uid}/${j.label}`], { encoding: 'utf8' });
+    const unloaded = unloadJob(j.label, o);
     writeText(file, j.plist);
-    const r = spawnSync('launchctl', ['bootstrap', `gui/${uid}`, file], { encoding: 'utf8' });
-    log(`${r.status === 0 ? '✓' : '✗'} ${j.label} → ${jobWhen(j)}${r.status === 0 ? '' : ' ' + String(r.stderr || r.stdout).trim()}`);
+    if (!unloaded) { failed.push(j.label); log(`✗ ${j.label} → ${jobWhen(j)}: прежнее задание не выгрузилось за 30 с, работает старая версия. Выполните mcfly schedule install ещё раз.`); continue; }
+    const r = loadJob(j.label, file, o);
+    if (r.ok) log(`✓ ${j.label} → ${jobWhen(j)}`);
+    else { failed.push(j.label); log(`✗ ${j.label} → ${jobWhen(j)}: не загружено, задание не работает (${r.error}). Выполните mcfly schedule install ещё раз; проверка — mcfly schedule status.`); }
   }
-  return jobs;
+  return { jobs, failed };
 }
-export function remove(cfg, { log = console.log }) {
-  const dir = launchAgentsDir(); if (!exists(dir)) return; const uid = process.getuid();
-  for (const label of ownLabels(fs.readdirSync(dir), cfg.project)) {
-    removeJob(dir, uid, label);
-    log(`✓ удалено ${label}`);
+export function remove(cfg, opts) {
+  const o = lc(opts); if (!exists(o.agentsDir)) return;
+  for (const label of ownLabels(fs.readdirSync(o.agentsDir), cfg.project)) {
+    const ok = removeJob(label, o);
+    o.log(ok ? `✓ удалено ${label}` : `✗ ${label}: plist удалён, но задание не выгрузилось за 30 с`);
   }
 }
-export function status(cfg, { log = console.log }) {
-  const r = spawnSync('launchctl', ['list'], { encoding: 'utf8' });
-  const lines = String(r.stdout || '').split('\n').filter((l) => l.includes(`com.mcfly.${cfg.project}.`));
-  if (!lines.length) log('Задания launchd не установлены (mcfly schedule install).');
-  for (const l of lines) log(l);
+/** Строки `launchctl list` проекта: метка → { pid, exit }. */
+function listedJobs(cfg, o) {
+  const prefix = `com.mcfly.${cfg.project}.`; const map = new Map();
+  for (const line of o.launchctl(['list']).out.split('\n')) {
+    const [pid, exit, label] = line.split('\t');
+    if (label?.startsWith(prefix) && ownLabels([`${label}.plist`], cfg.project).length) map.set(label, { pid: pid === '-' ? '' : pid, exit });
+  }
+  return map;
+}
+/** Задания плана и их состояние в launchd; возвращает число заданий плана, которые не загружены. */
+export function status(cfg, opts) {
+  const o = lc(opts);
+  const jobs = planJobs(cfg, { projectDir: o.projectDir, node: process.execPath, mcflyBin: o.mcflyBin, logsDir: o.logsDir, pathEnv: '', home: os.homedir() });
+  const listed = listedJobs(cfg, o); let missing = 0;
+  for (const j of jobs) {
+    const s = listed.get(j.label);
+    if (!s) { missing++; o.log(`✗ ${j.label} → ${jobWhen(j)} — НЕ загружено, задание не сработает. Выполните mcfly schedule install.`); continue; }
+    const run = s.pid ? `работает (процесс ${s.pid})` : j.keepAlive ? 'загружено, процесс сейчас не запущен (перезапуск после паузы)' : 'загружено';
+    o.log(`✓ ${j.label} → ${jobWhen(j)} — ${run}${s.exit && s.exit !== '0' ? `; последний выход с кодом ${s.exit}` : ''}`);
+  }
+  const planned = new Set(jobs.map((j) => j.label));
+  for (const label of listed.keys()) if (!planned.has(label)) o.log(`⚠ ${label} — загружено, но слота нет в конфигурации; mcfly schedule install его уберёт.`);
+  return missing;
 }

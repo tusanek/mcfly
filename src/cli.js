@@ -284,9 +284,13 @@ export async function main(argv) {
     }
     case 'schedule': {
       const mcflyBin = path.join(MCFLY_ROOT, 'bin', 'mcfly');
-      if (sub === 'install') { schedule.install(cfg, { projectDir, mcflyBin, logsDir: p.logs, dryRun: !!values['dry-run'], log }); return 0; }
+      if (sub === 'install') {
+        const { failed } = schedule.install(cfg, { projectDir, mcflyBin, logsDir: p.logs, dryRun: !!values['dry-run'], log });
+        if (failed.length) console.error(`Не работают задания: ${failed.join(', ')}. Выполните mcfly schedule install ещё раз; проверка — mcfly schedule status.`);
+        return failed.length ? 1 : 0;
+      }
       if (sub === 'remove') { schedule.remove(cfg, { log }); return 0; }
-      if (sub === 'status') { schedule.status(cfg, { log }); return 0; }
+      if (sub === 'status') { return schedule.status(cfg, { projectDir, mcflyBin, logsDir: p.logs, log }) ? 1 : 0; }
       break;
     }
   }
