@@ -375,3 +375,40 @@ test('0.7.5: «Можно сделать кнопкой» — неизвестн
   await sendView({ async sendMessage(_, text) { sent.push(text); return []; } }, '42', 'status', p, c, { offerKeyboard: () => [[{ text: '?', callback_data: 'ac:нет' }]] });
   assert.equal(sent.at(-1), '🛠 <b>Можно сделать кнопкой</b> — сначала бот покажет, что будет сделано');
 });
+
+test('0.8.2: after — проверка конфигурации', () => {
+  const dep = { title: '🚀 Выкатить', run: 'x', offer: 'exit 0' };
+  assert.deepEqual(actionErrors({ deploy: dep, ev: { title: 'Eval', run: 'x', after: 'deploy' } }), []);
+  assert.ok(actionErrors({ ev: { title: 'Eval', run: 'x', after: 'nope' } }).some((e) => /actions\.ev\.after: нет действия «nope»/.test(e)));
+  assert.ok(actionErrors({ deploy: { title: 'В', run: 'x' }, ev: { title: 'Eval', run: 'x', after: 'deploy' } }).some((e) => /actions\.ev\.after: у действия «deploy» нет offer/.test(e)));
+  assert.ok(actionErrors({ ev: { title: 'Eval', run: 'x', offer: 'exit 0', after: 'ev' } }).some((e) => /actions\.ev\.after: не само действие/.test(e)));
+  assert.ok(actionErrors({ deploy: dep, ev: { title: 'Eval', run: 'x', after: ['deploy'] } }).some((e) => /actions\.ev\.after: идентификатор действия/.test(e)));
+  assert.equal(getAction(withActions({ ev: { title: 'Eval', run: 'x' } }), 'ev').after, '');
+});
+
+test('0.8.2: after — перед «Да» предупреждение и кнопка, если offer того действия вернул 0', async () => {
+  const mk = (code) => withActions({ deploy: { title: '🚀 Выкатить', run: 'x', offer: `exit ${code}` }, ev: { title: '🧪 Eval', run: 'echo', prepare: 'echo "@@ оценка ~1091577"', after: 'deploy' }, st: { title: 'Сервер', run: 'echo', after: 'deploy' } });
+  const need = mk(0); const { p } = trustedProject(need);
+  let r = recorder();
+  assert.equal((await prepareAction({ p, cfg: need, id: 'ev', send: r.send, ticket: ticketFor(p, need, 'ev') })).status, 'ok');
+  const m = r.sent[0];
+  assert.match(m.text, /⚠️ Похоже, сначала нужно «🚀 Выкатить»/); assert.match(m.text, /«🧪 Eval» сработает на прежней версии/);
+  assert.ok(m.text.indexOf('⚠️') < m.text.indexOf('оценка ~1091577'), 'предупреждение выше вывода prepare');
+  assert.match(m.keyboard[0][0].callback_data, /^ax:ev:/, '«Да» на месте: решает владелец');
+  assert.deepEqual(m.keyboard[1], [{ text: '🚀 Выкатить', callback_data: 'ac:deploy' }]);
+  // действие без prepare — подтверждение сразу, тоже с предупреждением
+  r = recorder();
+  await handleActionMessage({ parsed: { type: 'action', id: 'st' }, p, cfg: need, send: r.send, spawn: () => {} });
+  assert.match(r.sent[0].text, /сначала нужно «🚀 Выкатить»/); assert.equal(r.sent[0].keyboard.length, 2);
+  // выкатывать нечего — как раньше
+  const done = mk(1); const t2 = trustedProject(done);
+  r = recorder();
+  await prepareAction({ p: t2.p, cfg: done, id: 'ev', send: r.send, ticket: ticketFor(t2.p, done, 'ev') });
+  assert.doesNotMatch(r.sent[0].text, /⚠️/); assert.equal(r.sent[0].keyboard.length, 1);
+});
+
+test('0.8.2: after — агенты в контексте видят порядок «сначала выкат»', () => {
+  const c = withActions({ deploy: { title: '🚀 Выкатить', run: 'x', offer: 'exit 0' }, ev: { title: '🧪 Eval промптов', run: 'x', after: 'deploy' } });
+  const { p } = trustedProject(c);
+  assert.match(buildContext(p, c), /«🧪 Eval промптов» \(ev\) — только после «🚀 Выкатить»/);
+});

@@ -177,13 +177,28 @@ export function actionsMessage(p, cfg) {
   return { text: L.join('\n'), keyboard: list.map((a) => [{ text: a.title, callback_data: `ac:${a.id}` }]) };
 }
 
-/** Запрос подтверждения: что будет сделано, вывод prepare, кнопки «Да» с кодом и «Отмена». */
-export function confirmMessage(a, code, prepared = '') {
+/**
+ * 0.8.2: действие с after (eval после выката) — offer того действия вернул 0, то есть оно сейчас нужно: предупреждение
+ * и его кнопка. 08.11 владелец нажал eval до выката, и eval прогнал из кэша прежние промпты. Не блокирует: решает владелец.
+ */
+export async function afterWarning(p, cfg, a, { timeoutMs = OFFER_TIMEOUT_MS } = {}) {
+  const b = a.after ? getAction(cfg, a.after) : null;
+  if (!b?.offer) return null;
+  const r = await runCommand(b.offer, { cwd: p.projectDir, timeoutMs });
+  if (r.code !== 0 || r.timedOut) return null;
+  return { text: `⚠️ Похоже, сначала нужно «${b.title}» — его проверка говорит, что есть что делать. Без этого «${a.title}» сработает на прежней версии.`, button: { text: b.title, callback_data: `ac:${b.id}` } };
+}
+
+/** Запрос подтверждения: предупреждение after, что будет сделано, вывод prepare, кнопки «Да» с кодом и «Отмена». */
+export function confirmMessage(a, code, prepared = '', warn = null) {
   const L = [`<b>${escHtml(a.title)}</b>`];
+  if (warn) L.push(escHtml(warn.text));
   if (a.describe) L.push(`Что будет сделано: ${escHtml(a.describe)}`);
   if (prepared.trim()) L.push('', pre(truncate(prepared.trim(), RESULT_MAX)));
   L.push('', `<i>Подтверждение действует 30 минут. Предел времени — ${a.timeout_minutes} мин.</i>`);
-  return { text: L.join('\n'), keyboard: [[{ text: '✅ Да, выполнить', callback_data: `ax:${a.id}:${code}` }, { text: '✖️ Отмена', callback_data: `an:${a.id}` }]] };
+  const keyboard = [[{ text: '✅ Да, выполнить', callback_data: `ax:${a.id}:${code}` }, { text: '✖️ Отмена', callback_data: `an:${a.id}` }]];
+  if (warn) keyboard.push([warn.button]);
+  return { text: L.join('\n'), keyboard };
 }
 
 /** Строки итога: с префиксом «@@ » (без него), иначе последние TAIL_LINES строк вывода. */
@@ -283,7 +298,8 @@ export async function prepareAction({ p, cfg, id, send, ticket = null, now = () 
     await deliver(p, send, { text: `❌ Подготовка «${escHtml(a.title)}» не удалась (${why}) — действие не запускаю.\n${pre(truncate(r.lines.filter((l) => l.trim()).slice(-TAIL_LINES).join('\n'), RESULT_MAX))}`, keyboard: [] }, now());
     return { status: 'error' };
   }
-  await deliver(p, send, confirmMessage(a, issueCode(p, a.id, now(), actionsDigest(cfg, p.projectDir)), resultLines(r.lines).join('\n')), now());
+  const warn = await afterWarning(p, cfg, a);
+  await deliver(p, send, confirmMessage(a, issueCode(p, a.id, now(), actionsDigest(cfg, p.projectDir)), resultLines(r.lines).join('\n'), warn), now());
   return { status: 'ok' };
 }
 
@@ -360,6 +376,6 @@ export async function handleActionMessage({ parsed, p, cfg, send, spawn: spawnRa
   }
   if (!a.confirm) { spawnKind('exec', a.id); return send(`▶️ ${escHtml(a.title)} — итог придёт сообщением`, []); }
   if (a.prepare) { spawnKind('prepare', a.id); return send(`🔎 Готовлю «${escHtml(a.title)}» — что будет сделано, пришлю с кнопкой подтверждения`, []); }
-  const m = confirmMessage(a, issueCode(p, a.id, now, digest));
+  const m = confirmMessage(a, issueCode(p, a.id, now, digest), '', await afterWarning(p, cfg, a));
   return send(m.text, m.keyboard);
 }

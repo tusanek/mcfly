@@ -5,7 +5,7 @@
 import { commandText } from './util.js';
 export const ACTION_ID_RE = /^[a-z0-9-]{1,20}$/;
 
-export const ACTION_DEFAULTS = { title: '', describe: '', run: '', prepare: '', offer: '', followups: [], timeout_minutes: 60, confirm: true, during_run: false, vpn: false };
+export const ACTION_DEFAULTS = { title: '', describe: '', run: '', prepare: '', offer: '', followups: [], after: '', timeout_minutes: 60, confirm: true, during_run: false, vpn: false };
 
 /** Ошибки раздела actions для validate (config.js). */
 export function actionErrors(actions) {
@@ -23,6 +23,13 @@ export function actionErrors(actions) {
     for (const k of ['confirm', 'during_run', 'vpn']) if (a[k] != null && typeof a[k] !== 'boolean') errors.push(`${at}.${k}: true или false`);
     if (a.followups != null && !Array.isArray(a.followups)) errors.push(`${at}.followups: список идентификаторов`);
     for (const f of a.followups || []) if (!Object.hasOwn(actions, f)) errors.push(`${at}.followups: нет действия «${f}»`);
+    // 0.8.2: after — действие, которое нужно сделать раньше (eval после выката); «нужно ли» говорит его offer
+    if (a.after != null) {
+      if (typeof a.after !== 'string' || !a.after) errors.push(`${at}.after: идентификатор действия`);
+      else if (a.after === id) errors.push(`${at}.after: не само действие`);
+      else if (!Object.hasOwn(actions, a.after)) errors.push(`${at}.after: нет действия «${a.after}»`);
+      else if (!actions[a.after]?.offer) errors.push(`${at}.after: у действия «${a.after}» нет offer — нечем проверить, нужно ли оно`);
+    }
   }
   return errors;
 }
