@@ -39,6 +39,12 @@ export function getAction(cfg, id) {
   const a = cfg.actions?.[id];
   return a && ACTION_ID_RE.test(id) ? { ...ACTION_DEFAULTS, ...a, id } : null;
 }
+/** Строки команд действия для mcfly action list и trust: владелец видит всё, что подтверждает, включая after. */
+export function actionCommandLines(a, cfg) {
+  const b = a.after ? getAction(cfg, a.after) : null;
+  return [`  run: ${a.run}`, a.prepare && `  prepare: ${a.prepare}`, a.offer && `  offer: ${a.offer}`,
+    a.after && `  after: ${a.after} — перед «Да» предупредит, если сначала нужно «${b?.title || a.after}»`].filter(Boolean).join('\n');
+}
 export function listActions(cfg) { return Object.keys(cfg.actions || {}).map((id) => getAction(cfg, id)).filter(Boolean); }
 export const hasActions = (cfg) => listActions(cfg).length > 0;
 /** Кто может запускать действия: telegram.owner_id, а без него — собеседник личного чата chat_id (в личном чате id чата = id собеседника); в группе без owner_id — никто. */

@@ -12,7 +12,7 @@ import { MCFLY_ROOT } from './prompt.js';
 import { escHtml, hhmm as hm } from './summary.js';
 import { getAction, listActions, hasActions } from './action-config.js';
 
-export { ACTION_ID_RE, ACTION_DEFAULTS, actionErrors, getAction, listActions, hasActions, parseActionText, ownerId } from './action-config.js';
+export { ACTION_ID_RE, ACTION_DEFAULTS, actionErrors, actionCommandLines, getAction, listActions, hasActions, parseActionText, ownerId } from './action-config.js';
 
 /**
  * Действия владельца из Telegram (0.6.0): выкат, откат, eval и другое, что раньше владелец запускал скриптом в терминале.

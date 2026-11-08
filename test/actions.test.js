@@ -16,7 +16,7 @@ import { noticesPath } from '../src/notices.js';
 import {
   actionErrors, getAction, issueCode, takeCode, CODE_TTL_MS, handleActionMessage, execAction, prepareAction,
   acquireActionLock, releaseActionLock, currentAction, resultLines, offerKeyboard, actionLockPath,
-  trustActions, isTrusted, actionsDigest, issueTicket, takeTicket,
+  trustActions, isTrusted, actionsDigest, issueTicket, takeTicket, actionCommandLines,
 } from '../src/actions.js';
 import { cfg, bareProject, tmpDir } from './helpers.js';
 import { MCFLY_ROOT } from '../src/prompt.js';
@@ -411,4 +411,10 @@ test('0.8.2: after — агенты в контексте видят поряд�
   const c = withActions({ deploy: { title: '🚀 Выкатить', run: 'x', offer: 'exit 0' }, ev: { title: '🧪 Eval промптов', run: 'x', after: 'deploy' } });
   const { p } = trustedProject(c);
   assert.match(buildContext(p, c), /«🧪 Eval промптов» \(ev\) — только после «🚀 Выкатить»/);
+});
+
+test('0.8.2: action list и trust показывают after — владелец видит, что подтверждает', () => {
+  const c = withActions({ deploy: { title: '🚀 Выкатить', run: 'd', offer: 'exit 0' }, ev: { title: '🧪 Eval', run: 'e', prepare: 'p', after: 'deploy' } });
+  assert.equal(actionCommandLines(getAction(c, 'ev'), c), '  run: e\n  prepare: p\n  after: deploy — перед «Да» предупредит, если сначала нужно «🚀 Выкатить»');
+  assert.equal(actionCommandLines(getAction(c, 'deploy'), c), '  run: d\n  offer: exit 0');
 });
