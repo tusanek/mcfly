@@ -31,8 +31,14 @@ test('autoDefault: неизвестная категория и унаследо
   assert.equal(autoDefault(cfg, 'production'), false); assert.equal(autoDefault(cfg, 'toString'), false);
 });
 test('ideas: значения по умолчанию и проверки', () => {
-  assert.deepEqual(parseConfig('project: x\n').ideas, { enabled: true, backlog: '', per_run: 2, per_idle_run: 4, show: 7, research: true });
+  assert.deepEqual(parseConfig('project: x\n').ideas, { enabled: true, backlog: '', per_run: 2, per_idle_run: 4, show: 7, research: true, plan_ahead: 1 });
   assert.throws(() => parseConfig('ideas:\n  show: 0\n'), /ideas\.show/);
   assert.throws(() => parseConfig('ideas:\n  per_run: -1\n'), /ideas\.per_run/);
   assert.throws(() => parseConfig('ideas:\n  enabled: "да"\n'), /ideas\.enabled/);
+});
+
+test('0.8.3: ideas.plan_ahead — по умолчанию 1, целое от 1', () => {
+  assert.equal(parseConfig('project: x\n').ideas.plan_ahead, 1);
+  assert.equal(parseConfig('project: x\nideas:\n  plan_ahead: 3\n').ideas.plan_ahead, 3);
+  assert.throws(() => parseConfig('project: x\nideas:\n  plan_ahead: 0\n'), /ideas\.plan_ahead/);
 });

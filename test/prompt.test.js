@@ -39,3 +39,16 @@ test('0.7.0: шаг 1 промпта не велит перерабатыват�
   const step1 = text.split('\n').find((l) => l.startsWith('1. Ответы человека.'));
   assert.match(step1, /кроме изменений с `mcfly\.idea`/);
 });
+
+test('0.8.3: запас планов — plan_ahead в шагах 2a и 2b, порядок через --priority', () => {
+  const p = paths(bareProject());
+  const one = buildLeadPrompt({ cfg, p, runId: 'r', mode: 'day', deadline: new Date(), context: '' });
+  assert.ok(one.includes('пока в «Ожидают одобрения» не станет 1 изменений'), 'по умолчанию 2a — один план, как раньше');
+  assert.ok(one.includes(`не станет ${cfg.limits.max_changes_per_run} изменений (перед каждым`), '2b — не меньше max_changes_per_run, как раньше');
+  const three = buildLeadPrompt({ cfg: { ...cfg, ideas: { ...cfg.ideas, plan_ahead: 3 } }, p, runId: 'r', mode: 'day', deadline: new Date(), context: '' });
+  assert.ok(three.includes('пока в «Ожидают одобрения» не станет 3 изменений; перед каждым новым планом'));
+  assert.ok(three.includes('не станет 3 изменений (перед каждым'));
+  for (const s of ['`--priority` больше', 'делается после <имя>', 'не входит в лимит изменений']) assert.ok(three.includes(s), s);
+  assert.ok(!three.includes('по одному из них'));
+  assert.ok(!/\{\{\w+\}\}/.test(three));
+});

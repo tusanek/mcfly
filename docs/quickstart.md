@@ -1,6 +1,6 @@
 # Новый проект с mcfly за 30 минут
 
-0. Установите инструменты: Claude Code CLI с подпиской, `npm install -g @fission-ai/openspec@latest`, комплект `git clone … ~/mcfly && cd ~/mcfly && npm install && npm link`.
+0. Установите инструменты: Claude Code CLI с подпиской, `npm install -g @fission-ai/openspec@latest`, комплект `git clone https://github.com/tusanek/mcfly.git ~/mcfly && cd ~/mcfly && npm install && npm link`.
 1. В каталоге проекта: `git init` (если ещё нет) и `mcfly init --name <проект> [--with-tracker]`. Появятся `mcfly/`, правила в `.claude/settings.json`, раздел в CLAUDE.md, `openspec/` с командами `/opsx:*`.
 2. Создайте бота в BotFather, скопируйте токен: `cp mcfly/.env.example mcfly/.env` и впишите `MCFLY_TELEGRAM_TOKEN=…`.
 3. `mcfly telegram pair`, затем отправьте боту любое сообщение — chat_id сохранится в `mcfly/config.yaml`.
