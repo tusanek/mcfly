@@ -273,6 +273,13 @@ test('0.11.0: ящик находок — только файл .md в дома�
   const outside = tmpDir(); fs.symlinkSync(outside, path.join(home, 'link')); fs.writeFileSync(path.join(home, 'real.md'), ''); fs.symlinkSync(path.join(home, 'real.md'), path.join(home, 'alias.md'));
   assert.match(inboxProblem(path.join(home, 'link', 'x.md')), /домашнем каталоге/, 'папка-ссылка наружу');
   assert.match(inboxProblem(path.join(home, 'alias.md')), /не ссылкой/);
+  // 0.11.2: ссылка выше по пути при ещё не созданных папках; файлы правил агентов; папка проекта
+  assert.match(inboxProblem(path.join(home, 'link', 'нет', 'такой', 'x.md')), /домашнем каталоге/, 'папка-ссылка наружу выше несуществующих папок');
+  assert.equal(inboxProblem(path.join(home, 'новая', 'папка', 'x.md')), '', 'папок ещё нет — создадим');
+  for (const name of ['CLAUDE.md', 'agents.md', 'README.md', 'CLAUDE.local.md', 'SKILL.md']) assert.match(inboxProblem(path.join(home, 'notes', name)), /файлом правил или описания проекта/, name);
+  fs.mkdirSync(path.join(home, 'proj', '.git'), { recursive: true });
+  assert.match(inboxProblem(path.join(home, 'proj', 'docs', 'inbox.md')), /внутри проекта/);
+  assert.equal(fs.existsSync(path.join(outside, 'нет')), false, 'проверка ничего не создаёт');
   const data = loadFindings(p); addFinding(data, { text: 'Проблема' });
   const r = decideFinding(data, { ...cfg, findings: { enabled: true, inbox: path.join(home, '.zshrc') } }, 'F1', 'send');
   assert.match(r.error, /ящик должен быть файлом \.md \(findings\.inbox/); assert.equal(r.item.status, 'new');
