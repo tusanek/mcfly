@@ -41,7 +41,7 @@ export function runStats(r) {
   if (r.permission_denials > 0) parts.push(`отказов разрешений ${r.permission_denials}`);
   return parts.map((x) => `, ${x}`).join('');
 }
-export const EVENT_LABELS = { tasks_done: 'задач закрыто', escalations: 'эскалаций', review_rejections: 'возвратов с ревью', changes_proposed: 'изменений предложено', changes_archived: 'изменений завершено', tests_failed: 'падений тестов', ideas_added: 'предложений добавлено' };
+export const EVENT_LABELS = { tasks_done: 'задач закрыто', escalations: 'эскалаций', review_rejections: 'возвратов с ревью', changes_proposed: 'изменений предложено', changes_archived: 'изменений завершено', tests_failed: 'падений тестов', ideas_added: 'предложений добавлено', ux_issues: 'находок по удобству' };
 export function formatEvents(events) {
   const keys = Object.keys(events);
   return keys.length ? keys.map((k) => `${events[k]} ${EVENT_LABELS[k] || k}`).join(', ') : 'нет событий';

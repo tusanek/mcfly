@@ -16,6 +16,11 @@ export function parseMessage(text) {
   if ((m = /^не\s+сейчас\s+(I\d+)\s*([\s\S]*)$/i.exec(t))) return { type: 'defer', id: m[1].toUpperCase(), note: m[2].trim() };
   if ((m = /^(?:approve|ok|одобряю|одобрить|да)\s+([\w.-]+)\s*([\s\S]*)$/i.exec(t))) return { type: 'approve', change: m[1], note: m[2].trim() };
   if ((m = /^(?:reject|отклоняю|отклонить|нет)\s+([\w.-]+)\s*([\s\S]*)$/i.exec(t))) return { type: 'reject', change: m[1], note: m[2].trim() };
+  // Образцы (0.10.0): «образец имя» (кнопка sh:) — отвечает pull.js; «образец кнопка» — нажатие ненастоящей кнопки под образцом.
+  if (/^образец кнопка$/i.test(t)) return { type: 'sampleTap' };
+  if ((m = /^образец\s+([\w.-]+)\s*$/i.exec(t))) return { type: 'sample', change: m[1] };
+  // Жалоба на удобство (0.10.0): «неудобно: текст» — пункт списка сразу взят и планируется раньше остальных.
+  if ((m = /^неудобно\s*[:：\-–—]\s*([\s\S]*)$/iu.exec(t))) return { type: 'ux', text: m[1].trim() };
   // Напоминания (0.8.0): «напомни 19:00 текст», «напоминания» (список — отвечает pull.js), кнопки rs:/rx: — «отложить Rн», «отменить Rн».
   if ((m = /^напомни(?:те|ть)?(?=[\s,:]|$)[\s,:]*([\s\S]*)$/i.exec(t))) return { type: 'remind', text: m[1].trim() };
   if ((m = /^(?:отменить|отмени)\s+(R\d+)\s*$/i.exec(t))) return { type: 'remindCancel', id: m[1].toUpperCase() };
@@ -98,6 +103,20 @@ export function applyMessages(p, messages, { now = new Date(), by = 'human', onR
         } catch (e) { acks.push(`ℹ️ ${e.message}`); }
         break;
       }
+      case 'ux': {
+        if (!parsed.text) { acks.push('⚠️ Напишите после «неудобно:», что именно неудобно'); break; }
+        if (idata.error) { acks.push(broken); break; }
+        const [title, ...rest] = parsed.text.split('\n');
+        try {
+          const idea = addIdea(idata, { title, benefit: rest.join('\n').trim() || 'жалоба владельца на удобство — исправить раньше новых функций', source: 'owner-note', size: 'S', now });
+          // Без кнопки «Берём»: жалоба владельца — уже решение; ux — команда планирует её первой
+          transitionIdea(idata, idea.id, 'taken', { actor: 'bot', note: 'жалоба «неудобно»', now });
+          idea.ux = true; ideasDirty = true;
+          appendText(p.answers, `\n## ${stamp} — неудобно ${idea.id}\n${parsed.text}\n`);
+          acks.push(`😖 ${idea.id} принял — команда займётся этим первым делом, раньше новых функций`);
+        } catch (e) { acks.push(`ℹ️ ${e.message}`); }
+        break;
+      }
       case 'ideaNote': {
         findIdea(idata, parsed.id).discuss_note = parsed.text; ideasDirty = true;
         appendText(p.answers, `\n## ${stamp} — причина «не сейчас» ${parsed.id}\n${parsed.text}\n`);
@@ -146,7 +165,7 @@ export function applyMessages(p, messages, { now = new Date(), by = 'human', onR
       }
       case 'remindCancel': acks.push(cancelReminder(p, parsed.id, now)); break;
       case 'remindSnooze': acks.push(snoozeReminder(p, parsed.id, now)); break;
-      case 'reminders': case 'view': case 'actions': case 'action': case 'actionYes': case 'actionNo': break;
+      case 'sample': case 'sampleTap': case 'reminders': case 'view': case 'actions': case 'action': case 'actionYes': case 'actionNo': break;
       default:
         appendText(p.answers, `\n## ${stamp} — заметка\n${parsed.text}\n`);
         acks.push('📝 Записал как заметку для команды');

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { readText, fmtShort, exists, truncate } from './util.js';
 import { loadQuestions, openQuestions } from './questions.js';
 import { listChanges, pendingApprovals, approvedWithWork, pausedChanges, priorityOf } from './approvals.js';
@@ -8,6 +9,13 @@ import { listActions } from './action-config.js';
 import { loadIdeas } from './ideas.js';
 
 export function isMcflyProject(p) { return exists(p.config); }
+
+const PRODUCT_MAX = 15000; const GOALS_MAX = 3000;
+const ownerDoc = (file) => readText(file, '').replace(/<!--[\s\S]*?-->/g, '').trim();
+/** Описание продукта (mcfly/product.md, 0.10.0) без комментариев-подсказок; пустая строка — файла нет или в нём только шаблон. */
+export const productText = (p) => ownerDoc(path.join(p.root, 'product.md'));
+/** Есть описание продукта — включаются шаги удобства: образцы до одобрения и проход «пользователя». */
+export const hasProduct = (p) => productText(p).length > 0;
 
 export function buildContext(p, cfg, { progressLines = 15, handoff = false, now = new Date() } = {}) {
   const L = [];
@@ -20,6 +28,14 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false, now 
   } else L.push('## Передача смены: нет — работай по приоритетам одобрений', '');
   L.push(`Проект: ${cfg.project}. Каталог: ${p.projectDir}.`);
   L.push(`Лимиты: прогон ${cfg.run.max_minutes} мин, не больше ${cfg.limits.max_changes_per_run} изменений за прогон, не больше ${cfg.limits.max_tasks_per_change} задач на изменение.`);
+  // 0.10.0: для кого делаем и что нельзя нарушать — раньше агенты этого не знали и удобство не проверял никто
+  const cap = (t, n) => (t.length > n ? `${t.slice(0, n)}\n…обрезано, полный текст — в файле` : t);
+  const product = productText(p);
+  if (product) L.push('', '## Описание продукта (mcfly/product.md) — для кого делаем и правила, которые нельзя нарушать; файл ведёт владелец, не менять', cap(product, PRODUCT_MAX), '');
+  const goals = ownerDoc(path.join(p.root, 'goals.md'));
+  if (goals) L.push('', '## Цели проекта (mcfly/goals.md) — файл ведёт владелец, не менять', cap(goals, GOALS_MAX), '');
+  const skills = cfg.design?.skills || [];
+  if (skills.length) L.push(`Навыки дизайна (design.skills): ${skills.join(', ')} — в задачах с интерфейсом дизайнер и разработчик вызывают их инструментом Skill до начала работы; навык недоступен — сказать лиду, это попадёт в отчёт.`);
   L.push(`Категории эскалации: ${Object.entries(cfg.escalation.categories).map(([k, v]) => `${k} (${v.label}${v.auto_default === false ? ', без ответа по умолчанию' : ''})`).join('; ')}.`);
   const changes = listChanges(p.openspecChanges);
   const work = approvedWithWork(changes);
@@ -58,7 +74,10 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false, now 
     if (d.error) L.push(`⚠️ ${d.error} — список не прочитан, mcfly ideas add не сработает; сообщи в отчёте`);
     else {
       const proposed = by(['proposed']); const own = proposed.filter((x) => x.source === 'owner-backlog' || x.source === 'owner-note').length;
-      L.push(`Взятые владельцем — спланируй по порядку: ${named(by(['taken']))}`);
+      // 0.10.0: жалобы владельца «неудобно: …» — раньше остальных взятых
+      const taken = [...by(['taken']).filter((x) => x.ux), ...by(['taken']).filter((x) => !x.ux)];
+      const ux = taken.filter((x) => x.ux).map((x) => x.id);
+      L.push(`Взятые владельцем — спланируй по порядку: ${named(taken)}${ux.length ? ` (${ux.join(', ')} — жалобы «неудобно», планируй и делай их первыми)` : ''}`);
       L.push(`Спланированы: ${by(['planned']).map((x) => `${x.id} → ${x.change}`).join(', ') || 'нет'}`);
       L.push(`В списке: ${proposed.length} (ваших ${own}, команды ${proposed.length - own})`);
       L.push(`Не трогать, решение в сессии: ${named(by(['discuss', 'rejected']))}`);

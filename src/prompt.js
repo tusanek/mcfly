@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { hasProduct } from './context.js';
 import { fileURLToPath } from 'node:url';
 import { readText, fmtLocal } from './util.js';
 
@@ -22,6 +23,9 @@ function ideasStep(ideas) {
    - ${research}
    Каждый пункт: \`--title\` (что предлагается, простыми словами), \`--benefit\` (что даст владельцу или пользователям), \`--size S|M|L\`, \`--how\` (как примерно), \`--needs-owner\` (что понадобится от владельца сверх «Берём», если понадобится; предпочитай то, что делается без владельца). Перед добавлением сверь с \`mcfly ideas list\`, бэклогом и архивом изменений; отклонённое без новых доводов (\`--new-arguments\`) не добавляй, пункты на обсуждении в сессии не трогай и не дублируй. Пункт без «Берём» никогда не превращается в работу. В отчёте перечисли новые пункты: «Новые предложения: I…».`;
 }
+/** Шаг 4a «Глазами пользователя» (0.10.0) — только в проекте с описанием продукта (mcfly/product.md). */
+const UX_STEP = `
+4a. Глазами пользователя. Если изменение меняет то, что человек видит или нажимает (в его proposal.md есть раздел «Как это будет выглядеть» с образцами), после вердикта тестировщика «принято» запусти mcfly:user: он проходит изменение как человек из описания продукта и сверяет с образцом, который одобрил владелец. Находки «мешает пользоваться» возвращай разработчику — в счёт тех же двух кругов; находки «можно лучше» он сам добавляет в список предложений, изменение из-за них не задерживай. Изменение без видимой части этот шаг пропускает.`;
 export function buildLeadPrompt({ cfg, p, runId, mode, deadline, context, nightHandoff = '' }) {
   const tpl = readText(path.join(MCFLY_ROOT, 'prompts', 'run.md'));
   const ideasOn = !!cfg.ideas?.enabled;
@@ -30,7 +34,7 @@ export function buildLeadPrompt({ cfg, p, runId, mode, deadline, context, nightH
   const ahead = cfg.ideas?.plan_ahead ?? 1;
   const front = renderTemplate(ideasOn ? IDEAS_FRONT : LEGACY_FRONT, { MAX_CHANGES: cfg.limits.max_changes_per_run, PLAN_AHEAD: ahead, PLAN_IDLE: Math.max(ahead, cfg.limits.max_changes_per_run) });
   return renderTemplate(tpl, {
-    WORK_FRONT: front, IDEAS_STEP: ideasOn ? ideasStep(cfg.ideas) : '',
+    WORK_FRONT: front, IDEAS_STEP: ideasOn ? ideasStep(cfg.ideas) : '', UX_STEP: hasProduct(p) ? UX_STEP : '',
     RUN_ID: runId, MODE: mode, PROJECT: cfg.project, PROJECT_DIR: p.projectDir, MAX_MINUTES: cfg.run.max_minutes, DEADLINE: fmtLocal(deadline),
     MAX_CHANGES: cfg.limits.max_changes_per_run, MAX_TASKS: cfg.limits.max_tasks_per_change, CONTEXT: context, RUN_DIR: `mcfly/runs/${runId}`, NIGHT_HANDOFF: nightHandoff,
   });

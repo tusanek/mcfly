@@ -82,3 +82,29 @@ export function proposalExcerpt(change, n = 600) {
   }
   return truncate(para.join(' '), n);
 }
+
+const BUTTON_ROW = /^\s*(\[[^\[\]\n]+\]\s*)+$/;
+/**
+ * Образцы из раздела «## Как это будет выглядеть» proposal (0.10.0): [{ title, text, buttons }] — подзаголовок «### …» и блок
+ * в тройных обратных кавычках; строки вида «[Готово] [Отложить]» внутри блока — ряды кнопок. Раздела или блоков нет — пустой список
+ * («Снаружи ничего не меняется» — не образец).
+ */
+export function proposalSamples(change) {
+  const out = []; let on = false; let fence = false; let title = ''; let cur = null;
+  for (const line of String(change.proposal || '').split('\n')) {
+    if (!fence && /^##\s/.test(line)) { on = /^##\s+Как это будет выглядеть\s*$/i.test(line.trim()); continue; }
+    if (!on) continue;
+    if (/^\s*```/.test(line)) {
+      fence = !fence;
+      if (fence) cur = { title, lines: [] }; else { out.push(cur); cur = null; title = ''; }
+      continue;
+    }
+    if (fence) { cur.lines.push(line); continue; }
+    const h = /^###\s+(.+?)\s*$/.exec(line); if (h) title = h[1];
+  }
+  return out.map((x) => ({
+    title: x.title,
+    text: x.lines.filter((l) => !BUTTON_ROW.test(l)).join('\n').trim(),
+    buttons: x.lines.filter((l) => BUTTON_ROW.test(l)).map((l) => [...l.matchAll(/\[([^\[\]\n]+)\]/g)].map((m) => m[1].trim())),
+  })).filter((x) => x.text || x.buttons.length);
+}

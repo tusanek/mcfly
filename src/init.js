@@ -41,6 +41,7 @@ export function init({ projectDir, name, withTracker = false, skipOpenspec = fal
   put(p.questions, 'questions: []\n');
   put(p.ideas, tpl('ideas.yaml'));
   put(p.answers, tpl('answers.md'));
+  put(path.join(p.root, 'product.md'), tpl('product.md'));
   put(p.metrics, '');
   put(path.join(p.root, '.env.example'), tpl('env.example'));
   const settingsPath = path.join(projectDir, '.claude', 'settings.json');

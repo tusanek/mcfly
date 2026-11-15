@@ -1,6 +1,6 @@
 import { createTelegram, extractMessages } from './telegram.js';
 import { applyMessages, parseMessage } from './answers.js';
-import { sendView, ensureBotMenu } from './overview.js';
+import { sendView, ensureBotMenu, sendSamples } from './overview.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -138,6 +138,12 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
     // проверки offer (команды из раздела actions) — только на «статус» владельца
     try { await sendView(tg, cfg.telegram.chat_id, view, p, cfg, { now, offers: String(m.fromId) === ownerId(cfg), page: parsed.page }); }
     catch (e) { log(`Ответ на «${view}» не отправлен: ${errorLine(e)}`); }
+  }
+  // «👀 Как будет выглядеть» (0.10.0): образцы из плана — после применения остальных сообщений
+  for (const m of messages) {
+    const parsed = parseMessage(m.text); if (parsed.type !== 'sample') continue;
+    try { await sendSamples(tg, cfg.telegram.chat_id, p, cfg, parsed.change); }
+    catch (e) { log(`Образцы «${parsed.change}» не отправлены: ${errorLine(e)}`); }
   }
   // «напоминания» и /reminders (0.8.0): список с кнопками отмены — простым текстом, у одного сообщения одна клавиатура
   for (const m of messages) {
