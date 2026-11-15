@@ -9,7 +9,7 @@ import { loadEnv } from './env.js';
 import { run, currentRun } from './runner.js';
 import { composeSummary, sendSummary, htmlToPlain, techTail } from './summary.js';
 import { pullAnswers, pollAnswers } from './pull.js';
-import { buildContext, isMcflyProject } from './context.js';
+import { buildContext, isMcflyProject, hasProduct } from './context.js';
 import { loadQuestions, saveQuestions, addQuestion, expireQuestions, openQuestions } from './questions.js';
 import { branchProgress, commitPaths } from './git.js';
 import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause } from './approvals.js';
@@ -50,6 +50,8 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   action list | trust | run <id> [--yes]          действия владельца из раздела actions: список, подтверждение раздела
                                                   (только в терминале), запуск из терминала (итог и в Telegram)
   action prepare|exec <id> --ticket <t>           служебные: их запускает бот после нажатия кнопки
+  finding add --text <t> [--evidence <t>]        находка для доработки самого mcfly (не проекта); владелец решает в боте, передавать ли
+  finding list | finding send <Fн> | finding drop <Fн>   список; передать в общий ящик или убрать (только владелец в терминале)
   remind list | remind rm <Rн>                    напоминания владельцу (ставятся в боте: «напомни 19:00 текст»)
 Общие флаги: --project <dir> (по умолчанию текущий каталог или MCFLY_PROJECT_DIR)`;
 
@@ -57,7 +59,7 @@ export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
     project: { type: 'string' }, mode: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
-    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
+    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
   const givenDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
   // init — в указанном каталоге, shift — сам различает сессию и основное дерево; остальные — в основном дереве проекта
@@ -165,6 +167,11 @@ export async function main(argv) {
       if (sub === 'request') {
         const category = values.category || 'spec';
         if (!isCategory(cfg, category)) { console.error(`Неизвестная категория "${category}". Допустимо: ${Object.keys(cfg.escalation.categories).join(', ')}`); return 1; }
+        // 0.11.0: при описании продукта владелец одобряет план по образцам — без раздела с образцами (или строки «Снаружи ничего
+        // не меняется») план не принимается: 15.11 дизайнера не вызвали ни разу, в том числе для ответа бота с кнопкой
+        if (hasProduct(p) && !/^##\s+Как это будет выглядеть\s*$/im.test(c.proposal || '')) {
+          console.error(`В плане ${c.name} нет раздела «## Как это будет выглядеть». Если изменение меняет то, что человек видит или нажимает (сообщения и кнопки бота — тоже), лид вызывает mcfly:designer, и тот добавляет образцы; если нет — добавьте в proposal.md этот раздел с одной строкой «Снаружи ничего не меняется». Потом запросите одобрение снова.`); return 1;
+        }
         let idea = null;
         if (values.idea) {
           // План по пункту списка (0.7.0): только по взятому владельцем пункту; пункт становится спланированным.
@@ -264,6 +271,31 @@ export async function main(argv) {
         return r.status === 'ok' ? 0 : 1;
       }
       break;
+    }
+    case 'finding': {
+      // Находки для доработки самого mcfly (0.11.0): регистрируют агенты прогона и сессии, решает владелец
+      const { loadFindings, saveFindings, addFinding, decideFinding, inboxPath, FINDING_STATUS_RU } = await import('./findings.js');
+      if (cfg.findings.enabled === false) { console.error('Сбор находок выключен: findings.enabled в mcfly/config.yaml'); return 1; }
+      const data = loadFindings(p); if (data.error) { console.error(data.error); return 1; }
+      if (sub === 'list' || !sub) {
+        if (!data.findings.length) log('Находок нет. Добавить: mcfly finding add --text "что не так в самом mcfly"');
+        for (const x of data.findings) log(`${x.id} [${FINDING_STATUS_RU[x.status] || x.status}] ${x.text}${x.evidence ? ` — что видели: ${x.evidence}` : ''}`);
+        return 0;
+      }
+      if (sub === 'add') {
+        try {
+          const it = addFinding(data, { text: values.text, evidence: values.evidence || '', source: runIdEnv ? 'run' : 'session', now, runId: runIdEnv });
+          saveFindings(p, data); log(`${it.id} записана. Передавать ли её в доработку mcfly, решит владелец кнопкой в боте («находки»).`); return 0;
+        } catch (e) { console.error(e.message); return 1; }
+      }
+      if (sub === 'send' || sub === 'drop') {
+        // Передача — решение владельца: агент (в прогоне или сессии, без живого терминала) сам себе её не одобряет
+        if (runIdEnv || !(process.stdin.isTTY && process.stdout.isTTY)) { console.error(`mcfly finding ${sub} — только владелец в терминале; в боте — кнопками в «находки».`); return 1; }
+        const r = decideFinding(data, cfg, rest[0], sub, { now });
+        if (!r.item || r.error) { console.error(`${rest[0] || '(номер не указан)'}: ${r.error}`); return 1; }
+        saveFindings(p, data); log(sub === 'send' ? `${r.item.id} передана в ${inboxPath(cfg)}` : `${r.item.id} убрана`); return 0;
+      }
+      console.error('mcfly finding add | list | send | drop'); return 1;
     }
     case 'remind': {
       // Ставятся сообщением боту («напомни 19:00 …»); здесь — посмотреть и отменить.

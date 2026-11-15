@@ -29,6 +29,19 @@ export function ensureGitignore(projectDir, entries) {
   return missing;
 }
 
+/**
+ * Чего не хватает, чтобы в проекте была ветка main (0.11.0): строка для владельца или '' — всё в порядке либо это не git.
+ * Команда создаёт ветки изменений от main и сливает в неё; с master прогоны шли на допущении «master вместо main».
+ */
+export function mainBranchIssue(projectDir) {
+  const git = (args) => spawnSync('git', args, { cwd: projectDir, encoding: 'utf8' });
+  if (git(['rev-parse', '--is-inside-work-tree']).status !== 0) return '';
+  if (git(['rev-parse', '--verify', '-q', 'refs/heads/main']).status === 0) return '';
+  const cur = String(git(['symbolic-ref', '--short', '-q', 'HEAD']).stdout || '').trim();
+  if (cur === 'main') return ''; // репозиторий без коммитов, ветка уже называется main
+  return `В проекте нет ветки main — команда работает от неё. ${cur ? `Сейчас ветка «${cur}»: переименуйте её командой git branch -m ${cur} main` : 'Создайте её: git branch main'}`;
+}
+
 export function init({ projectDir, name, withTracker = false, skipOpenspec = false, log = console.log }) {
   const p = paths(projectDir);
   const tpl = (f) => readText(path.join(MCFLY_ROOT, 'templates', f));
@@ -36,6 +49,8 @@ export function init({ projectDir, name, withTracker = false, skipOpenspec = fal
   const created = [];
   const put = (file, content) => { if (exists(file)) return; writeText(file, content); created.push(path.relative(projectDir, file)); };
   ensureDir(p.runs); ensureDir(p.logs); ensureDir(p.shifts);
+  // 0.11.0: пустой каталог git не видит — `git add mcfly/shifts` падал, и файлы первого прогона оставались незакоммиченными
+  put(path.join(p.shifts, '.gitkeep'), '');
   put(p.config, tpl('config.yaml').replaceAll('{{PROJECT}}', project));
   put(p.progress, tpl('progress.md'));
   put(p.questions, 'questions: []\n');
@@ -62,6 +77,10 @@ export function init({ projectDir, name, withTracker = false, skipOpenspec = fal
   log(`mcfly инициализирован в ${projectDir} (проект ${project}).`);
   for (const f of created) log(`  + ${f}`);
   log(`OpenSpec: ${openspec}`);
-  log('Дальше: cp mcfly/.env.example mcfly/.env (впишите токен бота) → mcfly telegram pair → mcfly doctor → mcfly schedule install');
-  return { created, openspec };
+  // 0.11.0: процесс команды ждёт ветку main (ветки изменений создаются от неё) — `git init` мог создать master
+  const branch = mainBranchIssue(projectDir);
+  if (branch) log(`⚠ ${branch}`);
+  // schedule install — сразу после привязки чата: без задания answers бот не отвечает на кнопки и сообщения
+  log('Дальше: cp mcfly/.env.example mcfly/.env (впишите токен бота) → mcfly telegram pair → mcfly schedule install (без него бот не отвечает на кнопки) → mcfly doctor');
+  return { created, openspec, branch };
 }

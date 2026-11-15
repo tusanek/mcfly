@@ -58,11 +58,15 @@ export function createTelegram({ token, fetchImpl = globalThis.fetch, timeoutMs 
  * действия (0.6.0): ac:id («действие id»), ax:id:код («действие id да код»), an:id («действие id отмена»);
  * предложения (0.7.0): ib:Iн («берём Iн»), ix:Iн («не сейчас Iн»), il:N («предложения N»);
  * напоминания (0.8.0): rs:Rн («отложить Rн» — «⏰ Через час»), rx:Rн («отменить Rн»);
+ * находки для mcfly (0.11.0): fb:Fн или fb:все («передать Fн»), fx:Fн («не надо Fн»), fl:1 («находки»);
  * образцы (0.10.0): sh:имя («образец имя» — «👀 Как будет выглядеть»), sm:… — ненастоящая кнопка под образцом, ничего не делает.
  */
 export function callbackText(data) {
-  const m = /^(ap|rj|qd|rn|ac|ax|an|ib|ix|il|rs|rx|sh|sm):(.+)$/.exec(String(data || ''));
+  const m = /^(ap|rj|qd|rn|ac|ax|an|ib|ix|il|rs|rx|sh|sm|fb|fx|fl):(.+)$/.exec(String(data || ''));
   if (!m) return null;
+  if (m[1] === 'fb') return `передать ${m[2]}`;
+  if (m[1] === 'fx') return `не надо ${m[2]}`;
+  if (m[1] === 'fl') return 'находки';
   if (m[1] === 'sh') return `образец ${m[2]}`;
   if (m[1] === 'sm') return 'образец кнопка';
   if (m[1] === 'ib') return `берём ${m[2]}`;

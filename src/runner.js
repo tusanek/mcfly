@@ -20,6 +20,9 @@ import { ensureVpn } from './vpn.js';
 import { STATUS_RU, plainWords, reportSections, humanItems, approvalCovered, isNone, nextRunText, progressWords, summaryKeyboard, changeTitle, planLabels } from './summary.js';
 import { ideasBrief, loadIdeas, saveIdeas, syncDoneIdeas } from './ideas.js';
 import { enqueueNotice } from './notices.js';
+import { tickGoals } from './goals.js';
+import { pendingFindings } from './findings.js';
+import { ideasView, ideasKeyboard } from './overview.js';
 import { dirtyFiles, teamWorktrees, branchProgress, changedTrackedFiles } from './git.js';
 import { ensureDir, writeJson, appendText, readJson, readText, runId as makeRunId, fmtLocal, fmtShort, fmtDuration, pad2, truncate } from './util.js';
 
@@ -92,7 +95,7 @@ export function recordRun(p, record) {
 }
 
 /** Служебные файлы команды, которые runner коммитит сам после прогона: журнал, метрики, вопросы, ответы и каталоги прогонов. */
-const STATE_PATHS = ['mcfly/progress.md', 'mcfly/metrics.jsonl', 'mcfly/questions.yaml', 'mcfly/answers.md', 'mcfly/ideas.yaml', 'mcfly/runs', 'mcfly/shifts'];
+const STATE_PATHS = ['mcfly/progress.md', 'mcfly/metrics.jsonl', 'mcfly/questions.yaml', 'mcfly/answers.md', 'mcfly/ideas.yaml', 'mcfly/findings.yaml', 'mcfly/runs', 'mcfly/shifts'];
 const RAW_LOG = ':(exclude)mcfly/runs/*/stdout.log'; // сырой вывод claude не коммитится, даже если в .gitignore нет строки
 /** Метаданные одобрения изменений (.openspec.yaml), изменённые runner'ом (авто-одобрение по сроку, ответы из Telegram) или человеком. */
 const approvalMeta = (projectDir) => changedTrackedFiles(projectDir).filter((f) => /^openspec\/changes\/[^/]+\/\.openspec\.yaml$/.test(f));
@@ -102,20 +105,24 @@ const approvalMeta = (projectDir) => changedTrackedFiles(projectDir).filter((f) 
  * Только эти пути (commit -- <пути>): работа агентов, оставшаяся в индексе после обрыва, в коммит прогона не попадает.
  */
 /** Конец прогона (0.7.0): спланированные пункты, чьё изменение заархивировано, — сделаны. */
-export function finishIdeas(p, cfg) {
+export function finishIdeas(p, cfg, info = {}) {
   if (!cfg.ideas?.enabled) return [];
   try {
     const d = loadIdeas(p); if (d.error) return [];
     const done = syncDoneIdeas(d, p.openspecChanges);
-    if (done.length) saveIdeas(p, d);
+    // 0.11.0: сделанный пункт бэклога владельца отмечается в mcfly/goals.md (info.goals — тексты отмеченных пунктов)
+    info.goals = tickGoals(p, d.ideas.filter((x) => x.status === 'done' && x.source === 'owner-backlog' && !x.goal_checked));
+    if (done.length || info.goals.length) saveIdeas(p, d);
     return done;
   } catch { return []; } // список — не повод терять коммит и итог прогона
 }
 
-export function commitRunState(projectDir, id, log = console.log) {
+export function commitRunState(projectDir, id, log = console.log, extra = []) {
   const inRepo = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: projectDir, encoding: 'utf8' });
   if (inRepo.status !== 0) return false;
-  const existing = [...STATE_PATHS.filter((f) => fs.existsSync(path.join(projectDir, f))), ...approvalMeta(projectDir)];
+  // 0.11.0: путь, в котором git ничего не видит (пустой каталог mcfly/shifts нового проекта), ронял `git add` целиком
+  const known = (f) => String(spawnSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '--', f], { cwd: projectDir, encoding: 'utf8' }).stdout || '').trim() !== '';
+  const existing = [...new Set([...[...STATE_PATHS, ...extra].filter((f) => fs.existsSync(path.join(projectDir, f)) && known(f)), ...approvalMeta(projectDir)])];
   if (!existing.length) return false;
   const pathspec = ['--', ...existing, RAW_LOG];
   const add = spawnSync('git', ['add', ...pathspec], { cwd: projectDir, encoding: 'utf8' });
@@ -125,6 +132,23 @@ export function commitRunState(projectDir, id, log = console.log) {
   const r = spawnSync('git', ['commit', '-q', '-m', `chore(mcfly): результат прогона ${id}`, ...pathspec], { cwd: projectDir, encoding: 'utf8' });
   if (r.status !== 0) log(`Не удалось закоммитить файлы прогона: ${String(r.stderr || r.stdout).trim().slice(0, 200)}`);
   return r.status === 0;
+}
+
+/**
+ * Сообщения «💡 Предложения» вслед итогу прогона (0.11.0): только если работы и планов нет, владелец ещё ничего не взял,
+ * а за этот прогон в списке появились новые пункты. Иначе — пусто: список остаётся по кнопке.
+ */
+export function freshIdeasMessages(p, cfg, since) {
+  try {
+    const brief = ideasBrief(p, cfg);
+    if (!brief || !brief.proposed || brief.taken.length) return [];
+    const changes = listChanges(p.openspecChanges);
+    if (approvedWithWork(changes).length || pendingApprovals(changes).length) return [];
+    if (!loadIdeas(p).ideas.some((x) => x.status === 'proposed' && new Date(x.created_at) >= since)) return [];
+    const parts = ideasView(p, cfg).map((text) => ({ text, keyboard: null }));
+    const rows = ideasKeyboard(p, cfg);
+    return rows.length ? [...parts, { text: 'Выберите, что команде взять в работу:', keyboard: rows }] : parts;
+  } catch { return []; } // список — не повод терять конец прогона
 }
 
 /** Worktree команды с незакоммиченной работой: её теряет обрыв прогона, а следующему прогону её нужно подхватить. */
@@ -160,10 +184,10 @@ const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Сообщение в Telegram сразу, не дожидаясь утренней сводки; keyboard — кнопки под ним. Без токена или chat_id — молча ничего. */
 export function telegramNotifier(cfg) {
-  return async (text, keyboard = null) => {
+  return async (text, keyboard = null, { html = false } = {}) => {
     const token = process.env[cfg.telegram.token_env];
     if (!token || !cfg.telegram.chat_id) return;
-    await createTelegram({ token }).sendMessage(cfg.telegram.chat_id, text, { keyboard });
+    await createTelegram({ token }).sendMessage(cfg.telegram.chat_id, text, { keyboard, html });
   };
 }
 
@@ -200,7 +224,11 @@ function decisionLines(cfg, p, changes) {
   for (const c of pendingApprovals(changes)) {
     out.push(`📋 Одобрить ${c.mcfly.idea ? `${changeTitle(p, c)}: ` : `${labels.get(c.name)}: `}${proposalExcerpt(c, EXCERPT_MAX)}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
   }
-  if (out.length) out.push('Кнопки ниже; свой ответ — текстом: «Q4: …»');
+  const found = pendingFindings(p, cfg);
+  if (found) out.push(`📮 Находки для доработки mcfly: ${found} — передать их или нет, решите по кнопке «Находки»`);
+  // 0.11.0: подсказка про свой ответ — только при открытом вопросе и с его настоящим номером (раньше «Q4» стоял всегда)
+  const open = openQuestions(loadQuestions(p));
+  if (out.length) out.push(open.length ? `Кнопки ниже; свой ответ — текстом: «${open[0].id}: …»` : 'Кнопки ниже');
   return out;
 }
 const NEED_MAX = 5; const ITEM_MAX = 220; const MESSAGE_MAX = 3800; const PLAIN_MIN = 300;
@@ -228,6 +256,7 @@ export function finishMessage(cfg, record, p) {
     const lines = [finishText(cfg, record)];
     const plain = plainWords(sec, plainMax);
     if (plain) lines.push('', plain);
+    if (record.goals_checked?.length) lines.push('', `🎯 Отмечено в целях: ${record.goals_checked.map((t) => truncate(t, 120)).join('; ')}`);
     if (need.length) lines.push('', 'Нужно от вас:', ...bullets(need, NEED_MAX));
     if (decide.length) lines.push('', 'Решить:', ...decide);
     lines.push('', next);
@@ -377,16 +406,23 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     // Цепочка: решение до записи — причина попадает в журнал и итог прогона.
     const chain = chainDecision({ cfg, p, record, projectDir, started });
     if (chain.reason) record.chain = chain.chain ? 'следующий прогон запущен сразу' : `прогон подряд не запущен: ${chain.reason}`;
+    // До записи прогона: отмеченные в целях пункты попадают в запись и в итог.
+    const ideaInfo = {}; finishIdeas(p, cfg, ideaInfo);
+    if (ideaInfo.goals?.length) record.goals_checked = ideaInfo.goals;
     recordRun(p, record);
     // Последний слот ночи: репортёр не оставил ночную передачу — собрать по фактам.
     if (lastSlot) ensureNightHandoff(p, now);
-    finishIdeas(p, cfg);
-    commitRunState(projectDir, id, log);
+    commitRunState(projectDir, id, log, ideaInfo.goals?.length ? ['mcfly/goals.md'] : []);
     // Итог любого прогона — сразу в Telegram: прогон по «запусти» иначе молчит до утренней сводки.
     // Не ушло (нет связи) — в очередь: задание answers дошлёт его, когда Telegram ответит.
     const message = finishMessage(cfg, record, p);
     try { await (notify || telegramNotifier(cfg))(message.text, message.keyboard); }
     catch (e) { log(`Сообщение в Telegram не отправлено: ${e.message}; поставлено в очередь.`); enqueueNotice(p, message); }
+    // 0.11.0: прогон только пополнил список (первый прогон переносит бэклог) — сам список с кнопками «Берём» сразу следом,
+    // чтобы владельцу не нужно было идти за ним в «💡 Предложения».
+    for (const m of freshIdeasMessages(p, cfg, started)) {
+      try { await (notify || telegramNotifier(cfg))(m.text, m.keyboard, { html: true }); } catch { enqueueNotice(p, { ...m, html: true }); }
+    }
     log(`Прогон ${id} завершён: ${record.status} (${fmtLocal(new Date())}).`);
     outcome = { status: record.status, id, chained: chain.chain };
   } finally { releaseLock(p); }

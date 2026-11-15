@@ -14,6 +14,7 @@ import { latestShift } from './shift-files.js';
 import { enqueueNotice } from './notices.js';
 import { listActions } from './action-config.js';
 import { currentRun } from './runner.js';
+import { pendingFindings } from './findings.js';
 
 // 0.9.0: статусы для владельца — словами, без жаргона («квота», «API»)
 export const STATUS_RU = { ok: 'прошёл успешно', missed: 'пропущен: Mac спал или был выключен', error: 'сорвался из-за сбоя', timeout: 'остановлен: не уложился в отведённое время', quota: 'остановлен: кончился лимит подписки', network: 'не состоялся: не было связи с Claude (проверьте VPN и интернет)', locked: 'не запускался: шёл другой прогон' };
@@ -291,6 +292,8 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   // 0.7.8: предложения, ждущие решения, — из mcfly/ideas.yaml, а не из текста отчётов (текст устаревает, как только владелец решил)
   const proposedIds = cfg.ideas?.enabled ? ideaList.filter((x) => x.status === 'proposed').map((x) => escHtml(x.id)) : [];
   if (proposedIds.length) need.push(`Решить по предложениям: ${idList(proposedIds)} — кнопка «💡 Предложения»`);
+  const found = pendingFindings(p, cfg);
+  if (found) need.push(`Решить, передавать ли находки для доработки mcfly: ${found} — кнопка «📮 Находки для mcfly»`);
   // Пункты от человека — только из самого свежего отчёта с этим разделом (старые повторяются и устаревают) и из ночной передачи,
   // если прогона новее неё нет. Одобрения и решения по пунктам списка в тексте не печатаются — они выше, из состояния;
   // сделанное после отчёта (кнопка нажата) — тоже. Остальное — снимок на конец прогона, поэтому с подписью источника.
@@ -309,7 +312,8 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   if (needCount) {
     L.push(`<b>🙋 Нужно от вас (${needCount})</b>`, ...need.map((x, i) => `${i + 1}. ${x}`));
     if (fromText.length) L.push(`<i>По ${escHtml(source)}:</i>`, ...fromText.map((x, i) => `${need.length + i + 1}. ${x}`));
-    if (questions.length || pend.length) L.push('<i>Кнопки — под сообщением; свой ответ: «Q1: текст»</i>');
+    if (questions.length) L.push(`<i>Кнопки — под сообщением; свой ответ: «${escHtml(questions[0].id)}: текст»</i>`);
+    else if (pend.length) L.push('<i>Кнопки — под сообщением</i>');
   } else L.push('<b>🙋 От вас ничего не нужно</b>');
 
   // 1а. Простыми словами — пересказ отчётов для человека, не читающего код: до трёх последних прогонов, целиком (0.9.0).
@@ -399,6 +403,9 @@ export function summaryKeyboard(p, cfg) {
     if (fitsData(`sh:${c.name}`) && proposalSamples(c).length) rows.push([{ text: `👀 Как будет выглядеть: ${c.mcfly.idea || labels.get(c.name)}`, callback_data: `sh:${c.name}` }]);
   }
   if (!pend.length && !approvedWithWork(changes).length && ideasBrief(p, cfg)?.proposed > 0) rows.push([{ text: '💡 Предложения', callback_data: 'il:1' }]);
+  // 0.11.0: находки для доработки самого mcfly ждут «Передать» / «Не надо»
+  const found = pendingFindings(p, cfg);
+  if (found) rows.push([{ text: `📮 Находки для mcfly (${found})`, callback_data: 'fl:1' }]);
   return rows;
 }
 

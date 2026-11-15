@@ -9,10 +9,12 @@ import { MCFLY_ROOT } from './prompt.js';
 import { cleanEnv } from './claude.js';
 import { vpnStatus } from './vpn.js';
 import { isTrusted, hasActions } from './actions.js';
+import { mainBranchIssue } from './init.js';
+import { labelFor, runLaunchctl } from './schedule.js';
 
 function ver(bin, args = ['--version']) { const r = spawnSync(bin, args, { encoding: 'utf8' }); return r.status === 0 ? String(r.stdout || r.stderr).trim().split('\n')[0] : null; }
 
-export function doctor({ projectDir, probe = false, log = console.log }) {
+export function doctor({ projectDir, probe = false, log = console.log, launchctl = runLaunchctl }) {
   const p = paths(projectDir); loadEnv(projectDir);
   const checks = [];
   const add = (ok, label, hint = '') => checks.push({ ok: !!ok, label, hint });
@@ -46,6 +48,12 @@ export function doctor({ projectDir, probe = false, log = console.log }) {
   if (cfg) {
     add(process.env[cfg.telegram.token_env], `токен Telegram (${cfg.telegram.token_env})`, 'задайте в mcfly/.env');
     add(cfg.telegram.chat_id, 'Telegram chat_id', 'выполните mcfly telegram pair');
+    // 0.11.0: нажатия кнопок и сообщения забирает только задание answers — без него бот молчит, и непонятно почему
+    if (process.platform === 'darwin' && process.env[cfg.telegram.token_env] && cfg.telegram.chat_id && cfg.schedule.answers_every_minutes > 0) {
+      const label = labelFor(cfg.project, 'answers');
+      let loaded = false; try { loaded = launchctl(['print', `gui/${process.getuid()}/${label}`]).status === 0; } catch {}
+      add(loaded, loaded ? 'бот отвечает на кнопки и сообщения (задание answers работает)' : 'бот не будет отвечать на кнопки и сообщения — нет задания answers', 'выполните mcfly schedule install');
+    }
     if (cfg.run.vpn_service) { const st = vpnStatus(cfg.run.vpn_service, { scutil: cfg.run.scutil_bin }); add(st, `VPN «${cfg.run.vpn_service}»: ${st || 'не найден'}`, 'имя сервиса — как в scutil --nc list'); }
   }
   for (const name of cfg?.design?.skills || []) {
@@ -56,6 +64,8 @@ export function doctor({ projectDir, probe = false, log = console.log }) {
   }
   add(exists(path.join(projectDir, 'openspec', 'config.yaml')), 'openspec/ инициализирован', 'openspec init --tools claude');
   add(exists(path.join(projectDir, '.git')), 'git-репозиторий проекта', 'git init');
+  const branch = mainBranchIssue(projectDir);
+  if (exists(path.join(projectDir, '.git'))) add(!branch, 'ветка main в проекте', branch.replace(/^В проекте нет ветки main — /, ''));
   for (const c of checks) log(c.label.startsWith('·') ? `  ${c.label}` : `${c.ok ? '✓' : '✗'} ${c.label}${c.ok || !c.hint ? '' : ' — ' + c.hint}`);
   return checks;
 }

@@ -1,6 +1,6 @@
 # src: код CLI mcfly
 
-Вход: cli.js (разбор команд: run, summary, answers, status, ideas, question, approval, metric, telegram, action, remind, schedule). Тесты к модулю: test/<модуль>.test.js (нет отдельных тестов у action-config, chain, notices, state).
+Вход: cli.js (разбор команд: run, summary, answers, status, ideas, finding, question, approval, metric, telegram, action, remind, schedule). Тесты к модулю: test/<модуль>.test.js (нет отдельных тестов у action-config, chain, notices, state).
 
 ## Прогон
 - runner.js - прогон: лок, запись прогона, коммит служебных файлов, запасная сводка, уведомления в Telegram, передача смены на ночь.
@@ -25,6 +25,8 @@
 - approvals.js - изменения OpenSpec: одобрение, приоритет, пауза, сроки.
 - questions.js - вопросы владельцу (Qn): создание, ответ, просрочка.
 - ideas.js - список предложений mcfly/ideas.yaml.
+- findings.js - находки для доработки самого mcfly: mcfly/findings.yaml, экран «Находки», запись одобренного в общий ящик.
+- goals.js - галочки в mcfly/goals.md у сделанных пунктов бэклога владельца.
 - actions.js - действия владельца из бота: доверие, коды подтверждения, блокировка, запуск команды.
 - action-config.js - раздел actions в config.yaml: проверка и умолчания.
 - shift-git.js и shift-files.js - передача смены: ветки и merge, файлы передачи и их проверка.
@@ -35,6 +37,6 @@
 - config.js - загрузка и проверка mcfly/config.yaml.
 - env.js - чтение mcfly/.env.
 - state.js - пути и файл состояния.
-- init.js - `mcfly init`: шаблоны, settings, .gitignore.
+- init.js - `mcfly init`: шаблоны, settings, .gitignore, проверка ветки main.
 - doctor.js - `mcfly doctor`: проверка установки и авторизации.
 - util.js - файлы, даты, блокировка файла и мелкие помощники.
