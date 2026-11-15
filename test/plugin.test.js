@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs'; import path from 'node:path';
 import { MCFLY_ROOT } from '../src/prompt.js';
 
-const ROLES = ['lead', 'analyst', 'architect', 'planner', 'developer', 'tester', 'reviewer', 'devops', 'designer', 'reporter'];
+const ROLES = ['lead', 'analyst', 'architect', 'planner', 'developer', 'tester', 'reviewer', 'devops', 'designer', 'user', 'reporter'];
 test('манифест, агенты, скиллы и хук на месте', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(MCFLY_ROOT, '.claude-plugin', 'plugin.json'), 'utf8'));
   assert.equal(manifest.name, 'mcfly');

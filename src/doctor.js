@@ -1,4 +1,5 @@
 import path from 'node:path';
+import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { paths } from './state.js';
 import { loadConfig } from './config.js';
@@ -46,6 +47,12 @@ export function doctor({ projectDir, probe = false, log = console.log }) {
     add(process.env[cfg.telegram.token_env], `токен Telegram (${cfg.telegram.token_env})`, 'задайте в mcfly/.env');
     add(cfg.telegram.chat_id, 'Telegram chat_id', 'выполните mcfly telegram pair');
     if (cfg.run.vpn_service) { const st = vpnStatus(cfg.run.vpn_service, { scutil: cfg.run.scutil_bin }); add(st, `VPN «${cfg.run.vpn_service}»: ${st || 'не найден'}`, 'имя сервиса — как в scutil --nc list'); }
+  }
+  for (const name of cfg?.design?.skills || []) {
+    // Навык из дополнения («дополнение:навык») по папкам не проверить — только предупреждаем
+    if (name.includes(':')) { add(true, `· навык дизайна ${name}: из дополнения, наличие не проверяю`); continue; }
+    const at = [path.join(projectDir, '.claude', 'skills', name), path.join(os.homedir(), '.claude', 'skills', name)].find((d) => exists(path.join(d, 'SKILL.md')));
+    add(at, `навык дизайна ${name}${at ? ` (${at.startsWith(projectDir) ? 'в проекте' : 'в общих настройках'})` : ''}`, 'установите навык в .claude/skills проекта или в ~/.claude/skills, либо уберите его из design.skills');
   }
   add(exists(path.join(projectDir, 'openspec', 'config.yaml')), 'openspec/ инициализирован', 'openspec init --tools claude');
   add(exists(path.join(projectDir, '.git')), 'git-репозиторий проекта', 'git init');

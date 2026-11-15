@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { readText, writeText, fmtShort, fmtDay, fmtDuration, truncate, pad2, commandText } from './util.js';
 import { readMetrics, aggregate } from './metrics.js';
 import { loadQuestions, openQuestions } from './questions.js';
-import { listChanges, pendingApprovals, approvedWithWork, approvalDeadline, isAutoApprovable, isPaused, pausedUntil } from './approvals.js';
+import { listChanges, pendingApprovals, approvedWithWork, approvalDeadline, isAutoApprovable, isPaused, pausedUntil, proposalSamples } from './approvals.js';
 import { autoDefault } from './config.js';
 import { parseSlot } from './window.js';
 import { currentRun } from './runner.js';
@@ -223,6 +223,7 @@ export function statsView(p, cfg, { now = new Date() } = {}) {
       `✅ задач сделано: ${ev.tasks_done || 0}`,
       `🏁 изменений доведено до конца: ${ev.changes_archived || 0} (предложено ${ev.changes_proposed || 0})`,
       `❓ вопросов к вам: ${ev.escalations || 0}`,
+      ...(ev.ux_issues ? [`😖 находок по удобству: ${ev.ux_issues}`] : []),
     ];
   };
   const week = aggregate(records, { since: new Date(now.getTime() - 7 * 24 * 3600_000) });
@@ -277,6 +278,8 @@ export function helpView(p, cfg) {
     ...(cfg.ideas?.enabled ? ['✅ / ⏸ кнопки под предложениями — «Берём» (план пришлёт ближайший прогон) или «Не сейчас» (обсудим в сессии)', '💡 «идея: текст» — добавить свою идею в список предложений'] : []),
     '🔔 «напомни 19:00 текст» — напоминание в этот чат (ещё «завтра 10:00», «08.11 10:00», «через 2 ч»); названа кнопка из «🛠 Действия» — она будет под напоминанием, рядом «⏰ Через час»',
     '🔔 «напоминания» или /reminders — что поставлено, с кнопками отмены',
+    ...(cfg.ideas?.enabled ? ['😖 «неудобно: текст» — жалоба на удобство: команда займётся ею первым делом, раньше новых функций'] : []),
+    '👀 «Как будет выглядеть» под планом — образцы сообщений и экранов до одобрения, если они есть в плане',
     '📝 Любой другой текст — заметка команде, её прочтёт ближайший прогон',
     ...(hasActions(cfg) ? ['', '<b>Действия</b>', `🛠 «действия» или /actions — ${actionsHelp(cfg)}; итог приходит сообщением`] : []),
     '',
@@ -315,7 +318,7 @@ export function ideasView(p, cfg, { page = 1 } = {}) {
   if (v.active.length) {
     const approval = Object.fromEntries(listChanges(p.openspecChanges).map((c) => [c.name, c.mcfly.approval]));
     L.push('', ...v.active.map((x) => (x.status === 'taken'
-      ? `⏳ ${escHtml(x.id)} — ждёт прогона: ${escHtml(x.title)}`
+      ? `${x.ux ? '😖' : '⏳'} ${escHtml(x.id)} — ${x.ux ? 'неудобно, команда займётся первым делом' : 'ждёт прогона'}: ${escHtml(x.title)}`
       : approval[x.change] === 'approved'
         ? `🔧 ${escHtml(x.id)} — план одобрен, команда делает: ${escHtml(x.title)}`
         : `📝 ${escHtml(x.id)} — план готов, ждёт вашего решения в «Статусе»: ${escHtml(x.title)}`)));
@@ -334,6 +337,25 @@ export function ideasKeyboard(p, cfg, { page = 1 } = {}) {
   const rows = v.shown.map((x) => [{ text: `✅ Берём ${x.id}`, callback_data: `ib:${x.id}` }, { text: '⏸ Не сейчас', callback_data: `ix:${x.id}` }]);
   if (v.more) rows.push([{ text: 'Ещё ▸', callback_data: `il:${Math.max(1, page) + 1}` }]);
   return rows;
+}
+
+const SAMPLES_MAX = 12;
+/**
+ * 👀 Как будет выглядеть (0.10.0): образцы из плана изменения. Каждый образец — подпись курсивом и отдельное сообщение простым
+ * текстом, как его увидит пользователь, с ненастоящими кнопками (sm:) — владелец видит настоящий вид, а не описание.
+ */
+export async function sendSamples(tg, chatId, p, cfg, name) {
+  const c = listChanges(p.openspecChanges).find((x) => x.name === name);
+  const samples = c ? proposalSamples(c) : [];
+  if (!samples.length) { await tg.sendMessage(chatId, c ? 'У этого плана нет образцов: снаружи ничего не меняется' : 'Такого плана уже нет — посмотрите «статус»'); return 0; }
+  await tg.sendMessage(chatId, `👀 <b>Как будет выглядеть: ${changeTitle(p, c, escHtml)}</b>\n<i>Ниже образцы — так это увидит пользователь. Кнопки под ними ненастоящие.</i>`, { html: true });
+  for (const [i, x] of samples.slice(0, SAMPLES_MAX).entries()) {
+    if (x.title) await tg.sendMessage(chatId, `<i>${i + 1}. ${escHtml(x.title)}</i>`, { html: true });
+    const keyboard = x.buttons.map((row, r) => row.map((text, k) => ({ text: truncate(text, 40), callback_data: `sm:${i}.${r}.${k}` })));
+    await tg.sendMessage(chatId, truncate(x.text || '(только кнопки)', MAX), { keyboard: keyboard.length ? keyboard : null });
+  }
+  if (samples.length > SAMPLES_MAX) await tg.sendMessage(chatId, `… ещё образцов: ${samples.length - SAMPLES_MAX} — в описании плана`);
+  return samples.length;
 }
 
 const VIEWS = { status: statusView, goals: goalsView, stats: statsView, last: lastView, help: helpView, ideas: ideasView };

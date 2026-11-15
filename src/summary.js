@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { readText, fmtShort, fmtDay, fmtDuration, truncate, pad2 } from './util.js';
 import { readMetrics, aggregate, formatEvents, runStats } from './metrics.js';
 import { loadQuestions, openQuestions } from './questions.js';
-import { listChanges, pendingApprovals, approvedWithWork, pausedChanges, pausedUntil, proposalExcerpt, approvalDeadline, isAutoApprovable } from './approvals.js';
+import { listChanges, pendingApprovals, approvedWithWork, pausedChanges, pausedUntil, proposalExcerpt, approvalDeadline, isAutoApprovable, proposalSamples } from './approvals.js';
 import { loadIdeas, ideasBrief } from './ideas.js';
 import { expectedSlots, slotKey } from './window.js';
 import { loadState, saveState } from './state.js';
@@ -395,6 +395,8 @@ export function summaryKeyboard(p, cfg) {
   for (const c of pend) {
     // План по пункту списка (0.7.0): «отклонить» значит «не сейчас» — пункт уходит на обсуждение в сессии
     if (fitsData(`ap:${c.name}`)) rows.push([{ text: `✅ Одобрить ${c.mcfly.idea || labels.get(c.name)}`, callback_data: `ap:${c.name}` }, { text: c.mcfly.idea ? '⏸ Не сейчас' : '❌ Отклонить', callback_data: `rj:${c.name}` }]);
+    // 0.10.0: образцы из плана («Как это будет выглядеть») — отдельной кнопкой под одобрением
+    if (fitsData(`sh:${c.name}`) && proposalSamples(c).length) rows.push([{ text: `👀 Как будет выглядеть: ${c.mcfly.idea || labels.get(c.name)}`, callback_data: `sh:${c.name}` }]);
   }
   if (!pend.length && !approvedWithWork(changes).length && ideasBrief(p, cfg)?.proposed > 0) rows.push([{ text: '💡 Предложения', callback_data: 'il:1' }]);
   return rows;
