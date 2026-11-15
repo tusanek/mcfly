@@ -211,11 +211,10 @@ const followupKeyboard = (cfg, a) => a.followups.map((f) => getAction(cfg, f)).f
 export function resultMessage(cfg, a, { status, code, durationMs, lines, logRel }) {
   const head = status === 'ok' ? `✅ <b>${escHtml(a.title)}</b> — готово за ${fmtDuration(durationMs)}`
     : status === 'timeout' ? `⏱ <b>${escHtml(a.title)}</b> — прервано: дольше ${a.timeout_minutes} мин`
-      : `❌ <b>${escHtml(a.title)}</b> — ошибка${code != null ? ` (код ${code})` : ''} за ${fmtDuration(durationMs)}`;
+      : `❌ <b>${escHtml(a.title)}</b> — не получилось, ${fmtDuration(durationMs)}`;
   const body = resultLines(lines).join('\n');
   const L = [head];
   if (body.trim()) L.push('', pre(truncate(body, RESULT_MAX)));
-  if (logRel) L.push(`<i>Журнал: ${escHtml(logRel)}</i>`);
   return { text: L.join('\n'), keyboard: followupKeyboard(cfg, a) };
 }
 
@@ -294,7 +293,7 @@ export async function prepareAction({ p, cfg, id, send, ticket = null, now = () 
   if (vpn) { await deliver(p, send, { text: `❌ <b>${escHtml(a.title)}</b>: ${escHtml(vpn)} — без VPN сервер недоступен`, keyboard: [] }, now()); return { status: 'vpn' }; }
   const r = await runCommand(a.prepare, { cwd: p.projectDir, timeoutMs });
   if (r.code !== 0 || r.timedOut) {
-    const why = r.timedOut ? `дольше ${Math.round(timeoutMs / 60000)} мин` : `код ${r.code}`;
+    const why = r.timedOut ? `шла дольше ${Math.round(timeoutMs / 60000)} мин` : 'завершилась с ошибкой';
     await deliver(p, send, { text: `❌ Подготовка «${escHtml(a.title)}» не удалась (${why}) — действие не запускаю.\n${pre(truncate(r.lines.filter((l) => l.trim()).slice(-TAIL_LINES).join('\n'), RESULT_MAX))}`, keyboard: [] }, now());
     return { status: 'error' };
   }

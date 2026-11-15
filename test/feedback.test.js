@@ -42,11 +42,11 @@ test('0.5.8: итог прогона — сделано, нужно от вас,
   fs.mkdirSync(path.join(p.runs, 'r1'), { recursive: true }); fs.writeFileSync(path.join(p.runs, 'r1', 'summary.md'), REPORT);
   addChange(dir, 'add-y', { meta: pending('add-y') });
   const m = finishMessage(cfg, record(), p);
-  assert.match(m.text, /^✅ mcfly demo: прогон \d\d:\d\d завершён: ок/);
-  assert.match(m.text, /Сделано:\n• site-rebuild-command: задачи 1\.1–4\.1 выполнены, слито в main\n• 764 теста зелёные/);
+  assert.match(m.text, /^✅ mcfly demo: прогон \d\d:\d\d прошёл успешно, \d+ мин\./);
+  assert.doesNotMatch(m.text, /Сделано|site-rebuild-command|764 теста|mcfly\/runs/, '0.9.0: список «Сделано» в Telegram не идёт');
   assert.match(m.text, /Нужно от вас:\n• сверить Q2 с фронтом orbita/);
   assert.doesNotMatch(m.text, /одобрить add-y/, 'одобрение — кнопкой, не пунктом');
-  assert.match(m.text, /Дальше: работы нет — одобрите add-y/);
+  assert.match(m.text, /Дальше: работы нет — одобрите «Зачем: тест»/); assert.doesNotMatch(m.text, /add-y/, '0.9.0: служебное имя — только на кнопке');
   assert.deepEqual(m.keyboard.map((row) => row.map((b) => b.callback_data)), [['ap:add-y', 'rj:add-y']]);
 });
 test('0.5.8: итог прогона без отчёта и длинный отчёт — без пустых разделов, лишнее урезано со ссылкой', () => {
@@ -54,12 +54,15 @@ test('0.5.8: итог прогона без отчёта и длинный от�
   const bare = finishMessage(cfg, record(), p);
   assert.doesNotMatch(bare.text, /Сделано|Нужно от вас/); assert.match(bare.text, /Дальше: работы нет — одобрите изменение/);
   fs.mkdirSync(path.join(p.runs, 'r1'), { recursive: true });
-  fs.writeFileSync(path.join(p.runs, 'r1', 'summary.md'), `# Прогон\n## Сделано\n${Array.from({ length: 9 }, (_, i) => `- пункт ${i} ${'x'.repeat(400)}`).join('\n')}\n`);
+  fs.writeFileSync(path.join(p.runs, 'r1', 'summary.md'), `# Прогон\n## Сделано\n- x\n## Нужно от человека\n${Array.from({ length: 9 }, (_, i) => `- пункт ${i} ${'x'.repeat(400)}`).join('\n')}\n`);
   const long = finishMessage(cfg, record(), p);
   const items = long.text.split('\n').filter((l) => l.startsWith('• '));
-  assert.equal(items.length, 6); assert.match(items.at(-1), /… ещё 4 — mcfly\/runs\/r1\/summary\.md/);
+  assert.equal(items.length, 6); assert.match(items.at(-1), /… ещё 4 — кнопка «последний прогон»/); assert.doesNotMatch(long.text, /mcfly\/runs/);
   assert.ok(items.slice(0, 5).every((l) => l.length <= 222), 'пункт урезан');
-  assert.match(finishMessage(cfg, record({ status: 'network', attempts: 2, error: 'ENOTFOUND' }), p).text, /^⚠️ .*нет доступа к API/);
+  for (const [status, re] of [['quota', /^⏸ .*остановлен через \d+ мин: кончился лимит подписки/], ['timeout', /^⏱ .*остановлен через \d+ мин: не уложился в отведённое время\. Незаконченное подхватит следующий прогон/]]) {
+    assert.match(finishMessage(cfg, record({ status }), paths(bareProject())).text, re, 'прогон без отчёта: причина словами');
+  }
+  assert.match(finishMessage(cfg, record({ status: 'network', attempts: 2, error: 'ENOTFOUND' }), p).text, /^⚠️ .*не было связи с Claude/);
 });
 test('0.5.8: итог не ушёл в Telegram — в очереди с кнопками, отправляется позже с пометкой', async () => {
   const dir = bareProject(); const p = paths(dir);
@@ -69,7 +72,7 @@ test('0.5.8: итог не ушёл в Telegram — в очереди с кно�
   const r = await run({ projectDir: dir, mode: 'day', log: (s) => logs.push(s), sleep: async () => {}, notify: async () => { throw new Error('fetch failed'); } });
   assert.equal(r.status, 'ok'); assert.ok(logs.some((s) => /поставлено в очередь/.test(s)));
   const queued = fs.readFileSync(noticesPath(p), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-  assert.equal(queued.length, 1); assert.match(queued[0].text, /завершён: ок/); assert.equal(queued[0].keyboard[0][0].callback_data, 'ap:add-y');
+  assert.equal(queued.length, 1); assert.match(queued[0].text, /прошёл успешно/); assert.equal(queued[0].keyboard[0][0].callback_data, 'ap:add-y');
   const sent = [];
   assert.equal(await flushNotices(p, async (t, kb) => { sent.push({ t, kb }); }), 1);
   assert.match(sent[0].t, /^🕓 Не дошло вовремя \(\d\d\.\d\d \d\d:\d\d\):\n✅ mcfly demo/); assert.equal(sent[0].kb[0][0].callback_data, 'ap:add-y');
@@ -126,7 +129,7 @@ test('0.5.8: зависший claude прерывается сторожем, п
   const rec = JSON.parse(fs.readFileSync(path.join(p.runs, r.id, 'result.json'), 'utf8'));
   assert.equal(rec.attempts, 2); assert.deepEqual(waits, [60_000]);
   assert.match(fs.readFileSync(path.join(p.runs, r.id, 'events.log'), 'utf8'), /⛔ прерван: нет доступа к API: 1 повтор\(ов\) api_retry без ответа, потом тишина/);
-  assert.match(notes[0], /нет доступа к API/);
+  assert.match(notes[0], /не было связи с Claude/);
 });
 
 test('0.5.8: «запусти» без работы, когда изменение ждёт одобрения — прогон не стартует, под ответом кнопки', async () => {
@@ -185,19 +188,20 @@ test('0.5.9: итог прогона — текст вопросов с отве
   const m = finishMessage(cfg, record(), p);
   assert.match(m.text, /Решить:\n❓ Q1: Дата релиза при бэкфилле: дата обработки или resolvedAt\?\n   По умолчанию: Дата обработки \(примется \d\d\.\d\d \d\d:\d\d\)/);
   assert.match(m.text, /❓ Q2: Выкатить на сервер\?\n   Ответа по умолчанию нет — команда ждёт вас/);
-  assert.match(m.text, /📋 Одобрить add-y: ORB-405 теряет факты: лимит целей 15\. \(авто-одобрение \d\d\.\d\d \d\d:\d\d\)/);
+  assert.match(m.text, /📋 Одобрить план: ORB-405 теряет факты: лимит целей 15\. \(авто-одобрение \d\d\.\d\d \d\d:\d\d\)/);
   assert.match(m.text, /Кнопки ниже; свой ответ — текстом/);
   assert.ok(m.text.indexOf('Решить:') < m.text.indexOf('Дальше:'));
   assert.deepEqual(m.keyboard.map((row) => row[0].callback_data), ['qd:Q1', 'ap:add-y']);
   fs.mkdirSync(path.join(p.runs, 'r1'), { recursive: true });
-  fs.writeFileSync(path.join(p.runs, 'r1', 'summary.md'), `# Прогон\n## Сделано\n${Array.from({ length: 5 }, (_, i) => `- пункт ${i} ${'x'.repeat(400)}`).join('\n')}\n`);
+  fs.writeFileSync(path.join(p.runs, 'r1', 'summary.md'), `# Прогон\n## Простыми словами\nЧто сделано: ${'ш'.repeat(1400)}\n`);
   const big = loadQuestions(p);
   for (let i = 0; i < 4; i++) addQuestion(big, { category: 'spec', text: `вопрос ${i} ${'y'.repeat(500)}`, defaultAnswer: 'z'.repeat(300) }, cfg);
   saveQuestions(p, big);
   const long = finishMessage(cfg, record(), p);
   assert.ok(long.text.length <= 3800);
   assert.match(long.text, /❓ Q6:/, 'последний вопрос на месте'); assert.match(long.text, /Дальше:/);
-  assert.ok(long.text.split('\n').filter((l) => l.startsWith('• пункт')).length < 5, '«Сделано» урезано ради вопросов');
+  const told = long.text.split('\n').find((l) => l.startsWith('Что сделано:'));
+  assert.ok(told && told.length < 1400 && told.endsWith('…'), 'пересказ урезан ради вопросов');
 });
 
 test('0.5.10: итог прогона — «Простыми словами» сразу под строкой статуса, без обратных кавычек и не длиннее 700', () => {
@@ -206,13 +210,15 @@ test('0.5.10: итог прогона — «Простыми словами» с
   fs.writeFileSync(path.join(p.runs, 'r1', 'summary.md'), `# Прогон r1\n## Простыми словами\nСтарые скриншоты элемента теперь остаются в \`истории\`.\nОт вас ничего не нужно.\n## Сделано\n- history-screenshots: задачи 1–6\n`);
   const m = finishMessage(cfg, record(), p);
   const lines = m.text.split('\n');
-  assert.equal(lines[1], ''); assert.equal(lines[2], 'Простыми словами: Старые скриншоты элемента теперь остаются в истории. От вас ничего не нужно.');
-  assert.ok(m.text.indexOf('Простыми словами') < m.text.indexOf('Сделано:'));
-  fs.writeFileSync(path.join(p.runs, 'r1', 'summary.md'), `# Прогон r1\n## Простыми словами\n${'а'.repeat(900)}\n`);
+  assert.equal(lines[1], ''); assert.equal(lines[2], 'Старые скриншоты элемента теперь остаются в истории. От вас ничего не нужно.');
+  assert.doesNotMatch(m.text, /Сделано:|history-screenshots/);
+  fs.writeFileSync(path.join(p.runs, 'r1', 'summary.md'), '# Прогон r1\n## Простыми словами\nЧто сделано: на сайте появился поиск.\nТеперь он ищет по разделам.\nЗачем: читатель быстрее находит страницу.\nЧто дальше: подсказки в поиске.\n## Сделано\n- search: задачи 1–3\n');
+  assert.deepEqual(finishMessage(cfg, record(), p).text.split('\n').slice(2, 5), ['Что сделано: на сайте появился поиск. Теперь он ищет по разделам.', 'Зачем: читатель быстрее находит страницу.', 'Что дальше: подсказки в поиске.'], '0.9.0: три абзаца, каждый с новой строки');
+  fs.writeFileSync(path.join(p.runs, 'r1', 'summary.md'), `# Прогон r1\n## Простыми словами\n${'а'.repeat(1900)}\n`);
   const long = finishMessage(cfg, record(), p).text.split('\n')[2];
-  assert.ok(long.length <= 'Простыми словами: '.length + 700 && long.endsWith('…'));
+  assert.ok(long.length <= 1500 && long.endsWith('…'));
   fs.writeFileSync(path.join(p.runs, 'r1', 'summary.md'), '# Прогон r1\n## Простыми словами\nнет\n');
-  assert.doesNotMatch(finishMessage(cfg, record(), p).text, /Простыми словами/);
+  assert.equal(finishMessage(cfg, record(), p).text.split('\n')[2], 'Дальше: работы нет — одобрите изменение или напишите команде заметку', '«нет» — пересказа нет');
 });
 
 import { loadIdeas as li4, saveIdeas as si4, addIdea as ai4, transitionIdea as ti4 } from '../src/ideas.js';

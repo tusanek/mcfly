@@ -10,7 +10,7 @@ import { currentRun } from './runner.js';
 import { hasActions, listActions, getAction } from './action-config.js';
 import { currentAction, offerKeyboard, isTrusted } from './actions.js';
 import { loadIdeas, visibleIdeas, ideasBrief } from './ideas.js';
-import { escHtml, inline, splitHtml, reportSections, plainWords, reportNeeds, isNone, changeProgress, nextRunText, runsByStatus, STATUS_RU, summaryKeyboard, changeTitle, nextTask } from './summary.js';
+import { escHtml, inline, splitHtml, reportSections, plainWords, plainHtml, reportNeeds, progressWords, nextRunText, runsByStatus, STATUS_RU, QUOTA_WARN, summaryKeyboard, changeTitle } from './summary.js';
 
 /**
  * Команды обзора для владельца в Telegram: «статус» (раньше «где мы»), «цели», «статистика», «последний прогон», «помощь».
@@ -33,7 +33,7 @@ export function viewOf(text) {
 
 /** Меню команд Telegram (setMyCommands): латиница в нижнем регистре, описание до 256 символов. */
 export const BOT_COMMANDS = [
-  { command: 'status', description: '📍 Статус: прогон, изменения, вопросы, ссылки, квота' },
+  { command: 'status', description: '📍 Статус: прогон, изменения, вопросы, ссылки' },
   { command: 'goals', description: '🎯 Цели проекта и чек-лист до MVP' },
   { command: 'stats', description: '📊 Статистика за 7 дней и всего' },
   { command: 'last', description: '📰 Последний прогон простыми словами' },
@@ -65,10 +65,9 @@ const at = (d) => fmtShort(new Date(d));
 const pct = (x) => Math.round(Number(x) * 100);
 
 function runs(p) { return readMetrics(p).filter((r) => r.type === 'run'); }
-/** Строка о прогоне: «22.10 14:50 (слот 02:00) — ок, 24 мин, ~$3.58». */
+/** Строка о прогоне для владельца: «22.10 14:50 — прошёл успешно, 24 мин» (0.9.0: без слота и стоимости). */
 function runBrief(r) {
-  const extra = [r.duration_ms ? fmtDuration(r.duration_ms) : '', r.cost_usd != null ? `~$${Number(r.cost_usd).toFixed(2)}` : ''].filter(Boolean);
-  return `${at(r.started_at)}${r.slot ? ` (слот ${r.slot})` : ''} — ${STATUS_RU[r.status] || r.status}${extra.length ? `, ${extra.join(', ')}` : ''}`;
+  return `${at(r.started_at)} — ${STATUS_RU[r.status] || r.status}${r.status === 'ok' && r.duration_ms ? `, ${fmtDuration(r.duration_ms)}` : ''}`;
 }
 /** Самый свежий отчёт репортёра: { id, sec, record } по каталогам mcfly/runs (авто-сводки runner'а пропускаются) или null. */
 export function latestReport(p) {
@@ -98,19 +97,17 @@ export function lastUsageAt(p) {
   const r = runs(p).filter((x) => x.usage && x.usage.seven_day != null).at(-1);
   return r ? { usage: r.usage, at: new Date(r.ended_at || r.started_at) } : null;
 }
-// 0.7.4: изменение по пункту списка — «I40 «название»», под ним имя изменения; у одобренного с задачами — следующая задача
+// 0.9.0: название для человека (пункт списка или начало описания), прогресс словами; служебное имя и текст задач — только в терминале
 const changeLine = (p, cfg, c, now = new Date()) => {
   const st = c.mcfly.approval;
   const title = changeTitle(p, c, escHtml);
-  const next = st === 'approved' ? nextTask(p.projectDir, c) : null;
-  const sub = [c.mcfly.idea ? `<i>${escHtml(c.name)}</i>` : '', next ? `дальше: ${escHtml(next)}` : ''].filter(Boolean).join(' · ');
-  const tail = sub ? `\n   ${sub}` : '';
-  if (st === 'pending' && c.mcfly.idea) return `⏳ <b>${title}</b> — ждёт вашего решения, само не одобрится${tail}`;
-  if (st === 'pending') return `⏳ <b>${title}</b> — ждёт одобрения${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}${tail}`;
-  if (st === 'rejected') return `⛔ ${title} — отклонено${tail}`;
-  if (st === 'approved' && isPaused(c, now)) return `⏸ <b>${title}</b> — отложено до ${escHtml(fmtDay(pausedUntil(c)))}, задач ${changeProgress(p.projectDir, c)}${c.mcfly.idea ? `\n   <i>${escHtml(c.name)}</i>` : ''}`;
-  if (st === 'approved') return `${c.tasksOpen > 0 ? '🔧' : '🏁'} <b>${title}</b> — одобрено, задач ${changeProgress(p.projectDir, c)}${tail}`;
-  return `⚪ ${title} — одобрение не запрошено, задач ${changeProgress(p.projectDir, c)}${tail}`;
+  const steps = progressWords(p.projectDir, c);
+  if (st === 'pending' && c.mcfly.idea) return `⏳ <b>${title}</b> — ждёт вашего решения, само не одобрится`;
+  if (st === 'pending') return `⏳ <b>${title}</b> — ждёт одобрения${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`;
+  if (st === 'rejected') return `⛔ ${title} — отклонено`;
+  if (st === 'approved' && isPaused(c, now)) return `⏸ <b>${title}</b> — отложено до ${escHtml(fmtDay(pausedUntil(c)))}, ${steps}`;
+  if (st === 'approved') return `${c.tasksOpen > 0 ? '🔧' : '🏁'} <b>${title}</b> — одобрено, ${steps}`;
+  return `⚪ ${title} — одобрение не запрошено, ${steps}`;
 };
 const toParts = (html) => splitHtml(html, MAX);
 
@@ -122,10 +119,10 @@ export function statusView(p, cfg, { now = new Date() } = {}) {
   L.push('');
   const cur = currentRun(p);
   const last = runs(p).at(-1);
-  if (cur) L.push(`▶️ <b>Идёт прогон</b> ${escHtml(cur.id || '')} с ${fmtShort(cur.since)}${cur.lastEvent ? `\nПоследнее действие: ${escHtml(truncate(cur.lastEvent, 300))}` : ''}`);
+  if (cur) L.push(`▶️ <b>Идёт прогон</b> с ${fmtShort(cur.since)}, уже ${fmtDuration(Math.max(0, now - cur.since))} — итог придёт сообщением`);
   else L.push(`💤 Прогон сейчас не идёт.${last ? ` Последний: ${escHtml(runBrief(last))}` : ' Прогонов ещё не было.'}`);
   const act = currentAction(p);
-  if (hasActions(cfg) && !isTrusted(p, cfg)) L.push('⚠️ Кнопки действий выключены: раздел actions изменён — подтвердите в терминале <code>mcfly action trust</code>');
+  if (hasActions(cfg) && !isTrusted(p, cfg)) L.push('⚠️ Кнопки действий выключены: их настройки изменились. Чтобы включить, наберите в терминале <code>mcfly action trust</code>');
   if (act) L.push(`🛠 <b>Идёт действие</b> «${escHtml(act.title || act.id)}» с ${fmtShort(act.since)} — итог придёт сообщением`);
 
   const changes = listChanges(p.openspecChanges);
@@ -143,22 +140,19 @@ export function statusView(p, cfg, { now = new Date() } = {}) {
   const rep = latestReport(p);
   const need = reportNeeds(p, cfg, rep);
   if (need.length) {
-    L.push('', `<b>🙋 Нужно от вас</b> <i>(отчёт ${escHtml(rep.record ? at(rep.record.started_at) : rep.id)})</i>`);
+    L.push('', `<b>🙋 Нужно от вас</b>${rep.record ? ` <i>(отчёт ${escHtml(at(rep.record.started_at))})</i>` : ''}`);
     L.push(...need.slice(0, NEED_MAX).map((x, i) => `${i + 1}. ${inline(truncate(x, ITEM_MAX))}`));
     if (need.length > NEED_MAX) L.push(`… ещё ${need.length - NEED_MAX} — «последний прогон»`);
   }
 
   const slot = nextSlot(cfg.schedule.slots, now);
-  const plan = nextRunText(approvedWithWork(changes, now), pendingApprovals(changes), (c) => changeProgress(p.projectDir, c), escHtml, ideasBrief(p, cfg), (c) => changeTitle(p, c, escHtml, { short: true }));
+  const plan = nextRunText(approvedWithWork(changes, now), pendingApprovals(changes), (c) => progressWords(p.projectDir, c), escHtml, ideasBrief(p, cfg), (c) => changeTitle(p, c, escHtml, { short: true }));
   L.push('', `<b>🗓 Следующий прогон:</b> ${slot ? `${fmtShort(slot)} по расписанию` : 'расписания нет'} — ${plan}`);
 
+  // 0.9.0: о лимите подписки бот молчит, пока занято меньше QUOTA_WARN; проценты по замерам — в терминале (mcfly status)
   const u = lastUsageAt(p);
-  if (u) {
-    const parts = [];
-    if (u.usage.five_hour != null) parts.push(`5 часов — занято ${pct(u.usage.five_hour)} %, осталось ${100 - pct(u.usage.five_hour)} %`);
-    parts.push(`неделя — занято ${pct(u.usage.seven_day)} %, осталось ${100 - pct(u.usage.seven_day)} %`);
-    L.push(`<b>⛽ Квота подписки:</b> ${parts.join('; ')} <i>(замер ${fmtShort(u.at)})</i>`);
-  } else L.push('⛽ Квота подписки: замеров ещё нет — появятся после прогона');
+  const tight = u ? [[u.usage.five_hour, 'на ближайшие 5 часов'], [u.usage.seven_day, 'на неделю']].filter(([x]) => x != null && Number(x) >= QUOTA_WARN) : [];
+  if (tight.length) L.push(`⚠️ <b>Лимит подписки почти исчерпан:</b> ${tight.map(([x, w]) => `${w} осталось ${Math.max(0, 100 - pct(x))} %`).join(', ')}. Прогон может остановиться раньше времени <i>(замер ${fmtShort(u.at)})</i>`);
   return toParts(L.join('\n'));
 }
 
@@ -216,7 +210,7 @@ export function goalsView(p, cfg) {
   return toParts(html);
 }
 
-/** 📊 Статистика: прогоны по статусам, задачи, изменения, возвраты с ревью и расход — за 7 дней и всего. */
+/** 📊 Статистика: прогоны по статусам, задачи, изменения и вопросы — за 7 дней и всего. 0.9.0: без расхода, возвратов с ревью и падений тестов. */
 export function statsView(p, cfg, { now = new Date() } = {}) {
   const records = readMetrics(p);
   const first = records.map((r) => new Date(r.started_at || r.at || 0)).filter((d) => d.getTime() > 0).sort((a, b) => a - b)[0];
@@ -225,37 +219,29 @@ export function statsView(p, cfg, { now = new Date() } = {}) {
     return [
       `<b>${title}</b>`,
       `🌙 ${escHtml(runsByStatus(agg))}`,
-      `✅ задач закрыто: ${ev.tasks_done || 0}`,
-      `🏁 изменений влито и в архиве: ${ev.changes_archived || 0} (предложено ${ev.changes_proposed || 0})`,
-      `↩️ возвратов с ревью: ${ev.review_rejections || 0}${ev.tests_failed ? `, падений тестов: ${ev.tests_failed}` : ''}`,
+      `✅ задач сделано: ${ev.tasks_done || 0}`,
+      `🏁 изменений доведено до конца: ${ev.changes_archived || 0} (предложено ${ev.changes_proposed || 0})`,
       `❓ вопросов к вам: ${ev.escalations || 0}`,
-      `💵 расход: ~$${agg.cost_usd}`,
     ];
   };
   const week = aggregate(records, { since: new Date(now.getTime() - 7 * 24 * 3600_000) });
   const all = aggregate(records);
   const L = [`📊 <b>Статистика · ${escHtml(cfg.project)}</b>`, '', ...block('За 7 дней', week), '', ...block(`Всего${first ? ` (с ${pad2(first.getDate())}.${pad2(first.getMonth() + 1)}.${first.getFullYear()})` : ''}`, all)];
-  L.push('', '<i>Расход — оценка Claude Code по ценам API; при подписке это мерило объёма работы, а не счёт.</i>');
   return toParts(L.join('\n'));
 }
 
-/** 📰 Последний прогон: «Простыми словами», «Сделано» и «Нужно от вас» самого свежего отчёта. */
+/** 📰 Последний прогон: пересказ «Простыми словами» и «Нужно от вас» самого свежего отчёта (0.9.0: без списка «Сделано» и путей). */
 export function lastView(p, cfg) {
   const rep = latestReport(p);
   if (!rep) return toParts('📰 Отчётов прогонов пока нет — первый появится после прогона команды.');
-  const L = [`📰 <b>Последний прогон · ${escHtml(cfg.project)}</b>`, rep.record ? escHtml(runBrief(rep.record)) : `прогон ${escHtml(rep.id)}`];
+  const L = [`📰 <b>Последний прогон · ${escHtml(cfg.project)}</b>`, ...(rep.record ? [escHtml(runBrief(rep.record))] : [])];
   const newer = runs(p).filter((r) => rep.record ? new Date(r.started_at) > new Date(rep.record.started_at) : r.id > rep.id);
   if (newer.length) L.push(`<i>После него ещё прогонов без отчёта: ${newer.length}, последний ${escHtml(runBrief(newer.at(-1)))}</i>`);
-  const plain = plainWords(rep.sec, 1500);
-  if (plain) L.push('', '<b>🗣 Простыми словами</b>', escHtml(plain));
-  const done = (rep.sec['Сделано'] || []).filter((l) => !isNone(l));
+  const plain = plainWords(rep.sec);
+  L.push('', ...(plain ? [plainHtml(plain)] : ['Команда не оставила пересказа этого прогона простыми словами.']));
   const need = reportNeeds(p, cfg, rep);
-  const tail = need.length ? ['', '<b>🙋 Нужно от вас</b>', ...need.map((x, i) => `${i + 1}. ${inline(truncate(x, ITEM_MAX))}`)] : ['', '🙋 От вас ничего не нужно'];
-  const doneLines = (n) => (done.length ? ['', '<b>✅ Сделано</b>', ...done.slice(0, n).map((l) => `• ${inline(truncate(l, ITEM_MAX))}`), ...(done.length > n ? [`• … ещё ${done.length - n} — mcfly/runs/${escHtml(rep.id)}/summary.md`] : [])] : []);
-  // «Нужно от вас» важнее — если не влезает, урезается «Сделано».
-  let n = done.length; let html;
-  do { html = [...L, ...doneLines(n), ...tail].join('\n'); n -= 1; } while (html.length > MAX && n >= 0);
-  return toParts(html);
+  L.push('', ...(need.length ? ['<b>🙋 Нужно от вас</b>', ...need.map((x, i) => `${i + 1}. ${inline(truncate(x, ITEM_MAX))}`)] : ['🙋 От вас ничего не нужно']));
+  return toParts(L.join('\n'));
 }
 
 /** Действия для «помощи»: какие спрашивают «✅ Да, выполнить», какие запускаются сразу (confirm: false). */
@@ -268,16 +254,16 @@ function actionsHelp(cfg) {
 /** ❓ Помощь: все команды бота с примерами. */
 export function helpView(p, cfg) {
   const start = cfg.run.telegram_start === false
-    ? '▶️ «запусти» — записать просьбу о прогоне (запуск из Telegram выключен: run.telegram_start: false)'
+    ? '▶️ «запусти» — записать просьбу о прогоне (запуск из Telegram выключен в настройках проекта)'
     : '▶️ «запусти» — прогон сейчас; если работы нет, а изменение ждёт одобрения, бот предложит одобрить его кнопкой\n«запусти всё равно» — прогон без одобрения, например чтобы команда прочла заметку';
   return toParts([
     `❓ <b>Что умеет бот mcfly · ${escHtml(cfg.project)}</b>`,
     '',
     '<b>Посмотреть</b> (ничего не меняет)',
-    '📍 «статус» или /status (по-старому «где мы») — ссылки проекта, идёт ли прогон, изменения и их задачи, вопросы, что нужно от вас, следующий прогон, квота',
+    '📍 «статус» или /status (по-старому «где мы») — ссылки проекта, идёт ли прогон, изменения и сколько по ним сделано, вопросы, что нужно от вас, следующий прогон',
     '🎯 «цели» или /goals — цель проекта, ближайшая веха и чек-лист до MVP (файл mcfly/goals.md)',
-    '📊 «статистика» или /stats — прогоны, задачи, изменения, возвраты с ревью и расход за 7 дней и всего',
-    '📰 «последний прогон» или /last — пересказ простыми словами, что сделано и что нужно от вас',
+    '📊 «статистика» или /stats — прогоны, задачи, изменения и вопросы к вам за 7 дней и всего',
+    '📰 «последний прогон» или /last — пересказ простыми словами: что сделано, зачем, что дальше и что нужно от вас',
     ...(cfg.ideas?.enabled ? ['💡 «предложения» или /ideas — что команда может сделать дальше: ваш бэклог и идеи команды'] : []),
     '❓ «помощь» или /help — это сообщение',
     '',
@@ -291,24 +277,23 @@ export function helpView(p, cfg) {
     '🔔 «напомни 19:00 текст» — напоминание в этот чат (ещё «завтра 10:00», «08.11 10:00», «через 2 ч»); названа кнопка из «🛠 Действия» — она будет под напоминанием, рядом «⏰ Через час»',
     '🔔 «напоминания» или /reminders — что поставлено, с кнопками отмены',
     '📝 Любой другой текст — заметка команде, её прочтёт ближайший прогон',
-    ...(hasActions(cfg) ? ['', '<b>Действия</b> (раздел actions в mcfly/config.yaml)', `🛠 «действия» или /actions — ${actionsHelp(cfg)}; итог приходит сообщением`] : []),
+    ...(hasActions(cfg) ? ['', '<b>Действия</b>', `🛠 «действия» или /actions — ${actionsHelp(cfg)}; итог приходит сообщением`] : []),
     '',
     '<i>Кнопки под сводкой и под «статусом» — те же одобрения и ответы одним нажатием. Кнопки внизу чата и меню «/» — команды выше.</i>',
   ].join('\n'));
 }
 
-const SIZE_RU = { S: 'S', M: 'M', L: 'L' };
+const SIZE_RU = { S: 'небольшая работа', M: 'средняя работа', L: 'большая работа' };
 const IDEA_TEXT_MAX = 1500;
 const oneLine = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 const ideaOwner = (x) => (x.source === 'owner-backlog' || x.source === 'owner-note' ? 'ваш' : 'команда');
 /** Пункт списка: заголовок, название, что даст, откуда, что понадобится от владельца. */
 function ideaLines(x) {
   return [
-    `💡 ${escHtml(x.id)} · ${ideaOwner(x)} · ${SIZE_RU[x.size] || escHtml(String(x.size || '?'))}`,
+    `💡 ${escHtml(x.id)} · ${ideaOwner(x)}${SIZE_RU[x.size] ? ` · ${SIZE_RU[x.size]}` : ''}`,
     `<b>${escHtml(x.title)}</b>`,
     // Описание целиком (0.7.1): владелец выбирает по нему; потолок — только чтобы строка влезла в сообщение Telegram
     `Что даст: ${escHtml(truncate(oneLine(x.benefit), IDEA_TEXT_MAX))}`,
-    ...(x.how ? [`Как: ${escHtml(truncate(oneLine(x.how), IDEA_TEXT_MAX))}`] : []),
     ...(x.ref ? [`Откуда: ${escHtml(x.ref)}`] : []),
     ...(x.needs_owner ? [`🙋 От вас понадобится: ${escHtml(x.needs_owner)}`] : []),
   ];
@@ -321,7 +306,7 @@ const ideasPage = (data, cfg, page) => {
 /** 💡 Предложения (0.7.0): взятые и спланированные, лучшие пункты списка, отложенные на обсуждение. */
 export function ideasView(p, cfg, { page = 1 } = {}) {
   const head = [`💡 <b>Предложения · ${escHtml(cfg.project)}</b>`];
-  if (!cfg.ideas?.enabled) return toParts([...head, '', 'Список предложений выключен (ideas.enabled: false)'].join('\n'));
+  if (!cfg.ideas?.enabled) return toParts([...head, '', 'Список предложений выключен в настройках проекта'].join('\n'));
   const data = loadIdeas(p);
   if (data.error) return toParts([...head, '', `⚠️ ${escHtml(data.error)} — список не прочитан, исправьте файл`].join('\n'));
   const v = ideasPage(data, cfg, page);
@@ -331,8 +316,8 @@ export function ideasView(p, cfg, { page = 1 } = {}) {
     L.push('', ...v.active.map((x) => (x.status === 'taken'
       ? `⏳ ${escHtml(x.id)} — ждёт прогона: ${escHtml(x.title)}`
       : approval[x.change] === 'approved'
-        ? `🔧 ${escHtml(x.id)} → изменение ${escHtml(x.change || '?')}, одобрено — команда делает`
-        : `📝 ${escHtml(x.id)} → изменение ${escHtml(x.change || '?')}, ждёт вашего решения в «Статусе»`)));
+        ? `🔧 ${escHtml(x.id)} — план одобрен, команда делает: ${escHtml(x.title)}`
+        : `📝 ${escHtml(x.id)} — план готов, ждёт вашего решения в «Статусе»: ${escHtml(x.title)}`)));
   }
   if (v.shown.length) for (const x of v.shown) L.push('', ...ideaLines(x));
   else if (!v.active.length) L.push('', 'Предложений пока нет: команда добавит их в следующем прогоне, или напишите «идея: …»');

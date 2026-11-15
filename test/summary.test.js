@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import path from 'node:path';
-import { composeSummary, summaryKeyboard, htmlToPlain, sendSummary } from '../src/summary.js';
+import { composeSummary, summaryKeyboard, htmlToPlain, sendSummary, techTail, plainWords, progressWords, changeTitle, reportSections } from '../src/summary.js';
 import { paths, loadState } from '../src/state.js';
 import { appendMetric } from '../src/metrics.js';
 import { loadQuestions, addQuestion, saveQuestions } from '../src/questions.js';
@@ -12,6 +12,9 @@ const NOW = new Date(2026, 9, 1, 10, 30); const SINCE = new Date(2026, 8, 30, 10
 const run = (p, over) => appendMetric(p, { type: 'run', mode: 'night', duration_ms: 3_300_000, ...over });
 const report = (p, id, text) => { fs.mkdirSync(path.join(p.runs, id), { recursive: true }); fs.writeFileSync(path.join(p.runs, id, 'summary.md'), text); };
 const compose = (p, c = cfg) => composeSummary(p, c, { now: NOW, since: SINCE });
+// 0.9.0: технические данные — только в хвосте для терминала
+const tail = (p, c = cfg, since = SINCE) => techTail(p, c, { since });
+const noBlocks = (html) => { assert.doesNotMatch(html, /<blockquote|Отчёт \d\d:\d\d|📊|Ещё отчётов|mcfly\/runs/, 'в сводке нет блоков «Отчёт» и метрик'); };
 
 test('сводка: сначала то, что нужно от человека, с номерами', () => {
   const dir = bareProject(); const p = paths(dir);
@@ -24,8 +27,10 @@ test('сводка: сначала то, что нужно от человека
   const need = html.indexOf('🙋'); assert.ok(need > 0 && need < html.indexOf('🌙'), 'блок «Нужно от вас» идёт перед прогонами');
   assert.match(html, /<b>🙋 Нужно от вас \(3\)<\/b>/);
   assert.match(html, /1\. Вопрос <b>Q1<\/b>: Кэш в git\? — по умолчанию «оставить», срок 02\.10/);
-  assert.match(html, /2\. Одобрить <b>fix-x<\/b>: Мелочи ревью\./);
+  assert.match(html, /2\. Одобрить план: Мелочи ревью\. \(авто-одобрение 01\.10 13:00\)\n/);
   assert.match(html, /3\. Запустить eval 1\.2\.0 и утвердить стиль/);
+  assert.match(html, /⏳ «Мелочи ревью» — ждёт одобрения/);
+  assert.doesNotMatch(html, /fix-x/, 'служебного имени изменения в тексте нет');
 });
 test('сводка: ничего не нужно — одна строка', () => {
   const p = paths(bareProject());
@@ -36,47 +41,94 @@ test('сводка: прогоны по строке со значком, при
   run(p, { id: '20261001-0000', slot: '00:00', started_at: new Date(2026, 9, 1, 0, 0).toISOString(), status: 'network', note: 'Failed to authenticate. API Error: 403 Request not allowed; репортёр не написал отчёт, записана авто-сводка' });
   run(p, { id: '20261001-0926', slot: null, mode: 'day', started_at: new Date(2026, 9, 1, 9, 26).toISOString(), status: 'ok', cost_usd: 4.43, turns: 25 });
   const html = compose(p);
-  assert.match(html, /❌ 00:00 — нет доступа к API \(VPN\?\)/);
+  assert.match(html, /❌ 00:00 — не состоялся: не было связи с Claude \(проверьте VPN и интернет\)\n/);
   assert.match(html, /💤 04:00 — пропущен: Mac спал или был выключен/);
-  assert.match(html, /✅ 09:26 — 55 мин · ~\$4\.43/);
-  assert.doesNotMatch(html, /авто-сводка|репортёр не написал/);
+  assert.match(html, /✅ 09:26 — прошёл успешно, 55 мин\n/);
+  assert.doesNotMatch(html, /авто-сводка|репортёр не написал|Failed to authenticate|403/);
+  assert.doesNotMatch(html, /\$|ходов/, 'стоимость и ходы — не в сводке');
+  // стоимость и ходы — в хвосте для терминала
+  const t = tail(p);
+  assert.match(t, /^20261001-0926: ok, 25 ходов, ~\$4\.43, 55 мин$/m);
+  assert.match(t, /^20261001-0000: network, 55 мин$/m);
+  assert.match(t, /^За период: нет событий; прогонов 2 \(успешных 1, без связи 1\), ~\$4\.43$/m);
+});
+test('0.9.0: строка прогона — статус словами без текста ошибки; ошибка и попытки — в techTail', () => {
+  const p = paths(bareProject());
+  const at = (h) => new Date(2026, 9, 1, h, 0).toISOString();
+  run(p, { id: '20261001-0000', slot: '00:00', started_at: at(0), status: 'error', note: 'boom <b>; хвост', attempts: 3 });
+  run(p, { id: '20261001-0400', slot: '04:00', started_at: at(4), status: 'quota' });
+  run(p, { id: '20261001-0500', slot: null, started_at: at(5), status: 'timeout' });
+  run(p, { id: '20261001-0600', slot: null, started_at: at(6), status: 'locked' });
+  const html = compose(p);
+  assert.match(html, /❌ 00:00 — сорвался из-за сбоя\n⏸ 04:00 — остановлен: кончился лимит подписки\n⏱ 05:00 — остановлен: не уложился в отведённое время\n🔒 06:00 — не запускался: шёл другой прогон\n/);
+  assert.doesNotMatch(html, /boom|попыток|55 мин/, 'ни ошибки, ни попыток; длительность — только у успешного');
+  const t = tail(p);
+  assert.match(t, /^20261001-0000: error: boom <b>, 55 мин, попыток 3$/m);
+  assert.match(t, /^За период: нет событий; прогонов 4 \(остановлено по лимиту подписки 1, не уложилось во время 1, сорвалось 1, не запускалось 1\), ~\$0$/m);
+});
+test('0.9.0: runsByStatus — частые статусы первыми', () => {
+  const p = paths(bareProject());
+  ['quota', 'ok', 'quota'].forEach((status, i) => run(p, { id: `20261001-0${i}00`, started_at: new Date(2026, 9, 1, i, 0).toISOString(), status }));
+  assert.match(tail(p), /прогонов 3 \(остановлено по лимиту подписки 2, успешных 1\)/);
 });
 test('сводка: изменения с прогрессом по ветке и строка о следующем прогоне', () => {
   const dir = bareProject(); const p = paths(dir);
-  addChange(dir, 'ddm', { tasks: '- [ ] a\n- [ ] b\n- [ ] c\n' });
+  addChange(dir, 'ddm', { tasks: '- [ ] a\n- [ ] b\n- [ ] c\n', proposal: '# ddm\n\nСправочник данных для отчётов. Вторая фраза.\n' });
   const [c] = listChanges(p.openspecChanges); requestApproval(c); setApproval(c, 'approved', 'human');
   gitRepo(dir); git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'проект');
   changeBranch(dir, 'ddm', '- [x] a\n- [x] b\n- [ ] c\n');
   const html = compose(p);
-  assert.match(html, /<b>📦 Изменения<\/b>\n🔧 ddm — 2\/3/);
-  assert.match(html, /<b>🗓 Следующий прогон:<\/b> команда продолжит ddm \(2\/3\)/);
+  assert.match(html, /<b>📦 Изменения<\/b>\n🔧 «Справочник данных для отчётов» — сделано 2 из 3 шагов\n/);
+  assert.match(html, /<b>🗓 Следующий прогон:<\/b> команда продолжит «Справочник данных для отчётов» \(сделано 2 из 3 шагов\)/);
+  assert.doesNotMatch(html, /ddm|2\/3/, 'ни служебного имени, ни «2/3»');
 });
 test('сводка: работы нет — подсказка одобрить изменение', () => {
   const p = paths(bareProject());
   assert.match(compose(p), /<b>🗓 Следующий прогон:<\/b> работы нет — одобрите изменение/);
 });
-test('сводка: отчёты команды и метрики свёрнуты, авто-сводки не вставляются, HTML экранирован', () => {
+test('сводка: отчёты команды и метрики — только в techTail, авто-сводки не вставляются, HTML экранирован', () => {
   const p = paths(bareProject());
   run(p, { id: '20261001-0926', slot: null, mode: 'day', started_at: new Date(2026, 9, 1, 9, 26).toISOString(), status: 'ok' });
   run(p, { id: '20261001-0200', slot: '02:00', started_at: new Date(2026, 9, 1, 2, 0).toISOString(), status: 'error', note: 'boom' });
-  report(p, '20261001-0926', '# Прогон 20261001-0926\n## Сделано\n- eval: отчёт <reports/eval.md> & кэш\n## В работе\n- нет\n');
+  run(p, { id: '20261001-0700', slot: null, mode: 'day', started_at: new Date(2026, 9, 1, 7, 0).toISOString(), status: 'ok' });
+  report(p, '20261001-0926', '# Прогон 20261001-0926\n## Сделано\n- eval: отчёт <reports/eval.md> & кэш\n## В работе\n- нет\n## Нужно от человека\n- проверить <отчёт> & кэш\n');
   report(p, '20261001-0200', '# Прогон 20261001-0200 — авто-сводка (репортёр не отработал)\n## Коммиты за прогон\n(нет коммитов)\n');
+  report(p, '20261001-0700', '# Прогон 20261001-0700\n## Сделано\n- первое\n## В работе\n- второе в пути\n');
   const html = compose(p);
-  assert.match(html, /<blockquote expandable><b>Отчёт 09:26<\/b>\nСделано:\n• eval: отчёт &lt;reports\/eval\.md&gt; &amp; кэш/);
-  assert.doesNotMatch(html, /Коммиты за прогон/);
-  assert.match(html, /<blockquote expandable>📊 За период: /);
+  noBlocks(html);
+  assert.doesNotMatch(html, /Коммиты за прогон|Сделано|reports\/eval|boom|В работе|первое/);
+  assert.match(html, /1\. проверить &lt;отчёт&gt; &amp; кэш/, 'HTML экранирован');
+  // то, что раньше было в свёрнутых блоках, — в хвосте для терминала простым текстом
+  const t = tail(p);
+  assert.match(t, /^Отчёт 09:26 \(mcfly\/runs\/20261001-0926\/summary\.md\):\n  • eval: отчёт <reports\/eval\.md> & кэш$/m);
+  assert.match(t, /^Отчёт 07:00 \(mcfly\/runs\/20261001-0700\/summary\.md\):\n  • первое\n  В работе:\n  • второе в пути$/m);
+  assert.equal((t.match(/В работе:/g) || []).length, 1, '«В работе: нет» не печатается');
+  assert.doesNotMatch(t, /Коммиты за прогон|Отчёт 02:00/, 'авто-сводка не вставляется');
+  assert.match(t, /^20261001-0200: error: boom, 55 мин$/m);
+  assert.match(t, /^За период: нет событий; прогонов 3 \(успешных 2, сорвалось 1\), ~\$0\nВсего: нет событий; прогонов 3 \(успешных 2, сорвалось 1\), ~\$0$/m);
+  assert.doesNotMatch(t, /<b>|&lt;|&amp;/, 'хвост — простой текст');
 });
-test('сводка: длинные отчёты урезаются, сообщение влезает в лимит Telegram', () => {
+// 0.9.0: блоков «Отчёт» в сводке нет — урезать нечего; длинная сводка (пересказы трёх прогонов) делится на сообщения
+const PLAIN_LONG = (i) => `## Простыми словами\nЧто сделано: прогон ${i} ${'переделал страницу проверки '.repeat(17)}\nЗачем: ${'чтобы проверяющие не путались '.repeat(15)}\nЧто дальше: ${'команда продолжит работу '.repeat(18)}\n`;
+test('сводка: длинные отчёты не попадают в сводку, длинная сводка делится splitHtml на куски ≤ 4000', () => {
   const p = paths(bareProject());
   for (let i = 0; i < 6; i++) {
     const id = `20261001-0${i}00`;
     run(p, { id, slot: `0${i}:00`, started_at: new Date(2026, 9, 1, i, 0).toISOString(), status: 'ok' });
-    report(p, id, '## Сделано\n' + Array.from({ length: 40 }, (_, k) => `- пункт ${k} ${'x'.repeat(60)}`).join('\n'));
+    report(p, id, PLAIN_LONG(i) + '## Сделано\n' + Array.from({ length: 40 }, (_, k) => `- пункт ${k} ${'x'.repeat(60)}`).join('\n'));
   }
   const html = compose(p);
-  assert.ok(html.length <= 3900, `длина ${html.length}`);
-  assert.match(html, /…/);
-  assert.equal((html.match(/<blockquote expandable>/g) || []).length, (html.match(/<\/blockquote>/g) || []).length, 'теги не разорваны');
+  noBlocks(html);
+  assert.doesNotMatch(html, /пункт \d|xxxx/, 'раздел «Сделано» в сводку не идёт');
+  assert.ok(html.length > 4000, `длина ${html.length}`);
+  const parts = splitHtml(html);
+  assert.ok(parts.length > 1, `кусков ${parts.length}`);
+  for (const part of parts) assert.ok(part.length <= 4000, `кусок ${part.length}`);
+  assert.equal(parts.join('\n'), html, 'ничего не теряется');
+  // «Сделано» всех шести прогонов целиком — в хвосте для терминала
+  const t = tail(p);
+  for (let i = 0; i < 6; i++) assert.match(t, new RegExp(`^Отчёт 0${i}:00 \\(mcfly/runs/20261001-0${i}00/summary\\.md\\):\\n  • пункт 0 x+\\n`, 'm'));
+  assert.equal((t.match(/  • пункт 39 x{60}$/gm) || []).length, 6, 'пункты не урезаются');
 });
 test('summaryKeyboard: кнопки одобрения и ответа по умолчанию; prod-вопрос без кнопки', () => {
   const dir = bareProject(); const p = paths(dir);
@@ -166,35 +218,53 @@ test('0.5.3: «Нужно от вас» — из свежего отчёта и 
   assert.match(need, /docker compose up -d --force-recreate docs-site/);
   assert.match(need, /решить, нужны ли заглушки страниц из карты/, 'пункт ночной передачи');
   assert.doesNotMatch(need, /HTTPS|BotFather|Push в origin|настроить бота/, 'пункты старых прогонов не попадают');
-  assert.doesNotMatch(need, /\d\. [Оо]добр(?!ить <b>)/, 'одобрения уже стоят в списке сверху');
-  assert.equal((need.match(/Одобрить <b>/g) || []).length, 3);
+  assert.doesNotMatch(need, /\d\. [Оо]добр(?!ить план: )/, 'одобрения уже стоят в списке сверху');
+  assert.equal((need.match(/\d\. Одобрить план: /g) || []).length, 3);
 });
 test('0.5.3: регрессия 02.10 — шесть отчётов с повторами: сводка влезает в Telegram, без «## Why», выдержка ≤ 160', () => {
   const dir = bareProject(); const p = paths(dir); noisyNight(dir, p);
   const html = compose(p);
   assert.ok(html.length <= 4096, `длина ${html.length}`);
   assert.doesNotMatch(html, /## Why|## What/);
-  for (const m of html.matchAll(/Одобрить <b>[^<]+<\/b>: (.*?)(?: \(авто-одобрение [^)]*\))?$/gm)) assert.ok(m[1].length <= 160, `выдержка ${m[1].length}`);
-  assert.match(html, /Одобрить <b>merge-report-upd<\/b>: Импорт прошлой документации/);
-  assert.equal((html.match(/<blockquote expandable>/g) || []).length, (html.match(/<\/blockquote>/g) || []).length, 'теги не разорваны');
-  assert.match(html, /📊 За период/, 'метрики остаются');
+  const approve = [...html.matchAll(/^\d\. Одобрить план: (.*?)(?: \(авто-одобрение [^)]*\))?$/gm)];
+  assert.equal(approve.length, 3);
+  for (const m of approve) {
+    assert.ok(m[1].length <= 160, `выдержка ${m[1].length}`);
+    assert.match(m[1], /^Импорт прошлой документации/);
+    assert.doesNotMatch(m[0], /release-page-fixes|merge-report-upd|tracker-client-hardening/, 'служебного имени в пункте одобрения нет');
+  }
+  noBlocks(html);
+  assert.doesNotMatch(html, /\$|сделано подробно/, 'стоимость и «Сделано» — не в сводке');
+  // метрики и отчёты остаются — в хвосте для терминала
+  const t = tail(p);
+  assert.match(t, /^За период: нет событий; прогонов 6 \(успешных 6\), ~\$18$/m);
+  assert.equal((t.match(/^Отчёт \d\d:\d\d \(mcfly\/runs\/\d{8}-\d{4}\/summary\.md\):$/gm) || []).length, 6);
 });
-test('0.5.3: не влезает — сначала урезаются и выбрасываются блоки «Отчёт», метрики остаются', () => {
+test('0.5.3: не влезает — сводка без блоков «Отчёт» делится splitHtml, пункты «Нужно от вас» целы; отчёты и метрики — в techTail', () => {
   const dir = bareProject(); const p = paths(dir);
   for (let i = 0; i < 6; i++) {
     const id = `20261001-0${i}00`;
     run(p, { id, slot: `0${i}:00`, started_at: new Date(2026, 9, 1, i, 0).toISOString(), status: 'ok' });
-    report(p, id, LONG_DONE + (i === 5 ? '## Нужно от человека\n' + Array.from({ length: 12 }, (_, k) => `- задача ${k}: ${'нужно сделать вручную '.repeat(8)}`).join('\n') + '\n' : ''));
+    report(p, id, PLAIN_LONG(i) + LONG_DONE + (i === 5 ? '## Нужно от человека\n' + Array.from({ length: 12 }, (_, k) => `- задача ${k}: ${'нужно сделать вручную '.repeat(8)}`).join('\n') + '\n' : ''));
   }
   const html = compose(p);
-  assert.ok(html.length <= 3900, `длина ${html.length}`);
-  const blocks = [...html.matchAll(/<blockquote expandable><b>Отчёт [\d:]+<\/b>\n[\s\S]*?<\/blockquote>/g)].map((m) => m[0]);
-  assert.ok(blocks.length > 0 && blocks.length < 6, `блоков ${blocks.length}`);
-  for (const b of blocks) assert.match(b, /\n• пункт 0/, 'в каждом показанном блоке есть пункт, а не только «…»');
-  assert.match(html, /Отчёт 05:00/, 'остаются свежие отчёты');
-  assert.match(html, new RegExp(`Ещё отчётов: ${6 - blocks.length} — mcfly/runs`));
-  assert.match(html, /📊 За период/);
-  assert.equal((html.match(/<blockquote expandable>/g) || []).length, (html.match(/<\/blockquote>/g) || []).length);
+  noBlocks(html);
+  assert.doesNotMatch(html, /сделано подробно/);
+  assert.ok(html.length > 4000, `длина ${html.length}`);
+  const parts = splitHtml(html);
+  assert.ok(parts.length > 1, `кусков ${parts.length}`);
+  for (const part of parts) {
+    assert.ok(part.length <= 4000, `кусок ${part.length}`);
+    assert.equal((part.match(/<b>/g) || []).length, (part.match(/<\/b>/g) || []).length, 'теги не разорваны');
+  }
+  assert.equal(parts.join('\n'), html, 'ничего не теряется');
+  for (let k = 0; k < 12; k++) assert.match(html, new RegExp(`^${k + 1}\\. задача ${k}: `, 'm'));
+  // пересказ — трёх последних прогонов; остальные отчёты — в хвосте
+  assert.deepEqual([...html.matchAll(/🗣 Прогон (\d\d:\d\d) простыми словами/g)].map((m) => m[1]), ['03:00', '04:00', '05:00']);
+  const t = tail(p);
+  for (let i = 0; i < 6; i++) assert.match(t, new RegExp(`^Отчёт 0${i}:00 \\(mcfly/runs/20261001-0${i}00/summary\\.md\\):\\n  • пункт 0: сделано подробно`, 'm'));
+  assert.equal((t.match(/^  • пункт 29: /gm) || []).length, 6, 'отчёты в хвосте не урезаются');
+  assert.match(t, /^За период: нет событий; прогонов 6 \(успешных 6\), ~\$0$/m);
 });
 test('0.5.3: splitHtml режет по строкам и не разрывает blockquote', () => {
   const html = ['<b>заголовок</b>', ...Array.from({ length: 8 }, (_, i) => `${i + 1}. строка ${'x'.repeat(20)}`), '<blockquote expandable><b>Отчёт</b>', 'a'.repeat(30), 'b'.repeat(30), 'c</blockquote>', 'хвост'].join('\n');
@@ -247,7 +317,10 @@ test('0.5.3: «одобрить X» для уже решённого измен�
 test('0.5.3: выдержка одобрения — `код` моноширинным', () => {
   const dir = bareProject(); const p = paths(dir);
   addChange(dir, 'fix-x', { proposal: '## Зачем\n\nЗаметка в `mcfly/answers.md` & <тег>.\n' }); requestApproval(listChanges(p.openspecChanges)[0]);
-  assert.match(compose(p), /Одобрить <b>fix-x<\/b>: Заметка в <code>mcfly\/answers\.md<\/code> &amp; &lt;тег&gt;\./);
+  const html = compose(p);
+  assert.match(html, /1\. Одобрить план: Заметка в <code>mcfly\/answers\.md<\/code> &amp; &lt;тег&gt;\. \(авто-одобрение [^)\n]*\)\n/);
+  assert.match(html, /⏳ «Заметка в mcfly\/answers\.md &amp; &lt;тег&gt;» — ждёт одобрения/, 'название изменения — первая фраза описания, экранирована');
+  assert.doesNotMatch(html, /fix-x/);
 });
 test('0.5.6: пункт «одобрить …» без имени изменения остаётся, если он не про изменения (выкат, доступ)', () => {
   const dir = bareProject(); const p = paths(dir);
@@ -265,7 +338,7 @@ test('0.5.6: повторы — «релиз 1.2» и «релиз 1.2.1» ра�
   assert.match(need, /Нужно от вас \(2\)/, need);
 });
 
-test('0.5.10: «Простыми словами» — до четырёх последних отчётов, перед прогонами, HTML экранирован, «нет» и пустое не выводятся', () => {
+test('0.5.10: «Простыми словами» — блок на прогон, до трёх последних отчётов (0.9.0), перед прогонами, HTML экранирован, «нет» и пустое не выводятся', () => {
   const p = paths(bareProject());
   const ids = ['20261001-0010', '20261001-0200', '20261001-0400', '20261001-0600', '20261001-0926'];
   ids.forEach((id, i) => {
@@ -275,15 +348,26 @@ test('0.5.10: «Простыми словами» — до четырёх пос
   run(p, { id: '20261001-1000', slot: null, mode: 'day', started_at: new Date(2026, 9, 1, 10, 0).toISOString(), status: 'ok' });
   report(p, '20261001-1000', '# Прогон\n## Простыми словами\nнет\n## Сделано\n- y\n');
   const html = compose(p);
-  assert.match(html, /<b>🗣 Простыми словами<\/b>\n<i>02:00<\/i> — Прогон 1: старые скриншоты теперь &lt;сохраняются&gt; &amp; видны в истории\./);
-  assert.doesNotMatch(html, /Прогон 0:/, 'не больше четырёх');
-  assert.match(html, /<i>09:26<\/i> — Прогон 4:/);
-  assert.doesNotMatch(html, /<i>10:00<\/i>/, '«нет» не выводится');
-  assert.ok(html.indexOf('🗣 Простыми словами') < html.indexOf('🌙 Прогоны'));
+  // старый отчёт (один абзац) показывается как есть
+  assert.match(html, /\n\n<b>🗣 Прогон 04:00 простыми словами<\/b>\nПрогон 2: старые скриншоты теперь &lt;сохраняются&gt; &amp; видны в истории\.\n\n<b>🗣 Прогон 06:00 простыми словами<\/b>\nПрогон 3: [^\n]+\n\n<b>🗣 Прогон 09:26 простыми словами<\/b>\nПрогон 4: [^\n]+\n\n<b>🌙 Прогоны<\/b>/);
+  assert.doesNotMatch(html, /Прогон [01]:|Прогон 0[02]:\d\d простыми/, 'не больше трёх');
+  assert.equal((html.match(/простыми словами<\/b>/g) || []).length, 3);
+  assert.doesNotMatch(html, /Прогон 10:00 простыми/, '«нет» не выводится');
+  assert.ok(html.indexOf('🙋') < html.indexOf('🗣') && html.lastIndexOf('🗣') < html.indexOf('🌙 Прогоны'));
   const bare = paths(bareProject());
   run(bare, { id: '20261001-0200', slot: '02:00', started_at: new Date(2026, 9, 1, 2, 0).toISOString(), status: 'ok' });
   report(bare, '20261001-0200', '# Прогон\n## Сделано\n- z\n');
-  assert.doesNotMatch(compose(bare), /Простыми словами/, 'старый отчёт без раздела — секции нет');
+  assert.doesNotMatch(compose(bare), /простыми словами|🗣/i, 'старый отчёт без раздела — секции нет');
+});
+test('0.9.0: пересказ не урезается до 450 — до 1500 символов на прогон', () => {
+  const p = paths(bareProject());
+  run(p, { id: '20261001-0200', slot: '02:00', started_at: new Date(2026, 9, 1, 2, 0).toISOString(), status: 'ok' });
+  report(p, '20261001-0200', `# Прогон\n## Простыми словами\nЧто сделано: ${'слово '.repeat(200)}конец первого.\nЗачем: ${'цель '.repeat(200)}\n`);
+  const html = compose(p);
+  assert.match(html, /<b>Что сделано:<\/b> (слово ){200}конец первого\.\n<b>Зачем:<\/b> цель /, 'первый абзац (1200 символов) целиком');
+  const body = html.slice(html.indexOf('<b>Что сделано:</b>'), html.indexOf('\n\n<b>🌙'));
+  assert.equal(htmlToPlain(body).length, 1500);
+  assert.match(body, /…$/);
 });
 
 import { nextRunText } from '../src/summary.js';
@@ -298,7 +382,7 @@ test('0.7.0: nextRunText — план по взятым пунктам и под
 test('0.7.0: summaryKeyboard — «Не сейчас» для плана по пункту, кнопка «Предложения» без работы', () => {
   const dir = bareProject(); const p = paths(dir);
   addChange(dir, 'by-idea', { meta: { schema: 'spec-driven', mcfly: { approval: 'pending', category: 'spec', requested_at: new Date().toISOString(), idea: 'I1' } } });
-  assert.deepEqual(summaryKeyboard(p, cfg), [[{ text: '✅ Одобрить I1 (by-idea)', callback_data: 'ap:by-idea' }, { text: '⏸ Не сейчас', callback_data: 'rj:by-idea' }]]);
+  assert.deepEqual(summaryKeyboard(p, cfg), [[{ text: '✅ Одобрить I1', callback_data: 'ap:by-idea' }, { text: '⏸ Не сейчас', callback_data: 'rj:by-idea' }]]);
   const p2 = paths(bareProject()); const d = li(p2); ai(d, { title: 'X', benefit: 'y', source: 'team', size: 'S' }); si(p2, d);
   assert.deepEqual(summaryKeyboard(p2, cfg), [[{ text: '💡 Предложения', callback_data: 'il:1' }]]);
 });
@@ -331,8 +415,9 @@ test('0.7.4: сводка — изменения с номером пункта'
   const d = li(p); ai(d, { title: 'Убрать «Прочее»', benefit: 'y', source: 'owner-note', size: 'S' }); si(p, d);
   addChange(dir, 'review-page-no-other', { meta: { mcfly: { approval: 'approved', idea: 'I1' } } });
   const html = composeSummary(p, cfg, { now: new Date(2026, 9, 27, 10), since: new Date(2026, 9, 26, 10) });
-  assert.match(html, /🔧 I1 «Убрать «Прочее»» — 1\/2/);
-  assert.match(html, /команда продолжит I1 \(1\/2\)/);
+  assert.match(html, /🔧 I1 «Убрать «Прочее»» — сделано 1 из 2 шагов\n/);
+  assert.match(html, /команда продолжит I1 \(сделано 1 из 2 шагов\)/);
+  assert.doesNotMatch(html, /review-page-no-other|1\/2/);
 });
 
 import { nextTask } from '../src/summary.js';
@@ -359,8 +444,11 @@ test('0.7.5: одобрение плана по пункту — номер и �
   const dir = bareProject(); const p = paths(dir);
   const d = li(p); ai(d, { title: 'Убрать «Прочее»', benefit: 'y', source: 'owner-note', size: 'S' }); si(p, d);
   addChange(dir, 'review-page-no-other', { meta: { mcfly: { approval: 'pending', idea: 'I1', requested_at: new Date().toISOString() } } });
-  assert.match(composeSummary(p, cfg, { now: new Date(2026, 9, 27, 10) }), /Одобрить <b>I1 «Убрать «Прочее»»<\/b> \(review-page-no-other\)/);
-  assert.equal(summaryKeyboard(p, cfg)[0][0].text, '✅ Одобрить I1 (review-page-no-other)');
+  const html = composeSummary(p, cfg, { now: new Date(2026, 9, 27, 10) });
+  assert.match(html, /1\. Одобрить <b>I1 «Убрать «Прочее»»<\/b>: Зачем: тест\.\n/);
+  assert.match(html, /⏳ I1 «Убрать «Прочее»» — ждёт одобрения/);
+  assert.doesNotMatch(html, /review-page-no-other/, 'служебное имя — только в callback_data кнопки');
+  assert.deepEqual(summaryKeyboard(p, cfg)[0][0], { text: '✅ Одобрить I1', callback_data: 'ap:review-page-no-other' });
 });
 
 // 0.7.6: сводка 28.10 10:30 — 10 пунктов «Нужно от вас», верны 2: пункты ночной передачи при отчёте новее, сделанное после отчёта.
@@ -426,8 +514,9 @@ test('0.7.6: план по пункту ждёт одобрения — пунк
   const dir = bareProject(); const p = day28(dir);
   const [c] = listChanges(p.openspecChanges); requestApproval(c, { idea: 'I58' });
   const need = needBlock(composeSummary(p, cfgActs, { now: DAY, since: DAY_SINCE }));
-  assert.match(need, /1\. Одобрить <b>I58 «пункт I58»<\/b> \(docs-site-restart\)/);
-  assert.doesNotMatch(need, /Нажать кнопку одобрения/);
+  assert.match(need, /1\. Одобрить <b>I58 «пункт I58»<\/b>: Зачем: тест\.\n/);
+  assert.doesNotMatch(need, /Нажать кнопку одобрения|docs-site-restart/);
+  assert.equal(summaryKeyboard(p, cfgActs)[0][0].text, '✅ Одобрить I58');
 });
 test('0.7.6: отложенное до даты изменение — «⏸ … отложено до», не в следующем прогоне', () => {
   const dir = bareProject(); const p = paths(dir);
@@ -440,7 +529,9 @@ test('0.7.6: отложенное до даты изменение — «⏸ …
   assert.match(html, /<b>🗓 Следующий прогон:<\/b> работы нет/);
   // после даты — снова в работе
   const later = composeSummary(p, cfg, { now: new Date(2027, 1, 1, 10), since: new Date(2027, 0, 31, 10) });
-  assert.match(later, /🔧 I52 — 0\/2/);
+  assert.match(later, /🔧 I52 — сделано 0 из 2 шагов\n/);
+  assert.match(later, /команда продолжит I52 \(сделано 0 из 2 шагов\)/);
+  assert.doesNotMatch(html + later, /zensical-migration/);
 });
 test('0.7.6: субагенты — по записям прогонов; события субагентов и ходов от агентов и битые ключи не печатаются', () => {
   const p = paths(bareProject());
@@ -448,10 +539,17 @@ test('0.7.6: субагенты — по записям прогонов; соб
   run(p, { id: '20261028-0717', started_at: new Date(2026, 9, 28, 7, 17).toISOString(), status: 'ok', cost_usd: 1, subagents: { spawned: 9 } });
   const ev = (key, value) => appendMetric(p, { type: 'event', at: new Date(2026, 9, 28, 8).toISOString(), run_id: '20261028-0758', key, value });
   ev('subagents', 5); ev('turns', 6); ev('tasks_done', 18); ev('tasks_done 7', null); ev('ideas_added', 2);
-  const html = composeSummary(p, cfg, { now: DAY, since: DAY_SINCE });
+  // 0.9.0: метрики — в хвосте для терминала, в сводке их нет
+  const t = techTail(p, cfg, { since: DAY_SINCE });
   // 0.7.8: «предложений добавлено» — по списку предложений (здесь пустому), событие агента не считается
-  assert.match(html, /📊 За период: 25 задач закрыто; прогонов 2 \(ок 2\), субагентов 37, ~\$2/);
-  assert.doesNotMatch(html, /subagents|turns|tasks_done/);
+  assert.match(t, /^За период: 25 задач закрыто; прогонов 2 \(успешных 2\), субагентов 37, ~\$2$/m);
+  assert.match(t, /^Всего: 25 задач закрыто; прогонов 2 \(успешных 2\), субагентов 37, ~\$2$/m);
+  assert.match(t, /^20261028-0758: ok, ~\$1\.00, субагентов 28, 55 мин$/m);
+  assert.match(t, /^20261028-0717: ok, ~\$1\.00, субагентов 9, 55 мин$/m);
+  assert.doesNotMatch(t, /subagents|turns|tasks_done|предложений добавлено/);
+  const html = composeSummary(p, cfg, { now: DAY, since: DAY_SINCE });
+  assert.doesNotMatch(html, /subagents|turns|tasks_done|субагент|\$|📊/);
+  assert.match(html, /🏁 За период завершено: задач 25/);
 });
 import { approvalCovered } from '../src/summary.js';
 test('0.7.6: approvalCovered — «Нажать кнопку одобрения X» покрыт, «Выкатить после одобрения X» — нет', () => {
@@ -515,7 +613,8 @@ test('0.7.7: идущий прогон без записи в метриках �
   fs.mkdirSync(path.join(p.runs, '20261029-0742'), { recursive: true });
   fs.writeFileSync(p.lock, JSON.stringify({ pid: process.pid, at: new Date(2026, 9, 29, 7, 42).toISOString(), id: '20261029-0742', pull_lock: true }));
   const html = composeSummary(p, cfg, { now: D29, since: D29_SINCE });
-  assert.match(html, /▶️ 07:42 — идёт 3 ч 01 мин/);
+  assert.match(html, /✅ 06:00 — прошёл успешно, 55 мин\n▶️ 07:42 — идёт сейчас, 3 ч 01 мин\n/);
+  assert.doesNotMatch(html, /20261029-0742/, 'номера прогона в сводке нет');
   fs.unlinkSync(p.lock);
   assert.doesNotMatch(composeSummary(p, cfg, { now: D29, since: D29_SINCE }), /▶️/);
 });
@@ -549,5 +648,76 @@ test('0.7.8: «предложений добавлено» — по списку
   appendMetric(p, { type: 'event', at: new Date(2026, 9, 29, 6, 5).toISOString(), run_id: '20261029-0600', key: 'ideas_added', value: 2 });
   const html = composeSummary(p, cfg, { now: D29, since: D29_SINCE });
   assert.match(html, /💡 Новых предложений: 5/);
-  assert.match(html, /📊 За период: 5 предложений добавлено/);
+  assert.doesNotMatch(html, /📊|предложений добавлено/, 'метрики — не в сводке');
+  // 0.9.0: счётчик — в хвосте для терминала
+  const t = techTail(p, cfg, { since: D29_SINCE });
+  assert.match(t, /^За период: 5 предложений добавлено; прогонов 1 \(успешных 1\), ~\$0$/m);
+  assert.match(t, /^Всего: 5 предложений добавлено; /m);
+});
+
+// 0.9.0: бот говорит простыми словами — техника только в techTail (терминал)
+test('0.9.0: в сводке нет техники', () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'review-page-split', { proposal: '# Proposal\n\nСтраница проверки делится на две части. Подробности ниже.\n', meta: { schema: 'spec-driven', mcfly: { approval: 'approved', category: 'spec' } } });
+  addChange(dir, 'tracker-retry', { proposal: '# Proposal\n\nПовторять запросы к трекеру при сбое связи.\n' }); requestApproval(listChanges(p.openspecChanges).find((c) => c.name === 'tracker-retry'), { now: new Date(2026, 9, 1, 9, 0) });
+  run(p, { id: '20261001-0200', slot: '02:00', started_at: new Date(2026, 9, 1, 2, 0).toISOString(), status: 'ok', cost_usd: 4.43, turns: 25, subagents: { spawned: 7, failed: 1 }, attempts: 2 });
+  report(p, '20261001-0200', '# Прогон 20261001-0200\n## Простыми словами\nЧто сделано: страница проверки теперь из двух частей.\nЗачем: проверяющим проще найти своё.\nЧто дальше: команда доделает вторую часть.\n## Сделано\n- review-page-split: 1.1, 1.2\n## Нужно от человека\n- Посмотреть новую страницу\n## Метрики прогона\n- 25 ходов\n');
+  const html = compose(p);
+  assert.doesNotMatch(html, /\$/);
+  assert.doesNotMatch(html, /ходов|субагент|попыток/);
+  assert.doesNotMatch(html, /mcfly\/runs|20261001-0200/);
+  assert.doesNotMatch(html, /review-page-split|tracker-retry/, 'служебных имён изменений нет');
+  assert.doesNotMatch(html, /Сделано|Метрики|<blockquote/);
+  assert.match(html, /<b>🗣 Прогон 02:00 простыми словами<\/b>\n<b>Что сделано:<\/b> страница проверки теперь из двух частей\.\n<b>Зачем:<\/b> проверяющим проще найти своё\.\n<b>Что дальше:<\/b> команда доделает вторую часть\.\n/);
+  assert.match(html, /✅ 02:00 — прошёл успешно, 55 мин\n/);
+  assert.match(html, /1\. Одобрить план: Повторять запросы к трекеру при сбое связи\./);
+  assert.match(html, /🔧 «Страница проверки делится на две части» — сделано 1 из 2 шагов\n⏳ «Повторять запросы к трекеру при сбое связи» — ждёт одобрения/);
+  assert.match(html, /2\. Посмотреть новую страницу/);
+  // служебное имя — только на кнопке
+  assert.deepEqual(summaryKeyboard(p, cfg), [[{ text: '✅ Одобрить tracker-retry', callback_data: 'ap:tracker-retry' }, { text: '❌ Отклонить', callback_data: 'rj:tracker-retry' }]]);
+  // техника не теряется: она в хвосте для терминала
+  const t = tail(p);
+  assert.match(t, /^— Технические подробности \(только в терминале\) —\n/);
+  assert.match(t, /^20261001-0200: ok, 25 ходов, ~\$4\.43, субагентов 7 \(упало 1\), 55 мин, попыток 2$/m);
+  assert.match(t, /^За период: нет событий; прогонов 1 \(успешных 1\), субагентов 7, ~\$4\.43$/m);
+  assert.match(t, /^Отчёт 02:00 \(mcfly\/runs\/20261001-0200\/summary\.md\):\n  • review-page-split: 1\.1, 1\.2$/m);
+});
+test('0.9.0: plainWords — новый формат тремя строками, старый абзац одной строкой, «нет» — пусто', () => {
+  const sec = (body) => reportSections(`# Прогон\n## Простыми словами\n${body}\n## Сделано\n- x\n`);
+  assert.equal(plainWords(sec('Что сделано: первое\nпродолжение `кода`.\n\nЗачем: второе.\nЧто дальше: третье.')), 'Что сделано: первое продолжение кода.\nЗачем: второе.\nЧто дальше: третье.');
+  assert.equal(plainWords(sec('Старые скриншоты теперь сохраняются.\nИх видно в истории.\n- и в списке.')), 'Старые скриншоты теперь сохраняются. Их видно в истории. и в списке.');
+  assert.equal(plainWords(sec('нет')), '');
+  assert.equal(plainWords(sec('Нет.')), '');
+  assert.equal(plainWords(reportSections('# Прогон\n## Сделано\n- x\n')), '');
+  assert.equal(plainWords(null), '');
+  const long = plainWords(sec(`Что сделано: ${'а'.repeat(2000)}`));
+  assert.equal(long.length, 1500); assert.ok(long.endsWith('…'));
+  assert.equal(plainWords(sec('Что сделано: раз.\nЗачем: два.'), 20), 'Что сделано: раз.\nЗ…');
+});
+test('0.9.0: progressWords — «сделано N из M шагов» вместо «N/M»', () => {
+  const dir = bareProject();
+  const c = (done, open) => ({ name: 'x', tasksDone: done, tasksOpen: open });
+  assert.equal(progressWords(dir, c(1, 1)), 'сделано 1 из 2 шагов');
+  assert.equal(progressWords(dir, c(0, 1)), 'сделано 0 из 1 шага');
+  assert.equal(progressWords(dir, c(3, 8)), 'сделано 3 из 11 шагов');
+  assert.equal(progressWords(dir, c(20, 1)), 'сделано 20 из 21 шага');
+  assert.equal(progressWords(dir, c(5, 0)), 'сделано 5 из 5 шагов');
+  // по настоящему изменению — как в сводке
+  const p = paths(dir); addChange(dir, 'real');
+  assert.equal(progressWords(p.projectDir, listChanges(p.openspecChanges)[0]), 'сделано 1 из 2 шагов');
+});
+test('0.9.0: changeTitle без пункта списка — первая фраза описания в кавычках; описания нет — служебное имя', () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'a-with', { proposal: '# Proposal: заголовок\n\n## Why\n\nКнопки в `боте` <живут> дольше. Вторая фраза не нужна.\n\n## What\n- x\n' });
+  addChange(dir, 'b-empty', { proposal: '' });
+  addChange(dir, 'c-heads', { proposal: '# Только заголовок\n\n## Why\n' });
+  addChange(dir, 'd-long', { proposal: `${'длинное описание '.repeat(10)}без точки\n` });
+  const [a, b, c, d] = listChanges(p.openspecChanges);
+  assert.equal(changeTitle(p, a), '«Кнопки в боте <живут> дольше»');
+  assert.equal(changeTitle(p, a, (t) => t.replace(/</g, '&lt;')), '«Кнопки в боте &lt;живут> дольше»');
+  assert.equal(changeTitle(p, b), 'b-empty');
+  assert.equal(changeTitle(p, b, undefined, { short: true }), 'b-empty');
+  assert.equal(changeTitle(p, c), 'c-heads', 'одни заголовки — описания нет');
+  assert.equal(changeTitle(p, d).length, 82, '80 символов и кавычки'); assert.match(changeTitle(p, d), /^«длинное описание .*…»$/);
+  assert.equal(changeTitle(p, d, undefined, { short: true }).length, 52);
 });
