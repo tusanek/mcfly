@@ -13,16 +13,20 @@ import { sendSamples, sendView, viewOf, statusView, helpView } from '../src/over
 import { tickGoals } from '../src/goals.js';
 import { loadIdeas, saveIdeas, addIdea, transitionIdea } from '../src/ideas.js';
 import { loadQuestions, addQuestion, saveQuestions } from '../src/questions.js';
-import { loadFindings, saveFindings, addFinding, decideFinding, findingsView, pendingFindings, inboxPath, mcflyVersion } from '../src/findings.js';
+import { loadFindings, saveFindings, addFinding, decideFinding, findingsView, pendingFindings, inboxPath, inboxProblem, mcflyVersion } from '../src/findings.js';
 import { parseMessage, applyMessages } from '../src/answers.js';
 import { callbackText } from '../src/telegram.js';
 import { buildContext } from '../src/context.js';
 import { buildLeadPrompt, MCFLY_ROOT } from '../src/prompt.js';
+import os from 'node:os';
 import { cfg, bareProject, tmpDir, git, gitRepo, addChange } from './helpers.js';
+
+// Ящик находок разрешён только в домашнем каталоге — в тестах домом служит временная папка
+process.env.HOME = fs.realpathSync(tmpDir('home-'));
 
 const record = (over = {}) => ({ id: 'r1', mode: 'day', slot: null, started_at: '2026-11-15T10:03:00.000Z', status: 'ok', duration_ms: 8 * 60_000, ...over });
 const fakeTg = () => { const tg = { sent: [], async sendMessage(_c, text, o = {}) { tg.sent.push({ text, html: !!o.html, keyboard: o.keyboard || null }); return []; } }; return tg; };
-const withInbox = (over = {}) => { const inbox = path.join(tmpDir('inbox-'), 'mcfly-inbox.md'); return { ...cfg, project: 'demo', findings: { enabled: true, inbox }, ...over }; };
+const withInbox = (over = {}) => { const inbox = path.join(fs.mkdtempSync(path.join(os.homedir(), 'inbox-')), 'mcfly-inbox.md'); return { ...cfg, project: 'demo', findings: { enabled: true, inbox }, ...over }; };
 const cli = (dir, args, env = {}) => spawnSync(process.execPath, [path.join(MCFLY_ROOT, 'bin', 'mcfly'), ...args, '--project', dir], { encoding: 'utf8', env: { ...process.env, MCFLY_RUN_ID: '', ...env } });
 
 // ——— Находки запуска нового проекта (15.11.2026) ———
@@ -256,4 +260,21 @@ test('0.11.0: mcfly finding — add из прогона и сессии, list; s
   const s = cli(dir, ['finding', 'send', 'F1']);
   assert.equal(s.status, 1); assert.match(s.stderr, /только владелец в терминале/);
   assert.equal(loadFindings(p).findings[0].status, 'new');
+});
+
+test('0.11.0: ящик находок — только файл .md в домашнем каталоге, не в скрытой папке и не ссылка', () => {
+  const home = os.homedir(); const dir = bareProject(); const p = paths(dir);
+  assert.equal(inboxProblem(path.join(home, 'mcfly-inbox.md')), '');
+  assert.equal(inboxProblem(path.join(home, 'notes', 'mcfly-inbox.md')), '');
+  assert.match(inboxProblem(path.join(home, '.zshrc')), /файлом \.md/);
+  assert.match(inboxProblem(path.join(home, '.ssh', 'x.md')), /скрытой папке/);
+  assert.match(inboxProblem(path.join(tmpDir(), 'x.md')), /домашнем каталоге/);
+  assert.match(inboxProblem(path.join(home, '..', 'x.md')), /домашнем каталоге/);
+  const outside = tmpDir(); fs.symlinkSync(outside, path.join(home, 'link')); fs.writeFileSync(path.join(home, 'real.md'), ''); fs.symlinkSync(path.join(home, 'real.md'), path.join(home, 'alias.md'));
+  assert.match(inboxProblem(path.join(home, 'link', 'x.md')), /домашнем каталоге/, 'папка-ссылка наружу');
+  assert.match(inboxProblem(path.join(home, 'alias.md')), /не ссылкой/);
+  const data = loadFindings(p); addFinding(data, { text: 'Проблема' });
+  const r = decideFinding(data, { ...cfg, findings: { enabled: true, inbox: path.join(home, '.zshrc') } }, 'F1', 'send');
+  assert.match(r.error, /ящик должен быть файлом \.md \(findings\.inbox/); assert.equal(r.item.status, 'new');
+  assert.equal(fs.existsSync(path.join(home, '.zshrc')), false);
 });

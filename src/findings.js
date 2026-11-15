@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import YAML from 'yaml';
@@ -66,6 +67,22 @@ export function inboxPath(cfg) {
   const raw = String(cfg.findings?.inbox || '~/mcfly-inbox.md');
   return raw === '~' || raw.startsWith('~/') ? path.join(os.homedir(), raw.slice(1)) : path.resolve(raw);
 }
+/**
+ * Почему в этот файл писать нельзя, или '' — можно. Путь ящика берётся из mcfly/config.yaml проекта, а текст находки пишут агенты:
+ * без проверки правка настройки позволила бы дописывать чужой текст в любой файл владельца (настройки оболочки, ключи).
+ * Поэтому ящик — только файл .md в домашнем каталоге, не в скрытой папке, не ссылка и не через папку-ссылку наружу.
+ */
+export function inboxProblem(file) {
+  const real = (d) => { try { return fs.realpathSync(d); } catch { return d; } };
+  const home = real(os.homedir());
+  const inside = (f) => { const rel = path.relative(home, f); return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : null; };
+  if (!/\.md$/i.test(file)) return 'ящик должен быть файлом .md';
+  const rel = inside(path.join(real(path.dirname(file)), path.basename(file))) && inside(path.join(real(path.dirname(path.dirname(file))), path.basename(path.dirname(file)), path.basename(file)));
+  if (!rel) return 'ящик должен лежать в вашем домашнем каталоге';
+  if (rel.split(path.sep).some((s) => s.startsWith('.'))) return 'ящик не может лежать в скрытой папке или быть скрытым файлом';
+  try { const st = fs.lstatSync(file); if (st.isSymbolicLink() || !st.isFile()) return 'ящик должен быть обычным файлом, не ссылкой и не папкой'; } catch (e) { if (e.code !== 'ENOENT') return `ящик недоступен: ${e.code}`; }
+  return '';
+}
 const INBOX_HEAD = `# Входящие для доработки mcfly
 
 Находки из проектов, где работает mcfly. Каждая одобрена владельцем к передаче.
@@ -77,6 +94,7 @@ const INBOX_HEAD = `# Входящие для доработки mcfly
  */
 export function appendToInbox(cfg, item, { now = new Date() } = {}) {
   const file = inboxPath(cfg);
+  const problem = inboxProblem(file); if (problem) throw new Error(`${problem} (findings.inbox в mcfly/config.yaml)`);
   const head = `## ${fmtDay(now)} · ${cfg.project} · mcfly ${item.mcfly_version || mcflyVersion()}`;
   const first = item.text.split(/(?<=[.!?])\s/)[0];
   const rest = item.text.slice(first.length).trim();
@@ -115,7 +133,8 @@ export function findingsView(p, cfg) {
   if (data.error) return { text: `${head}\n\n⚠️ ${escHtml(data.error)} — список не прочитан, исправьте файл`, keyboard: [] };
   const list = newFindings(data);
   if (!list.length) return { text: `${head}\n\nНовых находок нет. Заметили проблему самого mcfly — напишите «mcfly: что не так», передам сразу.`, keyboard: [] };
-  const L = [head, '<i>Это проблемы самого mcfly, а не вашего проекта. «Передать» — запишу в общий ящик доработки mcfly; «Не надо» — уберу.</i>'];
+  const box = inboxPath(cfg); const boxShown = box.startsWith(`${os.homedir()}/`) ? `~${box.slice(os.homedir().length)}` : box;
+  const L = [head, `<i>Это проблемы самого mcfly, а не вашего проекта. «Передать» — запишу в общий ящик доработки mcfly (${escHtml(boxShown)}); «Не надо» — уберу.</i>`];
   const shown = list.slice(0, 8);
   for (const x of shown) {
     L.push('', `<b>${escHtml(x.id)}</b> · ${SOURCE_RU[x.source] || ''}${x.created_at ? ` ${fmtShort(new Date(x.created_at))}` : ''}`, escHtml(truncate(x.text, 700)));
