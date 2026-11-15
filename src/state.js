@@ -11,6 +11,7 @@ export function paths(projectDir) {
     questions: path.join(root, 'questions.yaml'),
     answers: path.join(root, 'answers.md'),
     ideas: path.join(root, 'ideas.yaml'),
+    findings: path.join(root, 'findings.yaml'),
     metrics: path.join(root, 'metrics.jsonl'),
     state: path.join(root, 'state.json'),
     lock: path.join(root, '.lock'),

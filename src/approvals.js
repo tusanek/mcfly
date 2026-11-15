@@ -87,7 +87,7 @@ const BUTTON_ROW = /^\s*(\[[^\[\]\n]+\]\s*)+$/;
 /**
  * Образцы из раздела «## Как это будет выглядеть» proposal (0.10.0): [{ title, text, buttons }] — подзаголовок «### …» и блок
  * в тройных обратных кавычках; строки вида «[Готово] [Отложить]» внутри блока — ряды кнопок. Раздела или блоков нет — пустой список
- * («Снаружи ничего не меняется» — не образец).
+ * («Снаружи ничего не меняется» — не образец). Подзаголовок без блока — образец из одного заголовка: на экране ничего не появляется.
  */
 export function proposalSamples(change) {
   const out = []; let on = false; let fence = false; let title = ''; let cur = null;
@@ -100,11 +100,14 @@ export function proposalSamples(change) {
       continue;
     }
     if (fence) { cur.lines.push(line); continue; }
-    const h = /^###\s+(.+?)\s*$/.exec(line); if (h) title = h[1];
+    const h = /^###\s+(.+?)\s*$/.exec(line);
+    // 0.11.0: подзаголовок без блока — случай, когда пользователь ничего не видит («Пишет кто-то другой — бот молчит»)
+    if (h) { if (title) out.push({ title, lines: [] }); title = h[1]; }
   }
+  if (title) out.push({ title, lines: [] });
   return out.map((x) => ({
     title: x.title,
     text: x.lines.filter((l) => !BUTTON_ROW.test(l)).join('\n').trim(),
     buttons: x.lines.filter((l) => BUTTON_ROW.test(l)).map((l) => [...l.matchAll(/\[([^\[\]\n]+)\]/g)].map((m) => m[1].trim())),
-  })).filter((x) => x.text || x.buttons.length);
+  })).filter((x) => x.text || x.buttons.length || x.title);
 }

@@ -10,6 +10,7 @@ import { currentRun } from './runner.js';
 import { hasActions, listActions, getAction } from './action-config.js';
 import { currentAction, offerKeyboard, isTrusted } from './actions.js';
 import { loadIdeas, visibleIdeas, ideasBrief } from './ideas.js';
+import { findingsView, pendingFindings } from './findings.js';
 import { escHtml, inline, splitHtml, reportSections, plainWords, plainHtml, reportNeeds, progressWords, nextRunText, runsByStatus, STATUS_RU, QUOTA_WARN, summaryKeyboard, changeTitle, planLabels } from './summary.js';
 
 /**
@@ -23,6 +24,7 @@ const VIEW_WORDS = {
   last: ['/last', 'последний прогон'],
   help: ['/help', '/start', 'помощь', 'справка'],
   ideas: ['/ideas', 'предложения', 'идеи'],
+  findings: ['/findings', 'находки', 'находки для mcfly'],
 };
 export { commandText };
 /** Имя обзора (status, goals, stats, last, help) или null: сообщение целиком должно быть командой, «статус по X» — заметка. */
@@ -146,6 +148,9 @@ export function statusView(p, cfg, { now = new Date() } = {}) {
     if (need.length > NEED_MAX) L.push(`… ещё ${need.length - NEED_MAX} — «последний прогон»`);
   }
 
+  const found = pendingFindings(p, cfg);
+  if (found) L.push('', `📮 Находки для доработки mcfly: ${found} — ждут вашего «Передать» или «Не надо»`);
+
   const slot = nextSlot(cfg.schedule.slots, now);
   const plan = nextRunText(approvedWithWork(changes, now), pendingApprovals(changes), (c) => progressWords(p.projectDir, c), escHtml, ideasBrief(p, cfg), (c) => changeTitle(p, c, escHtml, { short: true }));
   L.push('', `<b>🗓 Следующий прогон:</b> ${slot ? `${fmtShort(slot)} по расписанию` : 'расписания нет'} — ${plan}`);
@@ -182,7 +187,7 @@ const GOALS_HINT = [
   '',
   'Создайте в репозитории проекта файл <code>mcfly/goals.md</code>, например:',
   '<pre>## Цель\nЧто делаем и для кого — одним-двумя предложениями.\n\n## Ближайшая веха\nПоказ MVP в декабре.\n\n## До MVP\n- [x] сделанный пункт\n- [ ] следующий пункт</pre>',
-  'Отмечайте сделанное «- [x]» — бот посчитает «сделано N из M». Файл ведёте вы, команда его не меняет.',
+  'Отмечайте сделанное «- [x]» — бот посчитает «сделано N из M». Файл ведёте вы; пункт, который команда сделала по вашему бэклогу, mcfly отметит сам и напишет об этом в итоге прогона.',
 ].join('\n');
 const bar = (done, total) => { const n = total ? Math.round((done / total) * 10) : 0; return '▰'.repeat(n) + '▱'.repeat(10 - n); };
 
@@ -280,6 +285,7 @@ export function helpView(p, cfg) {
     '🔔 «напоминания» или /reminders — что поставлено, с кнопками отмены',
     ...(cfg.ideas?.enabled ? ['😖 «неудобно: текст» — жалоба на удобство: команда займётся ею первым делом, раньше новых функций'] : []),
     '👀 «Как будет выглядеть» под планом — образцы сообщений и экранов до одобрения, если они есть в плане',
+    ...(cfg.findings?.enabled !== false ? ['📮 «mcfly: текст» — что не так в самом mcfly (а не в проекте): сразу уйдёт в общий ящик его доработки; «находки» — то, что заметила команда, с кнопками «Передать» / «Не надо»'] : []),
     '📝 Любой другой текст — заметка команде, её прочтёт ближайший прогон',
     ...(hasActions(cfg) ? ['', '<b>Действия</b>', `🛠 «действия» или /actions — ${actionsHelp(cfg)}; итог приходит сообщением`] : []),
     '',
@@ -341,8 +347,8 @@ export function ideasKeyboard(p, cfg, { page = 1 } = {}) {
 
 const SAMPLES_MAX = 12;
 /**
- * 👀 Как будет выглядеть (0.10.0): образцы из плана изменения. Каждый образец — подпись курсивом и отдельное сообщение простым
- * текстом, как его увидит пользователь, с ненастоящими кнопками (sm:) — владелец видит настоящий вид, а не описание.
+ * 👀 Как будет выглядеть (0.10.0): образцы из плана изменения. Каждый образец — одно сообщение (0.11.0): подпись курсивом,
+ * ниже текст, как его увидит пользователь, с ненастоящими кнопками (sm:) — владелец видит настоящий вид, а не описание.
  */
 export async function sendSamples(tg, chatId, p, cfg, name) {
   const c = listChanges(p.openspecChanges).find((x) => x.name === name);
@@ -350,20 +356,30 @@ export async function sendSamples(tg, chatId, p, cfg, name) {
   if (!samples.length) { await tg.sendMessage(chatId, c ? 'У этого плана нет образцов: снаружи ничего не меняется' : 'Такого плана уже нет — посмотрите «статус»'); return 0; }
   await tg.sendMessage(chatId, `👀 <b>Как будет выглядеть: ${changeTitle(p, c, escHtml)}</b>\n<i>Ниже образцы — так это увидит пользователь. Кнопки под ними ненастоящие.</i>`, { html: true });
   for (const [i, x] of samples.slice(0, SAMPLES_MAX).entries()) {
-    if (x.title) await tg.sendMessage(chatId, `<i>${i + 1}. ${escHtml(x.title)}</i>`, { html: true });
     const keyboard = x.buttons.map((row, r) => row.map((text, k) => ({ text: truncate(text, 40), callback_data: `sm:${i}.${r}.${k}` })));
-    await tg.sendMessage(chatId, truncate(x.text || '(только кнопки)', MAX), { keyboard: keyboard.length ? keyboard : null });
+    // 0.11.0: заголовок курсивом и образец — одним сообщением (раньше двумя, связь в чате терялась). Пояснение в скобках
+    // («(бот не отвечает совсем)») и образец без текста — курсивом: это слова команды, а не ответ бота.
+    const note = /^\([^\n]*\)$/.test(x.text) && !keyboard.length;
+    const head = `<i>${i + 1}. ${escHtml(x.title || 'Образец')}${note ? ` — ${escHtml(x.text.slice(1, -1))}` : ''}</i>`;
+    const body = note || !x.text ? '' : `\n\n${escHtml(truncate(x.text, MAX - 200))}`;
+    await tg.sendMessage(chatId, `${head}${body}`, { html: true, keyboard: keyboard.length ? keyboard : null });
   }
   if (samples.length > SAMPLES_MAX) await tg.sendMessage(chatId, `… ещё образцов: ${samples.length - SAMPLES_MAX} — в описании плана`);
   return samples.length;
 }
 
-const VIEWS = { status: statusView, goals: goalsView, stats: statsView, last: lastView, help: helpView, ideas: ideasView };
+const VIEWS = { status: statusView, goals: goalsView, stats: statsView, last: lastView, help: helpView, ideas: ideasView, findings: (p, cfg) => toParts(findingsView(p, cfg).text) };
 /** Куски HTML ответа на команду обзора view. */
 export function renderView(view, p, cfg, opts = {}) { return VIEWS[view](p, cfg, opts); }
 
 /** Отправляет ответ на команду обзора с постоянной клавиатурой внизу чата. */
 export async function sendView(tg, chatId, view, p, cfg, opts = {}) {
+  // 📮 Находки (0.11.0): одно сообщение с кнопками «Передать» / «Не надо»
+  if (view === 'findings') {
+    const v = findingsView(p, cfg);
+    await tg.sendMessage(chatId, truncate(v.text, MAX), v.keyboard.length ? { html: true, keyboard: v.keyboard } : { html: true, replyKeyboard: mainKeyboard(cfg) });
+    return;
+  }
   for (const part of renderView(view, p, cfg, opts)) await tg.sendMessage(chatId, part, { html: true, replyKeyboard: mainKeyboard(cfg) });
   // «статус»: отдельным сообщением кнопки решений, как под сводкой, — одобрить/отклонить изменение, ответ по умолчанию на вопрос
   if (view === 'ideas') {

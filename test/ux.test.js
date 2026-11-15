@@ -105,13 +105,12 @@ test('0.10.0: образцы приходят отдельными сообще�
   assert.equal(await sendSamples(tg, '42', p, cfg, 'evening-talk'), 2);
   assert.deepEqual(tg.sent.map((m) => m.text), [
     '👀 <b>Как будет выглядеть: «Вечером бот спрашивает про дела на завтра»</b>\n<i>Ниже образцы — так это увидит пользователь. Кнопки под ними ненастоящие.</i>',
-    '<i>1. Вечером, в 22:30</i>', 'Что добавить на завтра?\nМожно голосом.',
-    '<i>2. Утром</i>', 'План на понедельник\n1. Взвеситься',
-  ]);
-  assert.ok(!tg.sent[2].html, 'образец — простым текстом, как его увидит пользователь');
-  assert.deepEqual(tg.sent[2].keyboard.map((r) => r.map((b) => b.text)), [['Готово', 'Ничего не добавлять'], ['Позже']]);
-  assert.ok(tg.sent[2].keyboard.flat().every((b) => /^sm:/.test(b.callback_data)), 'кнопки образца ничего не делают');
-  assert.equal(tg.sent[4].keyboard, null);
+    '<i>1. Вечером, в 22:30</i>\n\nЧто добавить на завтра?\nМожно голосом.',
+    '<i>2. Утром</i>\n\nПлан на понедельник\n1. Взвеситься',
+  ], '0.11.0: заголовок и образец — одним сообщением');
+  assert.deepEqual(tg.sent[1].keyboard.map((r) => r.map((b) => b.text)), [['Готово', 'Ничего не добавлять'], ['Позже']]);
+  assert.ok(tg.sent[1].keyboard.flat().every((b) => /^sm:/.test(b.callback_data)), 'кнопки образца ничего не делают');
+  assert.equal(tg.sent[2].keyboard, null);
   const none = fakeTg();
   assert.equal(await sendSamples(none, '42', p, cfg, 'plain-fix'), 0); assert.match(none.sent[0].text, /нет образцов: снаружи ничего не меняется/);
   const gone = fakeTg();

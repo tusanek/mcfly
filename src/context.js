@@ -7,6 +7,7 @@ import { autoDefault } from './config.js';
 import { activeDayHandoff, validateHandoff } from './shift-files.js';
 import { listActions } from './action-config.js';
 import { loadIdeas } from './ideas.js';
+import { loadFindings, newFindings } from './findings.js';
 
 export function isMcflyProject(p) { return exists(p.config); }
 
@@ -33,7 +34,7 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false, now 
   const product = productText(p);
   if (product) L.push('', '## Описание продукта (mcfly/product.md) — для кого делаем и правила, которые нельзя нарушать; файл ведёт владелец, не менять', cap(product, PRODUCT_MAX), '');
   const goals = ownerDoc(path.join(p.root, 'goals.md'));
-  if (goals) L.push('', '## Цели проекта (mcfly/goals.md) — файл ведёт владелец, не менять', cap(goals, GOALS_MAX), '');
+  if (goals) L.push('', '## Цели проекта (mcfly/goals.md) — файл ведёт владелец, не менять (галочку у сделанного пункта бэклога mcfly ставит сам в конце прогона)', cap(goals, GOALS_MAX), '');
   const skills = cfg.design?.skills || [];
   if (skills.length) L.push(`Навыки дизайна (design.skills): ${skills.join(', ')} — в задачах с интерфейсом дизайнер и разработчик вызывают их инструментом Skill до начала работы; навык недоступен — сказать лиду, это попадёт в отчёт.`);
   L.push(`Категории эскалации: ${Object.entries(cfg.escalation.categories).map(([k, v]) => `${k} (${v.label}${v.auto_default === false ? ', без ответа по умолчанию' : ''})`).join('; ')}.`);
@@ -83,6 +84,11 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false, now 
       L.push(`Не трогать, решение в сессии: ${named(by(['discuss', 'rejected']))}`);
     }
     L.push(`Бэклог владельца: ${cfg.ideas.backlog || 'не задан'}`);
+  }
+  if (cfg.findings?.enabled !== false) {
+    // 0.11.0: проблемы самого mcfly команда не чинит, а регистрирует — владелец решает, передавать ли их в доработку
+    const wait = newFindings(loadFindings(p));
+    L.push('', `Находки для доработки самого mcfly (mcfly finding add): ждут решения владельца ${wait.length}${wait.length ? ` — не дублируй: ${wait.map((x) => `${x.id} «${truncate(x.text, 80)}»`).join(', ')}` : ''}`);
   }
   const q = openQuestions(loadQuestions(p));
   L.push('', `Открытые вопросы к человеку (${q.length}):`);

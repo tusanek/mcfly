@@ -115,7 +115,7 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
     };
     // Сбой применения (не сеть) не должен оставлять offset на месте: иначе цикл применял бы ту же пачку каждые 12 с
     // (дубли в answers.md, повторные одобрения и «запусти»). Пачка пропускается, человек получает предупреждение.
-    try { acks = applyMessages(p, messages, { now, onRun }); }
+    try { acks = applyMessages(p, messages, { now, onRun, cfg }); }
     catch (e) { log(`Сообщения из Telegram не применены: ${errorLine(e)}`); acks = [`⚠️ Не удалось применить сообщения (${messages.length}): ${errorLine(e)}. Повторите их позже.`]; }
     if (nextOffset) { state.telegram_offset = nextOffset; saveState(p, state); }
   } finally { releasePullLock(p, lock); }
