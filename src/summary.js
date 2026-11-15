@@ -227,6 +227,14 @@ export function changeTitle(p, c, esc = (t) => t, { short = false } = {}) {
   const x = loadIdeas(p).ideas.find((i) => String(i.id) === String(id));
   return x ? `${esc(id)} «${esc(truncate(String(x.title || ''), 80))}»` : esc(id);
 }
+/**
+ * Подписи планов без пункта списка, ждущих одобрения (0.9.0): Map имя → «план» (один) или «план 1», «план 2» (несколько) —
+ * одна и та же подпись стоит в тексте и на кнопке, чтобы владелец их сопоставил без служебного имени.
+ */
+export function planLabels(changes) {
+  const plain = pendingApprovals(changes).filter((c) => !c.mcfly.idea);
+  return new Map(plain.map((c, i) => [c.name, plain.length > 1 ? `план ${i + 1}` : 'план']));
+}
 /** Следующая открытая задача изменения (0.7.4): по ветке change/<имя>, иначе по tasks.md в main; null — открытых нет. */
 export function nextTask(projectDir, c) {
   const text = branchTasks(projectDir, c.name) ?? readText(path.join(c.dir, 'tasks.md'), '');
@@ -252,6 +260,8 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   const changes = listChanges(p.openspecChanges);
   const questions = openQuestions(loadQuestions(p));
   const pend = pendingApprovals(changes);
+  const labels = planLabels(changes);
+  const numbered = (c) => (!c.mcfly.idea && labels.get(c.name) !== 'план' ? `${labels.get(c.name).replace('план', 'План')}: ` : '');
   const work = approvedWithWork(changes, now);
   const progress = (c) => progressWords(p.projectDir, c);
   const reports = runs.filter((r) => !['missed', 'locked'].includes(r.status))
@@ -276,7 +286,7 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   }
   for (const c of pend) {
     // 0.9.0: без служебного имени; у изменения без пункта списка название и есть начало описания — не повторяем
-    need.push(`Одобрить ${c.mcfly.idea ? `<b>${changeTitle(p, c, escHtml)}</b>: ` : 'план: '}${inline(proposalExcerpt(c, EXCERPT))}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
+    need.push(`Одобрить ${c.mcfly.idea ? `<b>${changeTitle(p, c, escHtml)}</b>: ` : `<b>${labels.get(c.name)}</b>: `}${inline(proposalExcerpt(c, EXCERPT))}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
   }
   // 0.7.8: предложения, ждущие решения, — из mcfly/ideas.yaml, а не из текста отчётов (текст устаревает, как только владелец решил)
   const proposedIds = cfg.ideas?.enabled ? ideaList.filter((x) => x.status === 'proposed').map((x) => escHtml(x.id)) : [];
@@ -320,7 +330,7 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   // 3. Изменения и следующий прогон.
   L.push('', '<b>📦 Изменения</b>');
   const period = aggregate(records, { since });
-  const ch = [...work.map((c) => `🔧 ${changeTitle(p, c, escHtml)} — ${progress(c)}`), ...pend.map((c) => `⏳ ${changeTitle(p, c, escHtml)} — ждёт одобрения`),
+  const ch = [...work.map((c) => `🔧 ${changeTitle(p, c, escHtml)} — ${progress(c)}`), ...pend.map((c) => `⏳ ${numbered(c)}${changeTitle(p, c, escHtml)} — ждёт одобрения`),
     ...pausedChanges(changes, now).map((c) => `⏸ ${changeTitle(p, c, escHtml)} — отложено до ${fmtDay(pausedUntil(c))}`)];
   const done = [period.events.changes_archived ? `изменений ${period.events.changes_archived}` : '', period.events.tasks_done ? `задач ${period.events.tasks_done}` : ''].filter(Boolean);
   if (done.length) ch.push(`🏁 За период завершено: ${done.join(', ')}`);
@@ -381,10 +391,10 @@ export function summaryKeyboard(p, cfg) {
   for (const q of openQuestions(loadQuestions(p))) {
     if (autoDefault(cfg, q.category) && q.default && fitsData(`qd:${q.id}`)) rows.push([{ text: `✅ ${q.id}: по умолчанию`, callback_data: `qd:${q.id}` }]);
   }
-  const changes = listChanges(p.openspecChanges); const pend = pendingApprovals(changes);
+  const changes = listChanges(p.openspecChanges); const pend = pendingApprovals(changes); const labels = planLabels(changes);
   for (const c of pend) {
     // План по пункту списка (0.7.0): «отклонить» значит «не сейчас» — пункт уходит на обсуждение в сессии
-    if (fitsData(`ap:${c.name}`)) rows.push([{ text: `✅ Одобрить ${c.mcfly.idea || c.name}`, callback_data: `ap:${c.name}` }, { text: c.mcfly.idea ? '⏸ Не сейчас' : '❌ Отклонить', callback_data: `rj:${c.name}` }]);
+    if (fitsData(`ap:${c.name}`)) rows.push([{ text: `✅ Одобрить ${c.mcfly.idea || labels.get(c.name)}`, callback_data: `ap:${c.name}` }, { text: c.mcfly.idea ? '⏸ Не сейчас' : '❌ Отклонить', callback_data: `rj:${c.name}` }]);
   }
   if (!pend.length && !approvedWithWork(changes).length && ideasBrief(p, cfg)?.proposed > 0) rows.push([{ text: '💡 Предложения', callback_data: 'il:1' }]);
   return rows;

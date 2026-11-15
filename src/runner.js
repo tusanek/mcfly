@@ -17,7 +17,7 @@ import { listChanges, expireApprovals, approvedWithWork, pendingApprovals, propo
 import { pullAnswers, errorLine, spawnDayRun } from './pull.js';
 import { createTelegram } from './telegram.js';
 import { ensureVpn } from './vpn.js';
-import { STATUS_RU, plainWords, reportSections, humanItems, approvalCovered, isNone, nextRunText, progressWords, summaryKeyboard, changeTitle } from './summary.js';
+import { STATUS_RU, plainWords, reportSections, humanItems, approvalCovered, isNone, nextRunText, progressWords, summaryKeyboard, changeTitle, planLabels } from './summary.js';
 import { ideasBrief, loadIdeas, saveIdeas, syncDoneIdeas } from './ideas.js';
 import { enqueueNotice } from './notices.js';
 import { dirtyFiles, teamWorktrees, branchProgress, changedTrackedFiles } from './git.js';
@@ -196,8 +196,9 @@ function decisionLines(cfg, p, changes) {
       ? `   По умолчанию: ${truncate(String(q.default).replace(/\s+/g, ' ').trim(), QUESTION_MAX)} (примется ${fmtShort(new Date(q.deadline_at))})`
       : '   Ответа по умолчанию нет — команда ждёт вас');
   }
+  const labels = planLabels(changes);
   for (const c of pendingApprovals(changes)) {
-    out.push(`📋 Одобрить ${c.mcfly.idea ? `${changeTitle(p, c)}: ` : 'план: '}${proposalExcerpt(c, EXCERPT_MAX)}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
+    out.push(`📋 Одобрить ${c.mcfly.idea ? `${changeTitle(p, c)}: ` : `${labels.get(c.name)}: `}${proposalExcerpt(c, EXCERPT_MAX)}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
   }
   if (out.length) out.push('Кнопки ниже; свой ответ — текстом: «Q4: …»');
   return out;

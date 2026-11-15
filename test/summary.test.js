@@ -27,7 +27,7 @@ test('сводка: сначала то, что нужно от человека
   const need = html.indexOf('🙋'); assert.ok(need > 0 && need < html.indexOf('🌙'), 'блок «Нужно от вас» идёт перед прогонами');
   assert.match(html, /<b>🙋 Нужно от вас \(3\)<\/b>/);
   assert.match(html, /1\. Вопрос <b>Q1<\/b>: Кэш в git\? — по умолчанию «оставить», срок 02\.10/);
-  assert.match(html, /2\. Одобрить план: Мелочи ревью\. \(авто-одобрение 01\.10 13:00\)\n/);
+  assert.match(html, /2\. Одобрить <b>план<\/b>: Мелочи ревью\. \(авто-одобрение 01\.10 13:00\)\n/);
   assert.match(html, /3\. Запустить eval 1\.2\.0 и утвердить стиль/);
   assert.match(html, /⏳ «Мелочи ревью» — ждёт одобрения/);
   assert.doesNotMatch(html, /fix-x/, 'служебного имени изменения в тексте нет');
@@ -138,7 +138,7 @@ test('summaryKeyboard: кнопки одобрения и ответа по ум
   addChange(dir, 'fix-x'); requestApproval(listChanges(p.openspecChanges)[0]);
   assert.deepEqual(summaryKeyboard(p, cfg), [
     [{ text: '✅ Q1: по умолчанию', callback_data: 'qd:Q1' }],
-    [{ text: '✅ Одобрить fix-x', callback_data: 'ap:fix-x' }, { text: '❌ Отклонить', callback_data: 'rj:fix-x' }],
+    [{ text: '✅ Одобрить план', callback_data: 'ap:fix-x' }, { text: '❌ Отклонить', callback_data: 'rj:fix-x' }],
   ]);
 });
 test('htmlToPlain: для консоли без тегов и сущностей', () => {
@@ -218,15 +218,17 @@ test('0.5.3: «Нужно от вас» — из свежего отчёта и 
   assert.match(need, /docker compose up -d --force-recreate docs-site/);
   assert.match(need, /решить, нужны ли заглушки страниц из карты/, 'пункт ночной передачи');
   assert.doesNotMatch(need, /HTTPS|BotFather|Push в origin|настроить бота/, 'пункты старых прогонов не попадают');
-  assert.doesNotMatch(need, /\d\. [Оо]добр(?!ить план: )/, 'одобрения уже стоят в списке сверху');
-  assert.equal((need.match(/\d\. Одобрить план: /g) || []).length, 3);
+  assert.doesNotMatch(need, /\d\. [Оо]добр(?!ить <b>план \d<\/b>: )/, 'одобрения уже стоят в списке сверху');
+  assert.deepEqual((need.match(/\d\. Одобрить <b>план \d<\/b>: /g) || []).map((x) => x.slice(3)), ['Одобрить <b>план 1</b>: ', 'Одобрить <b>план 2</b>: ', 'Одобрить <b>план 3</b>: '], '0.9.0: несколько планов без пункта списка пронумерованы');
+  assert.deepEqual(summaryKeyboard(p, cfg).map((row) => row[0].text).filter((t) => t.startsWith('✅ Одобрить')), ['✅ Одобрить план 1', '✅ Одобрить план 2', '✅ Одобрить план 3'], 'те же номера на кнопках');
+  assert.equal((compose(p).match(/^⏳ План \d: /gm) || []).length, 3, 'и в разделе «Изменения»');
 });
 test('0.5.3: регрессия 02.10 — шесть отчётов с повторами: сводка влезает в Telegram, без «## Why», выдержка ≤ 160', () => {
   const dir = bareProject(); const p = paths(dir); noisyNight(dir, p);
   const html = compose(p);
   assert.ok(html.length <= 4096, `длина ${html.length}`);
   assert.doesNotMatch(html, /## Why|## What/);
-  const approve = [...html.matchAll(/^\d\. Одобрить план: (.*?)(?: \(авто-одобрение [^)]*\))?$/gm)];
+  const approve = [...html.matchAll(/^\d\. Одобрить <b>план \d<\/b>: (.*?)(?: \(авто-одобрение [^)]*\))?$/gm)];
   assert.equal(approve.length, 3);
   for (const m of approve) {
     assert.ok(m[1].length <= 160, `выдержка ${m[1].length}`);
@@ -318,7 +320,7 @@ test('0.5.3: выдержка одобрения — `код` моноширин
   const dir = bareProject(); const p = paths(dir);
   addChange(dir, 'fix-x', { proposal: '## Зачем\n\nЗаметка в `mcfly/answers.md` & <тег>.\n' }); requestApproval(listChanges(p.openspecChanges)[0]);
   const html = compose(p);
-  assert.match(html, /1\. Одобрить план: Заметка в <code>mcfly\/answers\.md<\/code> &amp; &lt;тег&gt;\. \(авто-одобрение [^)\n]*\)\n/);
+  assert.match(html, /1\. Одобрить <b>план<\/b>: Заметка в <code>mcfly\/answers\.md<\/code> &amp; &lt;тег&gt;\. \(авто-одобрение [^)\n]*\)\n/);
   assert.match(html, /⏳ «Заметка в mcfly\/answers\.md &amp; &lt;тег&gt;» — ждёт одобрения/, 'название изменения — первая фраза описания, экранирована');
   assert.doesNotMatch(html, /fix-x/);
 });
@@ -670,11 +672,11 @@ test('0.9.0: в сводке нет техники', () => {
   assert.doesNotMatch(html, /Сделано|Метрики|<blockquote/);
   assert.match(html, /<b>🗣 Прогон 02:00 простыми словами<\/b>\n<b>Что сделано:<\/b> страница проверки теперь из двух частей\.\n<b>Зачем:<\/b> проверяющим проще найти своё\.\n<b>Что дальше:<\/b> команда доделает вторую часть\.\n/);
   assert.match(html, /✅ 02:00 — прошёл успешно, 55 мин\n/);
-  assert.match(html, /1\. Одобрить план: Повторять запросы к трекеру при сбое связи\./);
+  assert.match(html, /1\. Одобрить <b>план<\/b>: Повторять запросы к трекеру при сбое связи\./);
   assert.match(html, /🔧 «Страница проверки делится на две части» — сделано 1 из 2 шагов\n⏳ «Повторять запросы к трекеру при сбое связи» — ждёт одобрения/);
   assert.match(html, /2\. Посмотреть новую страницу/);
-  // служебное имя — только на кнопке
-  assert.deepEqual(summaryKeyboard(p, cfg), [[{ text: '✅ Одобрить tracker-retry', callback_data: 'ap:tracker-retry' }, { text: '❌ Отклонить', callback_data: 'rj:tracker-retry' }]]);
+  // служебного имени нет и на кнопке: подпись та же, что в тексте
+  assert.deepEqual(summaryKeyboard(p, cfg), [[{ text: '✅ Одобрить план', callback_data: 'ap:tracker-retry' }, { text: '❌ Отклонить', callback_data: 'rj:tracker-retry' }]]);
   // техника не теряется: она в хвосте для терминала
   const t = tail(p);
   assert.match(t, /^— Технические подробности \(только в терминале\) —\n/);

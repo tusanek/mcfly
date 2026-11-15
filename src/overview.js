@@ -10,7 +10,7 @@ import { currentRun } from './runner.js';
 import { hasActions, listActions, getAction } from './action-config.js';
 import { currentAction, offerKeyboard, isTrusted } from './actions.js';
 import { loadIdeas, visibleIdeas, ideasBrief } from './ideas.js';
-import { escHtml, inline, splitHtml, reportSections, plainWords, plainHtml, reportNeeds, progressWords, nextRunText, runsByStatus, STATUS_RU, QUOTA_WARN, summaryKeyboard, changeTitle } from './summary.js';
+import { escHtml, inline, splitHtml, reportSections, plainWords, plainHtml, reportNeeds, progressWords, nextRunText, runsByStatus, STATUS_RU, QUOTA_WARN, summaryKeyboard, changeTitle, planLabels } from './summary.js';
 
 /**
  * Команды обзора для владельца в Telegram: «статус» (раньше «где мы»), «цели», «статистика», «последний прогон», «помощь».
@@ -98,12 +98,13 @@ export function lastUsageAt(p) {
   return r ? { usage: r.usage, at: new Date(r.ended_at || r.started_at) } : null;
 }
 // 0.9.0: название для человека (пункт списка или начало описания), прогресс словами; служебное имя и текст задач — только в терминале
-const changeLine = (p, cfg, c, now = new Date()) => {
+const changeLine = (p, cfg, c, now = new Date(), labels = new Map()) => {
   const st = c.mcfly.approval;
   const title = changeTitle(p, c, escHtml);
   const steps = progressWords(p.projectDir, c);
   if (st === 'pending' && c.mcfly.idea) return `⏳ <b>${title}</b> — ждёт вашего решения, само не одобрится`;
-  if (st === 'pending') return `⏳ <b>${title}</b> — ждёт одобрения${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`;
+  const label = labels.get(c.name);
+  if (st === 'pending') return `⏳ <b>${label && label !== 'план' ? `${label.replace('план', 'План')}: ` : ''}${title}</b> — ждёт одобрения${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`;
   if (st === 'rejected') return `⛔ ${title} — отклонено`;
   if (st === 'approved' && isPaused(c, now)) return `⏸ <b>${title}</b> — отложено до ${escHtml(fmtDay(pausedUntil(c)))}, ${steps}`;
   if (st === 'approved') return `${c.tasksOpen > 0 ? '🔧' : '🏁'} <b>${title}</b> — одобрено, ${steps}`;
@@ -126,7 +127,7 @@ export function statusView(p, cfg, { now = new Date() } = {}) {
   if (act) L.push(`🛠 <b>Идёт действие</b> «${escHtml(act.title || act.id)}» с ${fmtShort(act.since)} — итог придёт сообщением`);
 
   const changes = listChanges(p.openspecChanges);
-  L.push('', `<b>📦 Изменения (${changes.length})</b>`, ...(changes.length ? changes.map((c) => changeLine(p, cfg, c, now)) : ['Открытых изменений нет']));
+  L.push('', `<b>📦 Изменения (${changes.length})</b>`, ...(changes.length ? changes.map((c) => changeLine(p, cfg, c, now, planLabels(changes))) : ['Открытых изменений нет']));
 
   const q = openQuestions(loadQuestions(p));
   if (q.length) {
