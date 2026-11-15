@@ -26,8 +26,8 @@ export function chainedRunsLastDay(p, now = new Date()) {
 export function quotaAllows(cfg, usage) {
   if (!(cfg.run.chain_max_weekly > 0)) return { ok: false, reason: 'цепочка выключена (run.chain_max_weekly: 0)' };
   if (!usage) return { ok: false, reason: 'нет данных о лимите подписки' };
-  if (usage.seven_day >= cfg.run.chain_max_weekly) return { ok: false, reason: `недельный лимит ${pct(usage.seven_day)} (порог ${pct(cfg.run.chain_max_weekly)})` };
-  if (usage.five_hour != null && usage.five_hour >= cfg.run.chain_max_five_hour) return { ok: false, reason: `пятичасовой лимит ${pct(usage.five_hour)}` };
+  if (usage.seven_day >= cfg.run.chain_max_weekly) return { ok: false, reason: `занято ${pct(usage.seven_day)} недельного лимита подписки` };
+  if (usage.five_hour != null && usage.five_hour >= cfg.run.chain_max_five_hour) return { ok: false, reason: `занято ${pct(usage.five_hour)} лимита подписки на ближайшие 5 часов` };
   return { ok: true, reason: `неделя ${pct(usage.seven_day)}` };
 }
 
@@ -38,12 +38,12 @@ export function quotaAllows(cfg, usage) {
  */
 export function chainDecision({ cfg, p, record, projectDir, started, now = new Date() }) {
   if (!(cfg.run.chain_max_weekly > 0)) return { chain: false, reason: '' };
-  if (record.status !== 'ok') return { chain: false, reason: 'прогон завершился не «ок»' };
+  if (record.status !== 'ok') return { chain: false, reason: 'этот прогон не прошёл успешно' };
   if (!approvedWithWork(listChanges(p.openspecChanges)).length) return { chain: false, reason: '' };
   const q = quotaAllows(cfg, record.usage);
   if (!q.ok) return { chain: false, reason: q.reason };
   if (teamCommitsSince(projectDir, started) === 0) return { chain: false, reason: 'прогон не продвинул работу — нужен взгляд человека' };
-  if (chainedRunsLastDay(p, now) >= cfg.run.chain_max_runs) return { chain: false, reason: `за сутки уже ${cfg.run.chain_max_runs} прогонов цепочки` };
+  if (chainedRunsLastDay(p, now) >= cfg.run.chain_max_runs) return { chain: false, reason: `за сутки уже ${cfg.run.chain_max_runs} прогонов подряд` };
   return { chain: true, reason: q.reason };
 }
 

@@ -7,7 +7,7 @@ import { paths, loadState, saveState } from './state.js';
 import { loadConfig, autoDefault, isCategory } from './config.js';
 import { loadEnv } from './env.js';
 import { run, currentRun } from './runner.js';
-import { composeSummary, sendSummary, htmlToPlain } from './summary.js';
+import { composeSummary, sendSummary, htmlToPlain, techTail } from './summary.js';
 import { pullAnswers, pollAnswers } from './pull.js';
 import { buildContext, isMcflyProject } from './context.js';
 import { loadQuestions, saveQuestions, addQuestion, expireQuestions, openQuestions } from './questions.js';
@@ -99,7 +99,7 @@ export async function main(argv) {
   const runIdEnv = process.env.MCFLY_RUN_ID || '';
   switch (cmd) {
     case 'run': { const r = await run({ projectDir, mode: values.mode || 'day', dryRun: !!values['dry-run'], now, log }); return ['ok', 'dry-run', 'missed'].includes(r.status) ? 0 : 1; }
-    case 'summary': { if (values.send) await sendSummary(p, cfg, { now, log }); else log(htmlToPlain(composeSummary(p, cfg, { now, since: new Date(now.getTime() - 24 * 3600_000) }))); return 0; }
+    case 'summary': { if (values.send) await sendSummary(p, cfg, { now, log }); else { const since = new Date(now.getTime() - 24 * 3600_000); log(htmlToPlain(composeSummary(p, cfg, { now, since }))); log(`\n${techTail(p, cfg, { since })}`); } return 0; }
     case 'answers': {
       // Задание launchd (answers --project …) — длинный опрос почти до следующего запуска: ответ на «запусти» и кнопки за секунды.
       // Чтения одного offset исключает блокировка опроса (pull.js); прогон до 0.5.4 читает без неё — пока он идёт, не читаем.

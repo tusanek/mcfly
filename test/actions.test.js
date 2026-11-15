@@ -156,7 +156,7 @@ test('0.6.0: exec — ошибка с хвостом вывода, предел 
   const { sent, send } = recorder();
   const bad = await execAction({ p, cfg: c, id: 'bad', send, ticket: ticketFor(p, c, 'bad') });
   assert.equal(bad.status, 'error'); assert.equal(bad.code, 3);
-  assert.match(sent[0].text, /❌ <b>Плохое<\/b> — ошибка \(код 3\)/);
+  assert.match(sent[0].text, /❌ <b>Плохое<\/b> — не получилось, /); assert.doesNotMatch(sent[0].text, /код 3|Журнал:/, '0.9.0: без кода выхода и пути к журналу');
   assert.match(sent[0].text, /строка30/); assert.doesNotMatch(sent[0].text, /строка10\n/, 'только хвост');
   assert.match(sent[0].text, /&lt;b&gt;/, 'вывод экранирован');
   const t = Date.now();
@@ -183,7 +183,7 @@ test('0.6.0: prepare — вывод и «Да» с кодом; сбой подг
   assert.equal((await prepareAction({ p, cfg: c, id: 'ev', send, ticket: ticketFor(p, c, 'ev') })).status, 'ok');
   assert.match(sent[0].text, /оценка ~827568/); assert.match(sent[0].keyboard[0][0].callback_data, /^ax:ev:/);
   assert.equal((await prepareAction({ p, cfg: c, id: 'bad', send, ticket: ticketFor(p, c, 'bad') })).status, 'error');
-  assert.match(sent[1].text, /Подготовка «Плохое» не удалась \(код 2\)/); assert.deepEqual(sent[1].keyboard, []);
+  assert.match(sent[1].text, /Подготовка «Плохое» не удалась \(завершилась с ошибкой\)/); assert.deepEqual(sent[1].keyboard, []);
 });
 
 test('0.6.0: resultLines и offerKeyboard', async () => {

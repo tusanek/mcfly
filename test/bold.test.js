@@ -45,8 +45,8 @@ test('0.5.11: срок авто-одобрения — 4 часа для мел�
 test('0.5.11: лимиты для цепочки — выключена, нет данных, неделя или пять часов сверх порога', () => {
   assert.equal(quotaAllows(cfg, { five_hour: 0.2, seven_day: 0.3 }).ok, true);
   assert.match(quotaAllows(cfg, null).reason, /нет данных/);
-  assert.match(quotaAllows(cfg, { five_hour: 0.2, seven_day: 0.71 }).reason, /недельный лимит 71 %/);
-  assert.match(quotaAllows(cfg, { five_hour: 0.95, seven_day: 0.3 }).reason, /пятичасовой лимит 95 %/);
+  assert.match(quotaAllows(cfg, { five_hour: 0.2, seven_day: 0.71 }).reason, /занято 71 % недельного лимита подписки/);
+  assert.match(quotaAllows(cfg, { five_hour: 0.95, seven_day: 0.3 }).reason, /занято 95 % лимита подписки на ближайшие 5 часов/);
   assert.match(quotaAllows(parseConfig('project: x\nrun:\n  chain_max_weekly: 0\n'), { seven_day: 0 }).reason, /выключена/);
 });
 
@@ -60,9 +60,9 @@ test('0.5.11: решение о цепочке — работа есть и пр
   assert.match(chainDecision({ cfg, p, record: rec, projectDir: dir, started }).reason, /не продвинул/);
   git(dir, 'commit', '-q', '--allow-empty', '-m', 'feat(add-x): задача');
   assert.deepEqual(chainDecision({ cfg, p, record: rec, projectDir: dir, started }), { chain: true, reason: 'неделя 30 %' });
-  assert.match(chainDecision({ cfg, p, record: { ...rec, status: 'quota' }, projectDir: dir, started }).reason, /не «ок»/);
+  assert.match(chainDecision({ cfg, p, record: { ...rec, status: 'quota' }, projectDir: dir, started }).reason, /не прошёл успешно/);
   for (let i = 0; i < 8; i++) appendMetric(p, { type: 'run', chained: true, started_at: new Date().toISOString() });
-  assert.match(chainDecision({ cfg, p, record: rec, projectDir: dir, started }).reason, /уже 8 прогонов цепочки/);
+  assert.match(chainDecision({ cfg, p, record: rec, projectDir: dir, started }).reason, /уже 8 прогонов подряд/);
 });
 
 test('0.5.11: прогон с оставшейся работой и прогрессом запускает следующий после снятия лока; итог говорит об этом', async () => {
@@ -78,8 +78,8 @@ test('0.5.11: прогон с оставшейся работой и прогр�
   assert.equal(r.chained, true); assert.deepEqual(started, [[dir, { chained: true }]]);
   const rec = JSON.parse(fs.readFileSync(path.join(p.runs, r.id, 'result.json'), 'utf8'));
   assert.deepEqual(rec.usage, { five_hour: 0.1, seven_day: 0.34 });
-  assert.match(rec.chain, /следующий прогон запущен \(неделя 34 %\)/);
-  assert.match(notes[0], /Дальше: следующий прогон запущен \(неделя 34 %\)/);
+  assert.match(rec.chain, /следующий прогон запущен сразу/);
+  assert.match(notes[0], /Дальше: следующий прогон запущен сразу$/);
   assert.deepEqual(lastUsage(p), { five_hour: 0.1, seven_day: 0.34 });
 });
 
@@ -91,7 +91,7 @@ test('0.5.11: недельный лимит выше порога — цепоч
   const r = await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async () => {}, notify: async (t) => { notes.push(t); },
     beforeAttempt: () => { git(dir, 'commit', '-q', '--allow-empty', '-m', 'feat(add-x): задача 1'); }, startRun: (d) => started.push(d) });
   assert.equal(r.chained, false); assert.deepEqual(started, []);
-  assert.match(notes[0], /Дальше: команда продолжит add-x \(1\/2\) \(цепочка остановлена: недельный лимит 75 %/);
+  assert.match(notes[0], /Дальше: команда продолжит «Зачем: тест» \(сделано 1 из 2 шагов\) \(прогон подряд не запущен: занято 75 % недельного лимита подписки/);
 });
 
 test('0.5.11: задание answers авто-одобряет мелкое изменение через 4 часа и запускает прогон, если лимиты позволяют', () => {

@@ -229,7 +229,7 @@ test('нет доступа к API весь час: статус network и ср
   const rec = readRecord(p, r.id);
   assert.equal(rec.attempts, 3);
   assert.equal(notes.length, 1);
-  assert.match(notes[0], /demo/); assert.match(notes[0], /нет доступа к API/); assert.match(notes[0], /VPN/); assert.match(notes[0], /3 попыт/);
+  assert.match(notes[0], /demo/); assert.match(notes[0], /не было связи с Claude/); assert.doesNotMatch(notes[0], /API/); assert.match(notes[0], /VPN/); assert.match(notes[0], /3 попыт/);
 });
 test('ошибка прогона (не сеть) не повторяется, но сразу сообщается в Telegram', async () => {
   const dir = bareProject();
@@ -237,14 +237,14 @@ test('ошибка прогона (не сеть) не повторяется, �
   const waits = []; const notes = [];
   const r = await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async (ms) => { waits.push(ms); }, notify: async (t) => { notes.push(t); } });
   assert.equal(r.status, 'error'); assert.equal(fake.calls(), 1); assert.deepEqual(waits, []);
-  assert.equal(notes.length, 1); assert.match(notes[0], /401/);
+  assert.equal(notes.length, 1); assert.match(notes[0], /⚠️ mcfly demo: прогон \d\d:\d\d сорвался из-за сбоя/); assert.doesNotMatch(notes[0], /401|bearer|events\.log/, '0.9.0: текст ошибки и путь — только в файлах прогона');
 });
 test('успешный прогон и квота: одно сообщение о завершении, без тревоги', async () => {
-  for (const [attempt, re] of [[{ lines: [resultEvent()] }, /✅ mcfly demo: прогон \d\d:\d\d завершён: ок, 1 ходов, ~\$0\.10/], [{ lines: [resultEvent({ is_error: true, result: "You've hit your weekly limit" })], exitCode: 1 }, /⏸ mcfly demo: прогон \d\d:\d\d завершён: остановлен: лимит квоты/]]) {
+  for (const [attempt, re] of [[{ lines: [resultEvent()] }, /✅ mcfly demo: прогон \d\d:\d\d прошёл успешно, \d+ мин\./], [{ lines: [resultEvent({ is_error: true, result: "You've hit your weekly limit" })], exitCode: 1 }, /⏸ mcfly demo: прогон \d\d:\d\d остановлен через \d+ мин: кончился лимит подписки\. Команда продолжит/]]) {
     const dir = bareProject(); fakeClaudeSeq(dir, [attempt]);
     const notes = [];
     await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async () => {}, notify: async (t) => { notes.push(t); } });
-    assert.equal(notes.length, 1); assert.match(notes[0], re); assert.doesNotMatch(notes[0], /⚠️/);
+    assert.equal(notes.length, 1); assert.match(notes[0], re); assert.doesNotMatch(notes[0], /⚠️/); assert.doesNotMatch(notes[0], /ходов|\$|субагент/, '0.9.0: без ходов и стоимости');
   }
 });
 test('сообщение о завершении называет прогресс одобренных изменений по веткам', async () => {
@@ -253,7 +253,7 @@ test('сообщение о завершении называет прогрес
   fakeClaudeSeq(dir, [{ lines: [resultEvent()] }]);
   const notes = [];
   await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async () => {}, notify: async (t) => { notes.push(t); } });
-  assert.match(notes[0], /Дальше: команда продолжит add-x \(1\/2\)/);
+  assert.match(notes[0], /Дальше: команда продолжит «Зачем: тест» \(сделано 1 из 2 шагов\)/);
 });
 test('сбой отправки тревоги не роняет прогон', async () => {
   const dir = bareProject();

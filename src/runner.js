@@ -17,7 +17,7 @@ import { listChanges, expireApprovals, approvedWithWork, pendingApprovals, propo
 import { pullAnswers, errorLine, spawnDayRun } from './pull.js';
 import { createTelegram } from './telegram.js';
 import { ensureVpn } from './vpn.js';
-import { STATUS_RU, plainWords, reportSections, humanItems, approvalCovered, isNone, nextRunText, changeProgress, summaryKeyboard, changeTitle } from './summary.js';
+import { STATUS_RU, plainWords, reportSections, humanItems, approvalCovered, isNone, nextRunText, progressWords, summaryKeyboard, changeTitle, planLabels } from './summary.js';
 import { ideasBrief, loadIdeas, saveIdeas, syncDoneIdeas } from './ideas.js';
 import { enqueueNotice } from './notices.js';
 import { dirtyFiles, teamWorktrees, branchProgress, changedTrackedFiles } from './git.js';
@@ -168,12 +168,19 @@ export function telegramNotifier(cfg) {
 }
 
 const FINISH_ICON = { ok: '✅', quota: '⏸', timeout: '⏱' };
-/** Первая строка итога: статус, ходы, стоимость, длительность; при network и error — тревога. */
+const runWhen = (record) => { const start = new Date(record.started_at); return record.slot || `${pad2(start.getHours())}:${pad2(start.getMinutes())}`; };
+/**
+ * Первая строка итога для владельца (0.9.0): статус словами и длительность, без ходов, стоимости и субагентов — они остаются
+ * в журнале mcfly/progress.md и metrics.jsonl; при network и error — тревога.
+ */
 export function finishText(cfg, record) {
   if (['network', 'error'].includes(record.status)) return alertText(cfg, record);
-  const start = new Date(record.started_at);
-  const when = record.slot || `${pad2(start.getHours())}:${pad2(start.getMinutes())}`;
-  return `${FINISH_ICON[record.status] || 'ℹ️'} mcfly ${cfg.project}: прогон ${when} завершён: ${STATUS_RU[record.status] || record.status}${runStats(record)}, ${fmtDuration(record.duration_ms || 0)}.`;
+  const head = `${FINISH_ICON[record.status] || 'ℹ️'} mcfly ${cfg.project}: прогон ${runWhen(record)}`;
+  const took = fmtDuration(record.duration_ms || 0);
+  if (record.status === 'ok') return `${head} прошёл успешно, ${took}.`;
+  if (record.status === 'quota') return `${head} остановлен через ${took}: кончился лимит подписки. Команда продолжит с того же места, когда лимит обновится.`;
+  if (record.status === 'timeout') return `${head} остановлен через ${took}: не уложился в отведённое время. Незаконченное подхватит следующий прогон.`;
+  return `${head} завершён: ${STATUS_RU[record.status] || record.status}, ${took}.`;
 }
 
 const QUESTION_MAX = 400; const EXCERPT_MAX = 200;
@@ -189,57 +196,59 @@ function decisionLines(cfg, p, changes) {
       ? `   По умолчанию: ${truncate(String(q.default).replace(/\s+/g, ' ').trim(), QUESTION_MAX)} (примется ${fmtShort(new Date(q.deadline_at))})`
       : '   Ответа по умолчанию нет — команда ждёт вас');
   }
+  const labels = planLabels(changes);
   for (const c of pendingApprovals(changes)) {
-    out.push(`📋 Одобрить ${c.mcfly.idea ? `${changeTitle(p, c)} (${c.name})` : c.name}: ${proposalExcerpt(c, EXCERPT_MAX)}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
+    out.push(`📋 Одобрить ${c.mcfly.idea ? `${changeTitle(p, c)}: ` : `${labels.get(c.name)}: `}${proposalExcerpt(c, EXCERPT_MAX)}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
   }
   if (out.length) out.push('Кнопки ниже; свой ответ — текстом: «Q4: …»');
   return out;
 }
-const DONE_MAX = 5; const NEED_MAX = 3; const ITEM_MAX = 220; const MESSAGE_MAX = 3800;
-/** Пункты списком «• …»: не больше n, каждый урезан; не влезшие — одной строкой со ссылкой на отчёт. */
-function bullets(items, n, id) {
+const NEED_MAX = 5; const ITEM_MAX = 220; const MESSAGE_MAX = 3800; const PLAIN_MIN = 300;
+/** Пункты списком «• …»: не больше n, каждый урезан; не влезшие — одной строкой со ссылкой на «Последний прогон». */
+function bullets(items, n) {
   const out = items.slice(0, n).map((l) => `• ${truncate(String(l).replace(/`/g, ''), ITEM_MAX)}`);
-  if (items.length > n) out.push(`• … ещё ${items.length - n} — mcfly/runs/${id}/summary.md`);
+  if (items.length > n) out.push(`• … ещё ${items.length - n} — кнопка «последний прогон»`);
   return out;
 }
 /**
- * Итог прогона для Telegram: первая строка статуса, «Сделано» и «Нужно от вас» из отчёта репортёра, что будет дальше
- * и кнопки одобрений и ответов по умолчанию. Без этого человек видел только «прогон завершён: ок» и не понимал,
- * сделала ли команда что-нибудь (18.10: из четырёх ручных прогонов работали только первый и третий).
+ * Итог прогона для Telegram: первая строка статуса, пересказ «Простыми словами» целиком и «Нужно от вас» из отчёта репортёра,
+ * что будет дальше и кнопки одобрений и ответов по умолчанию. Без этого человек видел только «прогон завершён: ок» и не понимал,
+ * сделала ли команда что-нибудь (18.10). 0.9.0: без списка «Сделано», путей к файлам и чисел для разработчиков.
  */
 export function finishMessage(cfg, record, p) {
   if (['network', 'error'].includes(record.status)) return { text: alertText(cfg, record), keyboard: [] };
   const sec = reportSections(readText(path.join(p.runs, record.id, 'summary.md'), '')) || {};
   const changes = listChanges(p.openspecChanges);
-  const done = (sec['Сделано'] || []).filter((l) => !isNone(l));
   const need = humanItems(sec).filter((l) => !approvalCovered(l, changes));
   const decide = decisionLines(cfg, p, changes);
-  const next = `Дальше: ${record.chain && record.chain.startsWith('следующий') ? `${record.chain}` : nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => changeProgress(p.projectDir, c), undefined, ideasBrief(p, cfg), (c) => changeTitle(p, c, undefined, { short: true }))}${record.chain && !record.chain.startsWith('следующий') ? ` (${record.chain})` : ''}`;
-  // Решения — главное: если не влезает, урезается «Сделано», а не вопросы.
-  const plain = plainWords(sec);
-  const assemble = (doneMax) => {
+  const label = (c) => changeTitle(p, c, undefined, { short: true });
+  const next = `Дальше: ${record.chain && record.chain.startsWith('следующий') ? `${record.chain}` : nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => progressWords(p.projectDir, c), undefined, ideasBrief(p, cfg), label)}${record.chain && !record.chain.startsWith('следующий') ? ` (${record.chain})` : ''}`;
+  // Решения — главное: если не влезает, урезается пересказ, а не вопросы.
+  const assemble = (plainMax) => {
     const lines = [finishText(cfg, record)];
-    if (plain) lines.push('', `Простыми словами: ${plain}`);
-    if (done.length && doneMax) lines.push('', 'Сделано:', ...bullets(done, doneMax, record.id));
-    if (need.length) lines.push('', 'Нужно от вас:', ...bullets(need, NEED_MAX, record.id));
+    const plain = plainWords(sec, plainMax);
+    if (plain) lines.push('', plain);
+    if (need.length) lines.push('', 'Нужно от вас:', ...bullets(need, NEED_MAX));
     if (decide.length) lines.push('', 'Решить:', ...decide);
     lines.push('', next);
     return lines.join('\n');
   };
-  let text = assemble(DONE_MAX);
-  for (let k = DONE_MAX - 1; text.length > MESSAGE_MAX && k >= 0; k--) text = assemble(k);
+  let text = assemble(1500);
+  for (let k = 1200; text.length > MESSAGE_MAX && k >= PLAIN_MIN; k -= 300) text = assemble(k);
   return { text: truncate(text, MESSAGE_MAX), keyboard: summaryKeyboard(p, cfg) };
 }
 
-/** Текст тревоги о прогоне, который не выполнил работу и требует внимания человека. */
+/**
+ * Текст тревоги о прогоне, который не выполнил работу и требует внимания человека. 0.9.0: причина словами, без текста ошибки,
+ * номера прогона и пути к журналу — они в mcfly/runs/<id>/ и в mcfly/progress.md.
+ */
 export function alertText(cfg, record) {
-  const when = record.slot ? `прогон ${record.slot}` : `прогон ${record.id}`;
-  const reason = record.error ? record.error.split('\n')[0].slice(0, 200) : '';
+  const when = `прогон ${runWhen(record)}`;
   if (record.status === 'network') {
     const vpn = (record.note || '').split('; ').filter((n) => n.startsWith('VPN «')).join('; ');
-    return `⚠️ mcfly ${cfg.project}: ${when} не выполнен — нет доступа к API${reason ? ` (${reason})` : ''}, ${record.attempts} попыт${record.attempts === 1 ? 'ка' : record.attempts < 5 ? 'ки' : 'ок'}.${vpn ? ` ${vpn}.` : ''} Проверь VPN и интернет; следующий прогон — по расписанию.`;
+    return `⚠️ mcfly ${cfg.project}: ${when} не состоялся — не было связи с Claude, ${record.attempts} попыт${record.attempts === 1 ? 'ка' : record.attempts < 5 ? 'ки' : 'ок'}.${vpn ? ` ${vpn}.` : ''} Проверьте VPN и интернет; следующий прогон — по расписанию.`;
   }
-  return `⚠️ mcfly ${cfg.project}: ${when} завершился ошибкой${reason ? `: ${reason}` : ''}. Подробности — mcfly/runs/${record.id}/events.log.`;
+  return `⚠️ mcfly ${cfg.project}: ${when} сорвался из-за сбоя. Следующий прогон попробует снова; если сбой повторится, разберите его в сессии Claude — подробности сохранены в файлах прогона.`;
 }
 
 /** Ночь закончилась без ночной передачи (репортёр не написал, прогон пропущен) — собрать её по фактам. Ссылки — прогоны после дневной передачи. */
@@ -367,7 +376,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     };
     // Цепочка: решение до записи — причина попадает в журнал и итог прогона.
     const chain = chainDecision({ cfg, p, record, projectDir, started });
-    if (chain.reason) record.chain = chain.chain ? `следующий прогон запущен (${chain.reason})` : `цепочка остановлена: ${chain.reason}`;
+    if (chain.reason) record.chain = chain.chain ? 'следующий прогон запущен сразу' : `прогон подряд не запущен: ${chain.reason}`;
     recordRun(p, record);
     // Последний слот ночи: репортёр не оставил ночную передачу — собрать по фактам.
     if (lastSlot) ensureNightHandoff(p, now);

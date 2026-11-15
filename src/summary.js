@@ -15,19 +15,20 @@ import { enqueueNotice } from './notices.js';
 import { listActions } from './action-config.js';
 import { currentRun } from './runner.js';
 
-export const STATUS_RU = { ok: 'ок', missed: 'пропущен', error: 'ошибка', timeout: 'остановлен по времени', quota: 'остановлен: лимит квоты', network: 'не выполнен: нет доступа к API (VPN?)', locked: 'не запущен (шёл другой прогон)' };
+// 0.9.0: статусы для владельца — словами, без жаргона («квота», «API»)
+export const STATUS_RU = { ok: 'прошёл успешно', missed: 'пропущен: Mac спал или был выключен', error: 'сорвался из-за сбоя', timeout: 'остановлен: не уложился в отведённое время', quota: 'остановлен: кончился лимит подписки', network: 'не состоялся: не было связи с Claude (проверьте VPN и интернет)', locked: 'не запускался: шёл другой прогон' };
+/** Доля лимита подписки, с которой бот предупреждает владельца (до неё о лимите молчит). */
+export const QUOTA_WARN = 0.8;
 
-const STATUS_COUNT_RU = { ok: 'ок', quota: 'квота', network: 'нет сети', timeout: 'по времени', error: 'ошибок', missed: 'пропущено', locked: 'занято' };
-/** «прогонов 3 (квота 2, ок 1)» — частые статусы первыми. */
+const STATUS_COUNT_RU = { ok: 'успешных', quota: 'остановлено по лимиту подписки', network: 'без связи', timeout: 'не уложилось во время', error: 'сорвалось', missed: 'пропущено', locked: 'не запускалось' };
+/** «прогонов 3 (остановлено по лимиту подписки 2, успешных 1)» — частые статусы первыми. */
 export function runsByStatus(agg) {
   const parts = Object.keys(STATUS_COUNT_RU).filter((s) => agg[s]).sort((a, b) => agg[b] - agg[a]).map((s) => `${STATUS_COUNT_RU[s]} ${agg[s]}`);
   return `прогонов ${agg.runs}${parts.length ? ` (${parts.join(', ')})` : ''}`;
 }
 
 const RUN_ICON = { ok: '✅', quota: '⏸', timeout: '⏱', network: '❌', error: '❌', missed: '💤', locked: '🔒' };
-const LIMIT = 3900; // сообщение Telegram — до 4096 символов; HTML сводки укладываем в одно сообщение с запасом
 const TG_MAX = 4000; // предел куска при отправке: длина HTML не меньше текста, который считает Telegram
-const MIN_BLOCK = 200; // меньше — блок «Отчёт» бесполезен, лучше не показывать
 const EXCERPT = 160; // выдержка proposal в пункте одобрения
 export const escHtml = (t) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 /** Текст для консоли: без тегов и HTML-сущностей. */
@@ -36,15 +37,11 @@ export const hhmm = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 /** `код` из markdown отчёта — моноширинным, остальное экранировано. */
 export const inline = (t) => escHtml(t).replace(/`([^`]+)`/g, '<code>$1</code>');
 
+/** Строка прогона для владельца: «✅ 09:26 — прошёл успешно, 55 мин»; стоимость, попытки и текст ошибки — только в techTail. */
 function runLine(r) {
-  const start = new Date(r.started_at);
-  const when = r.slot || hhmm(start);
-  let detail;
-  if (r.status === 'ok') detail = [r.duration_ms ? fmtDuration(r.duration_ms) : '', r.cost_usd != null ? `~$${Number(r.cost_usd).toFixed(2)}` : ''].filter(Boolean).join(' · ') || 'ок';
-  else if (r.status === 'error') detail = `ошибка: ${truncate(String(r.note || r.error || '').split('; ')[0], 120)}`;
-  else detail = { quota: 'остановлен: лимит квоты', timeout: 'остановлен по времени', network: 'нет доступа к API (VPN?)', locked: 'не запущен: шёл другой прогон', missed: 'пропущен: Mac спал или был выключен' }[r.status] || r.status;
-  const tries = r.attempts > 1 ? ` · попыток ${r.attempts}` : '';
-  return `${RUN_ICON[r.status] || '•'} ${escHtml(when)} — ${escHtml(detail)}${tries}`;
+  const when = r.slot || hhmm(new Date(r.started_at));
+  const took = r.status === 'ok' && r.duration_ms ? `, ${fmtDuration(r.duration_ms)}` : '';
+  return `${RUN_ICON[r.status] || '•'} ${escHtml(when)} — ${escHtml(STATUS_RU[r.status] || r.status)}${took}`;
 }
 
 /** Разделы markdown-отчёта: { 'Сделано': [строки], … }; авто-сводки runner'а — null. */
@@ -69,12 +66,23 @@ function shiftSection(file, title, n = 6) {
   return out.slice(0, n);
 }
 const shiftTime = (s) => new Date(Number(s.at.slice(0, 4)), Number(s.at.slice(4, 6)) - 1, Number(s.at.slice(6, 8)), Number(s.at.slice(9, 11)), Number(s.at.slice(11, 13)));
-const PLAIN_MAX = 700; const PLAIN_SUMMARY_MAX = 450; // в сводке пересказов несколько — каждый короче
-/** Раздел «Простыми словами» отчёта одним абзацем (для человека, не читающего код); нет раздела или «нет» — пустая строка. */
+const PLAIN_MAX = 1500; // 0.9.0: пересказ — главное в сообщении, три абзаца
+const PLAIN_LEAD = /^(Что сделано|Зачем|Что дальше):/;
+/**
+ * Раздел «Простыми словами» отчёта (для человека, не читающего код). С 0.9.0 — абзацы «Что сделано: / Зачем: / Что дальше:»,
+ * каждый с новой строки; отчёт старого формата — одним абзацем. Нет раздела или «нет» — пустая строка.
+ */
 export function plainWords(sec, max = PLAIN_MAX) {
-  const text = (sec?.['Простыми словами'] || []).filter((l) => !isNone(l)).join(' ').replace(/`/g, '').replace(/\s+/g, ' ').trim();
-  return text ? truncate(text, max) : '';
+  const paras = [];
+  for (const l of (sec?.['Простыми словами'] || []).filter((x) => !isNone(x))) {
+    const line = l.replace(/`/g, '').replace(/\s+/g, ' ').trim();
+    if (!line) continue;
+    if (PLAIN_LEAD.test(line) || !paras.length) paras.push(line); else paras[paras.length - 1] += ` ${line}`;
+  }
+  return paras.length ? truncate(paras.join('\n'), max) : '';
 }
+/** Пересказ для HTML: экранирован, начала абзацев («Что сделано:») — жирным. */
+export const plainHtml = (text) => escHtml(text).split('\n').map((l) => l.replace(PLAIN_LEAD, '<b>$1:</b>')).join('\n');
 export const isNone = (l) => !l || /^(нет|ничего)\.?$/i.test(l);
 /** Пункты «от человека»: раздел «Нужно от человека», у старых отчётов — строки «От вас: …». */
 export function humanItems(sec) {
@@ -193,28 +201,39 @@ export function splitHtml(html, max = TG_MAX) {
   if (part !== null) parts.push(part);
   return parts;
 }
-/** Строки в пределах бюджета символов; не влезло — «…». */
-function fit(lines, budget) {
-  const out = []; let used = 0;
-  for (const l of lines) { if (used + l.length + 1 > budget) { out.push('…'); break; } out.push(l); used += l.length + 1; }
-  return out;
-}
-
 /** Прогресс изменения «1/2»: по ветке change/<имя>, если она есть, иначе по tasks.md в main. */
 export function changeProgress(projectDir, c) {
   const x = branchProgress(projectDir, c.name) || { done: c.tasksDone, open: c.tasksOpen };
   return `${x.done}/${x.done + x.open}`;
 }
+/** Прогресс словами для владельца (0.9.0): «сделано 1 из 2 шагов». */
+export function progressWords(projectDir, c) {
+  const [done, total] = changeProgress(projectDir, c).split('/').map(Number);
+  const mod10 = total % 10; const mod100 = total % 100;
+  return `сделано ${done} из ${total} ${mod10 === 1 && mod100 !== 11 ? 'шага' : 'шагов'}`;
+}
 /**
- * Название изменения для человека (0.7.4): «I40 «название пункта»», если изменение сделано по пункту списка предложений;
- * short — только номер пункта. Иначе — имя изменения. esc — экранирование для HTML.
+ * Название изменения для человека: «I40 «название пункта»», если изменение сделано по пункту списка предложений (0.7.4);
+ * short — только номер пункта. Без пункта (0.9.0) — первая фраза его описания (proposal), служебное имя — только если описания нет.
+ * esc — экранирование для HTML.
  */
 export function changeTitle(p, c, esc = (t) => t, { short = false } = {}) {
   const id = c.mcfly?.idea;
-  if (!id) return esc(c.name);
+  if (!id) {
+    const first = proposalExcerpt(c, 400).split(/(?<=[.!?])\s/)[0].replace(/[.:;]+$/, '').replace(/`/g, '');
+    return esc(first ? `«${truncate(first, short ? 50 : 80)}»` : c.name);
+  }
   if (short) return esc(id);
   const x = loadIdeas(p).ideas.find((i) => String(i.id) === String(id));
   return x ? `${esc(id)} «${esc(truncate(String(x.title || ''), 80))}»` : esc(id);
+}
+/**
+ * Подписи планов без пункта списка, ждущих одобрения (0.9.0): Map имя → «план» (один) или «план 1», «план 2» (несколько) —
+ * одна и та же подпись стоит в тексте и на кнопке, чтобы владелец их сопоставил без служебного имени.
+ */
+export function planLabels(changes) {
+  const plain = pendingApprovals(changes).filter((c) => !c.mcfly.idea);
+  return new Map(plain.map((c, i) => [c.name, plain.length > 1 ? `план ${i + 1}` : 'план']));
 }
 /** Следующая открытая задача изменения (0.7.4): по ветке change/<имя>, иначе по tasks.md в main; null — открытых нет. */
 export function nextTask(projectDir, c) {
@@ -227,9 +246,10 @@ export function nextTask(projectDir, c) {
 }
 /** Что будет в следующем прогоне: какие изменения команда продолжит или чего ей не хватает. esc — экранирование имён для HTML; label — подпись изменения. */
 export function nextRunText(work, pend, progress, esc = (t) => t, ideas = null, label = (c) => esc(c.name)) {
+  // 0.9.0: label даёт название для человека; вызовы передают changeTitle и progressWords
   if (work.length) return `команда продолжит ${work.map((c) => `${label(c)} (${progress(c)})`).join(', ')}`;
   if (ideas?.taken?.length) return `план по ${ideas.taken.map(esc).join(', ')}`;
-  if (pend.length) return `работы нет — одобрите ${pend.map((c) => esc(c.name)).join(', ')}`;
+  if (pend.length) return `работы нет — одобрите ${pend.map((c) => label(c)).join(', ')}`;
   if (ideas?.proposed > 0) return `работы нет — 💡 предложений ${ideas.proposed} (ваших ${ideas.owner}): выберите в «Предложениях»`;
   return 'работы нет — одобрите изменение или напишите команде заметку';
 }
@@ -240,8 +260,10 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   const changes = listChanges(p.openspecChanges);
   const questions = openQuestions(loadQuestions(p));
   const pend = pendingApprovals(changes);
+  const labels = planLabels(changes);
+  const numbered = (c) => (!c.mcfly.idea && labels.get(c.name) !== 'план' ? `${labels.get(c.name).replace('план', 'План')}: ` : '');
   const work = approvedWithWork(changes, now);
-  const progress = (c) => changeProgress(p.projectDir, c);
+  const progress = (c) => progressWords(p.projectDir, c);
   const reports = runs.filter((r) => !['missed', 'locked'].includes(r.status))
     .map((r) => ({ r, sec: reportSections(readText(path.join(p.runs, r.id || '', 'summary.md'), '')) })).filter((x) => x.sec)
     .sort((a, b) => new Date(a.r.started_at) - new Date(b.r.started_at));
@@ -263,7 +285,8 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
       : `Вопрос <b>${escHtml(q.id)}</b>: ${escHtml(q.text)} — без ответа по умолчанию, команда ждёт вас`);
   }
   for (const c of pend) {
-    need.push(`Одобрить <b>${changeTitle(p, c, escHtml)}</b>${c.mcfly.idea ? ` (${escHtml(c.name)})` : ''}: ${inline(proposalExcerpt(c, EXCERPT))}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
+    // 0.9.0: без служебного имени; у изменения без пункта списка название и есть начало описания — не повторяем
+    need.push(`Одобрить ${c.mcfly.idea ? `<b>${changeTitle(p, c, escHtml)}</b>: ` : `<b>${labels.get(c.name)}</b>: `}${inline(proposalExcerpt(c, EXCERPT))}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
   }
   // 0.7.8: предложения, ждущие решения, — из mcfly/ideas.yaml, а не из текста отчётов (текст устаревает, как только владелец решил)
   const proposedIds = cfg.ideas?.enabled ? ideaList.filter((x) => x.status === 'proposed').map((x) => escHtml(x.id)) : [];
@@ -289,9 +312,9 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
     if (questions.length || pend.length) L.push('<i>Кнопки — под сообщением; свой ответ: «Q1: текст»</i>');
   } else L.push('<b>🙋 От вас ничего не нужно</b>');
 
-  // 1а. Простыми словами — пересказ отчётов для человека, не читающего код: до четырёх последних прогонов.
-  const plainRuns = reports.map(({ r, sec }) => ({ r, text: plainWords(sec, PLAIN_SUMMARY_MAX) })).filter((x) => x.text).slice(-4);
-  if (plainRuns.length) L.push('', '<b>🗣 Простыми словами</b>', ...plainRuns.map(({ r, text }) => `<i>${escHtml(r.slot || hhmm(new Date(r.started_at)))}</i> — ${escHtml(text)}`));
+  // 1а. Простыми словами — пересказ отчётов для человека, не читающего код: до трёх последних прогонов, целиком (0.9.0).
+  const plainRuns = reports.map(({ r, sec }) => ({ r, text: plainWords(sec) })).filter((x) => x.text).slice(-3);
+  for (const { r, text } of plainRuns) L.push('', `<b>🗣 Прогон ${escHtml(r.slot || hhmm(new Date(r.started_at)))} простыми словами</b>`, plainHtml(text));
 
   // 2. Прогоны — строка со значком; пропущенные слоты по расписанию.
   L.push('', '<b>🌙 Прогоны</b>');
@@ -299,7 +322,7 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   const expected = since ? expectedSlots(since, now, cfg.schedule.slots).filter((e) => !covered.has(e.key)) : [];
   // 0.7.7: запись прогона появляется в конце — идущий прогон показываем по mcfly/.lock, иначе сводка во время него о нём молчит
   const live = cur?.id && !runs.some((r) => r.id === cur.id) && (!since || cur.since > since)
-    ? [{ at: cur.since, line: `▶️ ${hhmm(cur.since)} — идёт ${fmtDuration(Math.max(0, now - cur.since))}` }] : [];
+    ? [{ at: cur.since, line: `▶️ ${hhmm(cur.since)} — идёт сейчас, ${fmtDuration(Math.max(0, now - cur.since))}` }] : [];
   const lines = [...runs.map((r) => ({ at: new Date(r.started_at), line: runLine(r) })), ...live, ...expected.map((e) => ({ at: e.at || now, line: runLine({ status: 'missed', slot: e.slot, started_at: (e.at || now).toISOString() }) }))]
     .sort((a, b) => a.at - b.at).map((x) => x.line);
   L.push(...(lines.length ? lines : ['прогонов не было']));
@@ -307,7 +330,7 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   // 3. Изменения и следующий прогон.
   L.push('', '<b>📦 Изменения</b>');
   const period = aggregate(records, { since });
-  const ch = [...work.map((c) => `🔧 ${changeTitle(p, c, escHtml)} — ${progress(c)}`), ...pend.map((c) => `⏳ ${changeTitle(p, c, escHtml)} — ждёт одобрения`),
+  const ch = [...work.map((c) => `🔧 ${changeTitle(p, c, escHtml)} — ${progress(c)}`), ...pend.map((c) => `⏳ ${numbered(c)}${changeTitle(p, c, escHtml)} — ждёт одобрения`),
     ...pausedChanges(changes, now).map((c) => `⏸ ${changeTitle(p, c, escHtml)} — отложено до ${fmtDay(pausedUntil(c))}`)];
   const done = [period.events.changes_archived ? `изменений ${period.events.changes_archived}` : '', period.events.tasks_done ? `задач ${period.events.tasks_done}` : ''].filter(Boolean);
   if (done.length) ch.push(`🏁 За период завершено: ${done.join(', ')}`);
@@ -319,12 +342,6 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
     const parts = [ids('proposed') && `ждут решения: ${ids('proposed')}`, ids('taken') && `взяты, команда спланирует: ${ids('taken')}`].filter(Boolean);
     if (fresh.length) L.push(`💡 Новых предложений: ${fresh.length}${parts.length ? ` — ${parts.join('; ')}` : ''}`);
   }
-  // 0.7.8: число предложений — по списку (mcfly/ideas.yaml), а не по событиям ideas_added, которые агенты записывают сами и забывают
-  const total = aggregate(records);
-  if (cfg.ideas?.enabled) {
-    const added = (from) => ideaList.filter((x) => !from || new Date(x.created_at) > from).length;
-    for (const [agg, from] of [[period, since], [total, null]]) { if (added(from)) agg.events.ideas_added = added(from); else delete agg.events.ideas_added; }
-  }
   L.push('', `<b>🗓 Следующий прогон:</b> ${nextRunText(work, pend, progress, escHtml, ideasBrief(p, cfg), (c) => changeTitle(p, c, escHtml, { short: true }))}`);
   if (nightCurrent) {
     const lines = shiftSection(nightCurrent.path, 'Предложение на день');
@@ -332,39 +349,39 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   }
   if (day && (!since || shiftTime(day) > since) && /\(источник: авто\)/.test(readText(day.path, '').split('\n')[0])) L.push('⚠️ смену не сдали — ночь шла по авто-передаче');
 
-  // 4. Подробности свёрнуты: отчёты команды и метрики.
-  const agents = (a) => (a.subagents ? `, субагентов ${a.subagents}` : '');
-  const metrics = `<blockquote expandable>📊 За период: ${escHtml(formatEvents(period.events))}; ${escHtml(runsByStatus(period))}${agents(period)}, ~$${period.cost_usd}\nВсего: ${escHtml(formatEvents(total.events))}; ${escHtml(runsByStatus(total))}${agents(total)}, ~$${total.cost_usd}</blockquote>`;
-  const head = L.join('\n');
-  // Блоки «Отчёт» делят остаток лимита поровну. Если на блок меньше MIN_BLOCK или в какой-то блок не влез ни один пункт,
-  // старые отчёты не показываются (остаётся строка «Ещё отчётов»): лучше два полезных блока, чем шесть «…».
-  const avail = LIMIT - head.length - metrics.length;
-  const perBlock = (k) => Math.floor((avail - 60 * (k + 1)) / Math.max(1, k));
-  const reportBody = ({ sec }) => {
-    const body = [];
-    const doneLines = sec['Сделано'] || Object.values(sec).flat();
-    if (doneLines.length) body.push('Сделано:', ...doneLines.map((l) => `• ${inline(l)}`));
-    const wip = (sec['В работе'] || []).filter((l) => !/^(нет|одобренных изменений с открытыми задачами нет)\.?$/i.test(l));
-    if (wip.length) body.push('В работе:', ...wip.map((l) => `• ${inline(l)}`));
-    return body;
-  };
-  const withBody = reports.filter((x) => reportBody(x).length);
-  let blocks = [];
-  for (let k = withBody.length; k > 0; k--) {
-    if (perBlock(k) < MIN_BLOCK) continue;
-    const fitted = withBody.slice(-k).map((x) => ({ r: x.r, lines: fit(reportBody(x), perBlock(k)) }));
-    if (!fitted.every(({ lines }) => lines.some((l) => l.startsWith('• ')))) continue;
-    blocks = fitted.map(({ r, lines }) => `<blockquote expandable><b>Отчёт ${escHtml(r.slot || hhmm(new Date(r.started_at)))}</b>\n${lines.join('\n')}</blockquote>`);
-    break;
+  // 0.9.0: отчёты «Сделано» и метрики в Telegram не идут — они в techTail (терминал) и в файлах проекта.
+  return L.join('\n');
+}
+
+/**
+ * Технический хвост сводки простым текстом — только для терминала (`mcfly summary` без --send): прогоны со стоимостью, ходами
+ * и субагентами, метрики за период и всего, разделы «Сделано» и «В работе» отчётов. В Telegram не отправляется (0.9.0).
+ */
+export function techTail(p, cfg, { since = null } = {}) {
+  const records = readMetrics(p);
+  const runs = records.filter((r) => r.type === 'run' && (!since || new Date(r.started_at) > since));
+  const L = ['— Технические подробности (только в терминале) —'];
+  for (const r of runs) {
+    const note = r.status === 'error' ? `: ${truncate(String(r.note || r.error || '').split('; ')[0], 120)}` : '';
+    L.push(`${r.id || r.slot || hhmm(new Date(r.started_at))}: ${r.status}${note}${runStats(r)}${r.duration_ms ? `, ${fmtDuration(r.duration_ms)}` : ''}${r.attempts > 1 ? `, попыток ${r.attempts}` : ''}`);
   }
-  const assemble = () => {
-    const hidden = withBody.length - blocks.length;
-    const tail = [...blocks, ...(hidden ? [`<i>Ещё отчётов: ${hidden} — mcfly/runs</i>`] : [])];
-    return [head, ...(tail.length ? ['', ...tail] : []), '', metrics].join('\n');
-  };
-  let html = assemble();
-  while (html.length > LIMIT && blocks.length) { blocks.shift(); html = assemble(); }
-  return html;
+  const ideaList = loadIdeas(p).ideas;
+  const period = aggregate(records, { since }); const total = aggregate(records);
+  // 0.7.8: число предложений — по списку (mcfly/ideas.yaml), а не по событиям ideas_added, которые агенты записывают сами и забывают
+  if (cfg.ideas?.enabled) {
+    const added = (from) => ideaList.filter((x) => !from || new Date(x.created_at) > from).length;
+    for (const [agg, from] of [[period, since], [total, null]]) { if (added(from)) agg.events.ideas_added = added(from); else delete agg.events.ideas_added; }
+  }
+  const agents = (a) => (a.subagents ? `, субагентов ${a.subagents}` : '');
+  L.push(`За период: ${formatEvents(period.events)}; ${runsByStatus(period)}${agents(period)}, ~$${period.cost_usd}`);
+  L.push(`Всего: ${formatEvents(total.events)}; ${runsByStatus(total)}${agents(total)}, ~$${total.cost_usd}`);
+  for (const r of runs.filter((x) => !['missed', 'locked'].includes(x.status))) {
+    const sec = reportSections(readText(path.join(p.runs, r.id || '', 'summary.md'), '')); if (!sec) continue;
+    const wip = (sec['В работе'] || []).filter((l) => !isNone(l));
+    const body = [...(sec['Сделано'] || []).map((l) => `  • ${l}`), ...(wip.length ? ['  В работе:', ...wip.map((l) => `  • ${l}`)] : [])];
+    if (body.length) L.push(`Отчёт ${r.slot || hhmm(new Date(r.started_at))} (mcfly/runs/${r.id}/summary.md):`, ...body);
+  }
+  return L.join('\n');
 }
 
 /** Кнопки под сводкой и «статусом»: ответ по умолчанию на вопрос и одобрение/отклонение изменения. */
@@ -374,10 +391,10 @@ export function summaryKeyboard(p, cfg) {
   for (const q of openQuestions(loadQuestions(p))) {
     if (autoDefault(cfg, q.category) && q.default && fitsData(`qd:${q.id}`)) rows.push([{ text: `✅ ${q.id}: по умолчанию`, callback_data: `qd:${q.id}` }]);
   }
-  const changes = listChanges(p.openspecChanges); const pend = pendingApprovals(changes);
+  const changes = listChanges(p.openspecChanges); const pend = pendingApprovals(changes); const labels = planLabels(changes);
   for (const c of pend) {
     // План по пункту списка (0.7.0): «отклонить» значит «не сейчас» — пункт уходит на обсуждение в сессии
-    if (fitsData(`ap:${c.name}`)) rows.push([{ text: `✅ Одобрить ${c.mcfly.idea ? `${c.mcfly.idea} (${c.name})` : c.name}`, callback_data: `ap:${c.name}` }, { text: c.mcfly.idea ? '⏸ Не сейчас' : '❌ Отклонить', callback_data: `rj:${c.name}` }]);
+    if (fitsData(`ap:${c.name}`)) rows.push([{ text: `✅ Одобрить ${c.mcfly.idea || labels.get(c.name)}`, callback_data: `ap:${c.name}` }, { text: c.mcfly.idea ? '⏸ Не сейчас' : '❌ Отклонить', callback_data: `rj:${c.name}` }]);
   }
   if (!pend.length && !approvedWithWork(changes).length && ideasBrief(p, cfg)?.proposed > 0) rows.push([{ text: '💡 Предложения', callback_data: 'il:1' }]);
   return rows;
