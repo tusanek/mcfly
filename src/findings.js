@@ -70,17 +70,35 @@ export function inboxPath(cfg) {
 /**
  * Почему в этот файл писать нельзя, или '' — можно. Путь ящика берётся из mcfly/config.yaml проекта, а текст находки пишут агенты:
  * без проверки правка настройки позволила бы дописывать чужой текст в любой файл владельца (настройки оболочки, ключи).
- * Поэтому ящик — только файл .md в домашнем каталоге, не в скрытой папке, не ссылка и не через папку-ссылку наружу.
+ * Поэтому ящик — только файл .md в домашнем каталоге: не в скрытой папке, не внутри проекта (папки с .git), не файл правил
+ * для агентов, не ссылка и не через папку-ссылку наружу.
  */
+const RULES_FILE = /^(claude|agents|gemini|memory|skill|readme|changelog|backlog)(\.local)?\.md$/i;
 export function inboxProblem(file) {
-  const real = (d) => { try { return fs.realpathSync(d); } catch { return d; } };
-  const home = real(os.homedir());
-  const inside = (f) => { const rel = path.relative(home, f); return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : null; };
-  if (!/\.md$/i.test(file)) return 'ящик должен быть файлом .md';
-  const rel = inside(path.join(real(path.dirname(file)), path.basename(file))) && inside(path.join(real(path.dirname(path.dirname(file))), path.basename(path.dirname(file)), path.basename(file)));
-  if (!rel) return 'ящик должен лежать в вашем домашнем каталоге';
+  const base = path.basename(file);
+  if (!/\.md$/i.test(base)) return 'ящик должен быть файлом .md';
+  // Файлы, которые читают агенты как правила или описание проекта: чужой текст в них стал бы для них указанием
+  if (RULES_FILE.test(base)) return 'ящик не может быть файлом правил или описания проекта (CLAUDE.md, AGENTS.md, README.md и подобные)';
+  let home; try { home = fs.realpathSync(os.homedir()); } catch { return 'домашний каталог недоступен'; }
+  // Настоящий путь: самая глубокая существующая папка — через realpath (ссылки раскрыты), остаток пути — как есть.
+  // Папок остатка ещё нет, значит ссылок среди них нет; любая другая ошибка — отказ.
+  const rest = []; let dir = path.dirname(path.resolve(file));
+  for (;;) {
+    try { dir = fs.realpathSync(dir); break; } catch (e) {
+      const up = path.dirname(dir);
+      if (e.code !== 'ENOENT' || up === dir) return `ящик недоступен: ${e.code || e.message}`;
+      rest.unshift(path.basename(dir)); dir = up;
+    }
+  }
+  const full = path.join(dir, ...rest, base);
+  const rel = path.relative(home, full);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return 'ящик должен лежать в вашем домашнем каталоге';
   if (rel.split(path.sep).some((s) => s.startsWith('.'))) return 'ящик не может лежать в скрытой папке или быть скрытым файлом';
-  try { const st = fs.lstatSync(file); if (st.isSymbolicLink() || !st.isFile()) return 'ящик должен быть обычным файлом, не ссылкой и не папкой'; } catch (e) { if (e.code !== 'ENOENT') return `ящик недоступен: ${e.code}`; }
+  // Внутри проекта (папка с .git между домашним каталогом и файлом) ящику не место: его текст попал бы в коммиты и к агентам проекта
+  for (let d = path.dirname(full); d !== home && d.length > home.length; d = path.dirname(d)) {
+    if (fs.existsSync(path.join(d, '.git'))) return 'ящик не может лежать внутри проекта (папки с .git)';
+  }
+  try { const st = fs.lstatSync(full); if (st.isSymbolicLink() || !st.isFile()) return 'ящик должен быть обычным файлом, не ссылкой и не папкой'; } catch (e) { if (e.code !== 'ENOENT') return `ящик недоступен: ${e.code}`; }
   return '';
 }
 const INBOX_HEAD = `# Входящие для доработки mcfly
@@ -101,10 +119,17 @@ export function appendToInbox(cfg, item, { now = new Date() } = {}) {
   const from = { run: 'заметила команда в прогоне', session: 'заметила сессия Claude Code', owner: 'написал владелец' }[item.source] || '';
   const line = `- [ ] **${first}**${rest ? ` ${rest}` : ''}${item.evidence ? ` Что видели: ${item.evidence}` : ''} _(${[item.id, from].filter(Boolean).join(', ')})_`;
   withFileLock(`${file}.lock`, () => {
-    const cur = exists(file) ? readText(file, '') : INBOX_HEAD;
-    const lastHead = cur.split('\n').filter((l) => /^## /.test(l)).at(-1);
-    const body = cur.endsWith('\n') ? cur : `${cur}\n`;
-    writeText(file, lastHead === head ? `${body}${line}\n` : `${body}\n${head}\n\nОдобрено владельцем ${fmtDay(now)}.\n\n${line}\n`);
+    // Только дописываем, и без перехода по ссылке (O_NOFOLLOW): ссылку, подложенную между проверкой и записью, не откроем
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const fd = fs.openSync(file, fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_APPEND | fs.constants.O_NOFOLLOW, 0o644);
+    try {
+      if (!fs.fstatSync(fd).isFile()) throw new Error('ящик должен быть обычным файлом');
+      const cur = fs.readFileSync(fd, 'utf8') || INBOX_HEAD;
+      const fresh = !fs.fstatSync(fd).size;
+      const lastHead = cur.split('\n').filter((l) => /^## /.test(l)).at(-1);
+      const gap = cur.endsWith('\n') ? '' : '\n';
+      fs.writeSync(fd, `${fresh ? INBOX_HEAD : ''}${gap}${lastHead === head ? `${line}\n` : `\n${head}\n\nОдобрено владельцем ${fmtDay(now)}.\n\n${line}\n`}`);
+    } finally { fs.closeSync(fd); }
   });
   return file;
 }
