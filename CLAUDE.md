@@ -9,6 +9,7 @@
 - commands/, hooks/hooks.json, .claude-plugin/ - слэш-команды, хук SessionStart, описание плагина.
 - src/ - код CLI (вход src/cli.js, прогон src/runner.js, Telegram src/telegram.js и src/pull.js). Карта модулей: src/CLAUDE.md.
 - test/ - тесты: `npm test`.
+- video/ - шаблон ролика-сводки (Remotion) и скрипт озвучки (Silero); `mcfly video setup` ставит их в ~/.mcfly/video.
 - templates/ - что `mcfly init` кладёт в чужой проект (config.yaml, CLAUDE.snippet.md, settings.json).
 - docs/superpowers/ - планы и проекты (specs) крупных доработок. Список документов: docs/README.md.
 - Долги и отложенное: docs/BACKLOG.md.

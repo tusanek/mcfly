@@ -1,0 +1,13 @@
+{
+  "name": "mcfly-video",
+  "version": "1.0.0",
+  "description": "Шаблон ролика-сводки mcfly: ставится командой mcfly video setup в ~/.mcfly/video/app",
+  "private": true,
+  "dependencies": {
+    "@remotion/cli": "4.0.544",
+    "@remotion/media": "4.0.544",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.544"
+  }
+}
