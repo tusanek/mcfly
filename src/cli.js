@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { loadIdeas, saveIdeas, addIdea, findIdea, transitionIdea, IDEA_STATUS_RU } from './ideas.js';
@@ -27,7 +28,8 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   init [--name <проект>] [--with-tracker]        создать mcfly/ в проекте, настроить .claude и OpenSpec
   doctor [--probe]                                проверить окружение (--probe: реальный пробный запуск claude -p)
   run [--mode night|day] [--dry-run]              запустить прогон команды (night проверяет окно слота)
-  summary [--weekly] [--send]                     собрать (и отправить в Telegram) утреннюю сводку; --weekly — недельную (итоги семи дней)
+  summary [--weekly [--list]] [--send]            собрать (и отправить в Telegram) утреннюю сводку; --weekly — недельную (итоги семи дней);
+                                                  --weekly --list — только полный список недели (виджет Telegram)
   answers [--once]                                забирать ответы из Telegram сразу по приходу ~answers_every_minutes мин (задание launchd); --once — один раз
   context                                         контекст состояния для агентов
   status                                          состояние проекта
@@ -59,7 +61,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
 
 export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
-    project: { type: 'string' }, mode: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, weekly: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
+    project: { type: 'string' }, mode: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, weekly: { type: 'boolean' }, list: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
     change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
@@ -104,6 +106,22 @@ export async function main(argv) {
   switch (cmd) {
     case 'run': { const r = await run({ projectDir, mode: values.mode || 'day', dryRun: !!values['dry-run'], now, log }); return ['ok', 'dry-run', 'missed'].includes(r.status) ? 0 : 1; }
     case 'summary': {
+      if (values.weekly && values.list) {
+        // Только полный список недели: без --send — файл виджета для просмотра в браузере и его размер, с --send — отправить
+        const { weeklyData, sendWeeklyList } = await import('./weekly.js'); const { weeklyWidget, weeklyListHtml, packedSize } = await import('./widget.js');
+        const data = weeklyData(p, cfg, { now });
+        if (values.send) {
+          const token = process.env[cfg.telegram.token_env];
+          if (!token || !cfg.telegram.chat_id) { console.error('Telegram не настроен: нет токена или chat_id.'); return 1; }
+          const { createTelegram } = await import('./telegram.js');
+          return (await sendWeeklyList(cfg, { data, tg: createTelegram({ token }), log })) ? 0 : 1;
+        }
+        const w = weeklyWidget(data, cfg);
+        if (!w) { log(htmlToPlain(weeklyListHtml(data, cfg)) || 'За неделю завершённых изменений нет.'); return 0; }
+        const file = path.join(os.tmpdir(), `mcfly-weekly-widget-${cfg.project.replace(/[^\p{L}\p{N}_-]+/gu, '-')}.html`);
+        fs.writeFileSync(file, w.html);
+        log(`${w.caption}\nВиджет: ${file} (${Buffer.byteLength(w.html)} байт, после сжатия ${packedSize(w.html)} из 4096)`); return 0;
+      }
       if (values.weekly) { const { sendWeekly, composeWeekly } = await import('./weekly.js'); if (values.send) await sendWeekly(p, cfg, { now, log }); else log(htmlToPlain(composeWeekly(p, cfg, { now }))); return 0; }
       if (values.send) await sendSummary(p, cfg, { now, log }); else { const since = new Date(now.getTime() - 24 * 3600_000); log(htmlToPlain(composeSummary(p, cfg, { now, since }))); log(`\n${techTail(p, cfg, { since })}`); } return 0; }
     case 'answers': {

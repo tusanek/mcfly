@@ -81,11 +81,16 @@ test('weeklyData: пропуски считаются только с перво
 test('sendWeekly: отправляет текст, запоминает цели — следующая сводка показывает прирост; ролик только при video.enabled', async () => {
   process.env.TOK_WEEKLY = 'x';
   const p = project(); const sent = []; const clips = [];
-  const tg = { sendMessage: async (chat, text, opts) => { sent.push({ chat, text, opts }); return [{ message_id: 5 }]; } };
+  const widgets = [];
+  const tg = { sendMessage: async (chat, text, opts) => { sent.push({ chat, text, opts }); return [{ message_id: 5 }]; }, sendWidget: async (chat, html, opts) => { widgets.push({ chat, html, opts }); } };
   const video = async (pp, c, o) => { clips.push(o); return { sent: true }; };
   const r = await sendWeekly(p, cfg, { now: NOW, telegram: tg, log: () => {}, video });
   assert.equal(r.sent, true);
   assert.equal(r.video, null);
+  assert.equal(r.list, 'widget');
+  assert.equal(widgets.length, 1);
+  assert.equal(widgets[0].opts.replyTo, 5);
+  assert.match(widgets[0].html, /Бот здоровается с владельцем/);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].opts.html, true);
   assert.equal(loadState(p).weekly_goals_done, 2);

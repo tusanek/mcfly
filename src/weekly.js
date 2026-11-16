@@ -11,6 +11,7 @@ import { enqueueNotice } from './notices.js';
 import { parseGoals } from './overview.js';
 import { escHtml, inline, htmlToPlain, splitHtml, changeTitle, progressWords, STATUS_COUNT_RU } from './summary.js';
 import { sendSummaryVideo } from './video.js';
+import { weeklyWidget, weeklyListHtml } from './widget.js';
 
 // 0.13.0: недельная сводка — раз в неделю (schedule.weekly_day, schedule.weekly_at), итог за семь дней: что завершено, что в работе,
 // продвижение по целям, прогоны и их исход, что ждёт владельца, расход лимита подписки. При video.enabled — ещё и роликом.
@@ -21,19 +22,23 @@ const SHOW_CLOSED = 10; // завершённых изменений поимё�
 const FIX_LIKE = /(?<![\p{L}\p{N}])(не пада|не лома|не теря|не да[её]т|не зависа|ошибк|исправ|почин|сбо[йея]|запрет|ужесточ|защит|баг|уязвим|рефактор|тест[ыоа]|чистк|журнал|логи)/iu;
 const SIZE_RANK = { L: 3, M: 2, S: 1 };
 /**
- * Заметные новые возможности из завершённых изменений — для ролика: не исправление по названию и либо есть образец «как это
- * выглядит» (сообщение или кнопки), либо пункт из бэклога владельца. Исправления и невидимые технические доработки сюда не входят.
- * [{ title, benefit, sample: { text, buttons } | null, weight }] в порядке завершения; weight — что показывать первым, если все не влезут.
+ * Завершённые изменения для ролика и полного списка: [{ title, benefit, sample: { text, buttons } | null, weight, notable }]
+ * в порядке завершения. notable — заметная новая возможность: не исправление по названию и либо есть образец «как это выглядит»
+ * (сообщение или кнопки), либо пункт из бэклога владельца. Остальное — исправления и невидимые технические доработки.
+ * weight — что показывать в ролике первым, если все не влезут.
  */
-export function notableFeatures(p, archived, ideas) {
+export function closedItems(p, archived, ideas) {
   const out = [];
   for (const c of archived) {
     const idea = c.mcfly?.idea ? ideas.find((x) => String(x.id) === String(c.mcfly.idea)) : null;
-    const title = idea ? String(idea.title || '') : changeTitle(p, c).replace(/^«|»$/g, '');
+    const named = idea ? String(idea.title || '') : '';
+    // Без пункта списка название — первая фраза описания: пользу из того же описания не повторяем
+    const own1 = changeTitle(p, c).replace(/^«|»$/g, '');
+    const title = named || own1.charAt(0).toUpperCase() + own1.slice(1);
     const sample = proposalSamples(c).find((x) => x.text) || proposalSamples(c).find((x) => x.buttons.length) || null;
     const own = idea?.source === 'owner-backlog';
-    if (!title || FIX_LIKE.test(title) || !(sample || own)) continue;
-    out.push({ title, benefit: String(idea?.benefit || proposalExcerpt(c, 200) || ''), sample: sample ? { text: sample.text, buttons: sample.buttons } : null, weight: (own ? 10 : 0) + (SIZE_RANK[idea?.size] || 1) + (sample ? 1 : 0) });
+    out.push({ title, benefit: String(idea?.benefit || (named ? proposalExcerpt(c, 200) : '') || '').replace(/`/g, ''), sample: sample ? { text: sample.text, buttons: sample.buttons } : null,
+      weight: (own ? 10 : 0) + (SIZE_RANK[idea?.size] || 1) + (sample ? 1 : 0), notable: !FIX_LIKE.test(title) && !!(sample || own) });
   }
   return out;
 }
@@ -45,7 +50,8 @@ const pct = (x) => Math.round(Number(x) * 100);
  * Данные недельной сводки и её текст (html). since — начало периода, по умолчанию неделя назад.
  * closed — названия завершённых изменений; goals — { done, total, delta, milestone } или null (delta — прирост с прошлой недельной
  * сводки, null — сравнить не с чем); runs — { total, stats: { статус: сколько }, workMs }; waiting — { questions, pending, proposed };
- * usage — { now, at, peak, quotaStops } или null; features — заметные новые возможности с образцом (для ролика, см. notableFeatures).
+ * usage — { now, at, peak, quotaStops } или null; items — все завершённые изменения с пользой (для полного списка), features — из них
+ * заметные новые возможности (для ролика); см. closedItems.
  */
 export function weeklyData(p, cfg, { now = new Date(), since = new Date(now.getTime() - WEEK_MS) } = {}) {
   const records = readMetrics(p);
@@ -80,7 +86,8 @@ export function weeklyData(p, cfg, { now = new Date(), since = new Date(now.getT
   const week = measured.filter((r) => new Date(r.started_at) > since).map((r) => Number(r.usage.seven_day));
   const usage = last ? { now: Number(last.usage.seven_day), at: new Date(last.ended_at || last.started_at), peak: week.length ? Math.max(...week) : null, quotaStops: stats.quota || 0 } : null;
 
-  const features = notableFeatures(p, archived, loadIdeas(p).ideas);
+  const items = closedItems(p, archived, loadIdeas(p).ideas);
+  const features = items.filter((x) => x.notable);
 
   const L = [`📅 <b>${escHtml(cfg.project)}</b> · итоги недели ${dm(since)}–${dm(now)}`, ''];
   L.push(`<b>🏁 Завершено за неделю${closed.length ? ` (${closed.length})` : ''}</b>`);
@@ -110,10 +117,34 @@ export function weeklyData(p, cfg, { now = new Date(), since = new Date(now.getT
     L.push(`Недельный лимит занят на ${pct(usage.now)} % <i>(замер ${fmtShort(usage.at)})</i>${usage.peak != null && usage.peak > usage.now ? `, за неделю доходил до ${pct(usage.peak)} %` : ''}`);
     if (usage.quotaStops) L.push(`Прогонов, остановленных из-за лимита: ${usage.quotaStops}`);
   }
-  return { html: L.join('\n'), since, now, closed, tasksDone, work, goals, runs: { total, stats, workMs }, waiting: { questions, pending, proposed }, usage, features };
+  return { html: L.join('\n'), since, now, closed, tasksDone, work, goals, runs: { total, stats, workMs }, waiting: { questions, pending, proposed }, usage, features, items };
 }
 
 export function composeWeekly(p, cfg, opts = {}) { return weeklyData(p, cfg, opts).html; }
+
+/**
+ * Полный список завершённого за неделю отдельным сообщением (schedule.weekly_list): widget — виджетом Telegram с вкладками
+ * и листанием; не принят (старый клиент API, не личный чат, не влез) — тем же списком обычным текстом; text — сразу текстом;
+ * off — не присылать. Никогда не бросает исключение. Возвращает 'widget' | 'text' | null.
+ */
+export async function sendWeeklyList(cfg, { data, tg, replyTo = null, log = console.log }) {
+  const mode = cfg.schedule.weekly_list;
+  if (mode === 'off' || !data.items?.length) return null;
+  if (mode === 'widget') {
+    const w = weeklyWidget(data, cfg);
+    try {
+      if (!w) throw new Error('список не влез в предел размера виджета');
+      await tg.sendWidget(cfg.telegram.chat_id, w.html, { caption: w.caption, replyTo });
+      log(`Список недели отправлен виджетом (пунктов ${w.shown} из ${w.total}).`);
+      return 'widget';
+    } catch (e) { log(`Виджет со списком недели не отправлен: ${truncate(String(e?.message || e), 300)}; отправляю список текстом.`); }
+  }
+  try {
+    for (const part of splitHtml(weeklyListHtml(data, cfg))) await tg.sendMessage(cfg.telegram.chat_id, part, { html: true });
+    log('Список недели отправлен текстом.');
+    return 'text';
+  } catch (e) { log(`Список недели не отправлен: ${truncate(String(e?.message || e), 300)}`); return null; }
+}
 
 /**
  * Отправить недельную сводку в Telegram; без токена или chat_id — в консоль. Запоминает, сколько пунктов целей сделано, —
@@ -137,6 +168,7 @@ export async function sendWeekly(p, cfg, { now = new Date(), telegram = null, lo
   if (data.goals) state.weekly_goals_done = data.goals.done;
   saveState(p, state);
   log(`Недельная сводка отправлена (${html.length} символов).`);
+  const list = await sendWeeklyList(cfg, { data, tg, replyTo: firstId, log });
   const clip = cfg.video?.enabled ? await video(p, cfg, { data, tg, now, replyTo: firstId, log, weekly: true }) : null;
-  return { sent: true, text: html, video: clip };
+  return { sent: true, text: html, list, video: clip };
 }

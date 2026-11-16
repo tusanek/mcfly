@@ -71,6 +71,16 @@ export function createTelegram({ token, fetchImpl = globalThis.fetch, timeoutMs 
       if (!data?.ok) throw new Error(`Telegram sendVideo: ${data?.description || res.status}`);
       return data.result;
     },
+    /**
+     * Виджет — страница HTML прямо в сообщении (Bot API 10.4, 0.14.0). Пределы размера проверяет сервер; сейчас виджеты принимает
+     * только личный чат с ботом. Подпись обязательна по смыслу: её показывают список чатов, уведомления и приложения без виджетов.
+     */
+    sendWidget(chatId, html, { caption = '', replyTo = null } = {}) {
+      const body = { chat_id: chatId, html };
+      if (caption) body.caption = caption;
+      if (replyTo) body.reply_parameters = { message_id: replyTo, allow_sending_without_reply: true };
+      return call('sendWidget', body);
+    },
     getUpdates(offset = 0, timeoutSec = 0) { return call('getUpdates', { offset, timeout: timeoutSec, allowed_updates: ['message', 'callback_query'] }); },
     answerCallbackQuery(id, text = '') { return call('answerCallbackQuery', { callback_query_id: id, text }); },
     /** Меню команд «/» в чате с ботом: [{ command, description }]. */
