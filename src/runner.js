@@ -13,7 +13,7 @@ import { buildLeadPrompt, MCFLY_ROOT } from './prompt.js';
 import { appendMetric, runStats, readMetrics } from './metrics.js';
 import { activeDayHandoff, latestShift, renderAutoHandoff, writeShift, shiftFileName } from './shift-files.js';
 import { loadQuestions, saveQuestions, expireQuestions, openQuestions } from './questions.js';
-import { listChanges, expireApprovals, approvedWithWork, pendingApprovals, proposalExcerpt, approvalDeadline, isAutoApprovable } from './approvals.js';
+import { listChanges, expireApprovals, approvedWithWork, pendingApprovals, proposalExcerpt, approvalDeadline, isAutoApprovable, isPaused } from './approvals.js';
 import { pullAnswers, errorLine, spawnDayRun } from './pull.js';
 import { createTelegram } from './telegram.js';
 import { ensureVpn } from './vpn.js';
@@ -174,10 +174,32 @@ export function writeFallbackSummary({ projectDir, runDir, id, started, resultTe
   return true;
 }
 
-export function runOpenspecValidate(projectDir) {
-  const r = spawnSync('openspec', ['validate', '--all', '--strict', '--json'], { cwd: projectDir, encoding: 'utf8' });
+/** Итог проверки планов (0.14.1): отложенные владельцем изменения ошибкой не считаются; failed — имена того, что не прошло. Вывод не разобрать — решает код выхода. */
+export function validateVerdict(stdout, status, paused = []) {
+  let items;
+  try { items = JSON.parse(stdout).items; } catch { /* не JSON — ниже по коду выхода */ }
+  if (!Array.isArray(items)) return { ok: status === 0, failed: [], skipped: [] };
+  const bad = items.filter((i) => i && i.valid === false);
+  const isSkipped = (i) => i.type !== 'spec' && paused.includes(i.id);
+  const failed = bad.filter((i) => !isSkipped(i)).map((i) => (i.type === 'spec' ? `спецификация ${i.id}` : String(i.id)));
+  return { ok: failed.length === 0, failed, skipped: bad.filter(isSkipped).map((i) => String(i.id)) };
+}
+
+/** Заметка прогона о проверке планов: пусто, если ошибок нет или openspec не запускается. */
+export function validateNote(v) {
+  if (!v.available || v.ok !== false) return '';
+  return v.failed?.length ? `openspec validate: ошибки в ${truncate(v.failed.join(', '), 160)}` : 'openspec validate: есть ошибки';
+}
+
+export function runOpenspecValidate(projectDir, { paused = [] } = {}) {
+  const r = spawnSync('openspec', ['validate', '--all', '--strict', '--json'], { cwd: projectDir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   if (r.error) return { available: false, ok: null, output: String(r.error) };
-  return { available: true, ok: r.status === 0, output: String(r.stdout || r.stderr || '').slice(0, 20000) };
+  return { available: true, ...validateVerdict(String(r.stdout || ''), r.status, paused), output: String(r.stdout || r.stderr || '').slice(0, 20000) };
+}
+
+/** Имена отложенных изменений; битые метаданные не должны срывать запись прогона. */
+function pausedNames(p) {
+  try { return listChanges(p.openspecChanges).filter((c) => isPaused(c)).map((c) => c.name); } catch { return []; }
 }
 
 const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -391,7 +413,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     }
     logStream.end(); eventsStream.end();
     const fallback = writeFallbackSummary({ projectDir, runDir, id, started, resultText: parsed.resultText || parsed.errorText });
-    const validate = runOpenspecValidate(projectDir);
+    const validate = runOpenspecValidate(projectDir, { paused: pausedNames(p) });
     fs.writeFileSync(path.join(runDir, 'validate.json'), JSON.stringify(validate, null, 2));
     // Служебные файлы (журнал, метрики, каталоги прогонов, метаданные одобрений) runner коммитит сам — это не забытая работа.
     const committedByRunner = new Set(approvalMeta(projectDir));
@@ -400,7 +422,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const record = {
       id, mode, slot, started_at: started.toISOString(), ended_at: new Date().toISOString(), status: parsed.status, attempts, duration_ms: Date.now() - started.getTime(), exit_code: result.exitCode,
       cost_usd: costUsd, turns, usage, ...(chained ? { chained: true } : {}), permission_denials: denials, subagents: parsed.subagents, session_id: parsed.sessionId, validate_ok: validate.ok, dirty_files: dirty, error: parsed.errorText,
-      note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', ...new Set(vpnNotes), denials ? `отказов разрешений: ${denials}` : '', fallback ? 'репортёр не написал отчёт, записана авто-сводка' : '', validate.available && validate.ok === false ? 'openspec validate: есть ошибки' : '',
+      note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', ...new Set(vpnNotes), denials ? `отказов разрешений: ${denials}` : '', fallback ? 'репортёр не написал отчёт, записана авто-сводка' : '', validateNote(validate),
         dirty ? `незакоммиченных файлов: ${dirty}` : '', unfinished.length ? `незакоммиченная работа в worktree: ${unfinished.map(describeWorktree).join(', ')}` : ''].filter(Boolean).join('; '),
     };
     // Цепочка: решение до записи — причина попадает в журнал и итог прогона.

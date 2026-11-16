@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import path from 'node:path';
-import { run, acquireLock, releaseLock, commitRunState, recordRun, writeFallbackSummary, currentRun } from '../src/runner.js';
+import { run, acquireLock, releaseLock, commitRunState, recordRun, writeFallbackSummary, currentRun, validateVerdict, validateNote } from '../src/runner.js';
 import { spawn, spawnSync } from 'node:child_process';
 import { paths } from '../src/state.js';
 import { readMetrics } from '../src/metrics.js';
@@ -396,4 +396,28 @@ test('0.7.0: finishIdeas не роняет конец прогона при сб
   const p = paths(bareProject());
   fs.writeFileSync(p.ideas, 'ideas:\n  - \n'); // пустой элемент после ручной правки
   assert.deepEqual(finishIdeas(p, cfg6), []);
+});
+
+const validateJson = (...items) => JSON.stringify({ items: items.map(([id, valid, type = 'change']) => ({ id, type, valid, issues: [] })) });
+
+test('0.14.1: проверка планов не считает ошибкой отложенное изменение', () => {
+  const v = validateVerdict(validateJson(['add-x', true], ['later', false], ['core', true, 'spec']), 1, ['later']);
+  assert.equal(v.ok, true); assert.deepEqual(v.failed, []); assert.deepEqual(v.skipped, ['later']);
+  assert.equal(validateNote({ available: true, ...v }), '');
+});
+
+test('0.14.1: заметка прогона называет, что не прошло проверку; отложенное в неё не попадает', () => {
+  const v = validateVerdict(validateJson(['add-x', false], ['later', false], ['core', false, 'spec']), 1, ['later']);
+  assert.equal(v.ok, false); assert.deepEqual(v.failed, ['add-x', 'спецификация core']);
+  assert.equal(validateNote({ available: true, ...v }), 'openspec validate: ошибки в add-x, спецификация core');
+  // спецификация с тем же именем, что отложенное изменение, — всё равно ошибка
+  assert.equal(validateVerdict(validateJson(['later', false, 'spec']), 1, ['later']).ok, false);
+});
+
+test('0.14.1: вывод проверки не разобрать — решает код выхода, заметка без имён', () => {
+  assert.equal(validateVerdict('', 0, []).ok, true);
+  const v = validateVerdict('Error: boom', 1, ['later']);
+  assert.equal(v.ok, false); assert.deepEqual(v.failed, []);
+  assert.equal(validateNote({ available: true, ...v }), 'openspec validate: есть ошибки');
+  assert.equal(validateNote({ available: false, ok: null }), '');
 });
