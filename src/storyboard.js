@@ -22,7 +22,7 @@ const norm = (t) => String(t).replace(/\s+/g, ' ').trim();
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const str = (x) => typeof x === 'string';
 /** Список сцен из того, что написал режиссёр: сам список или { scenes }. */
-const sceneList = (raw) => (Array.isArray(raw) ? raw : isObj(raw) && Array.isArray(raw.scenes) ? raw.scenes : null);
+export const sceneList = (raw) => (Array.isArray(raw) ? raw : isObj(raw) && Array.isArray(raw.scenes) ? raw.scenes : null);
 
 /** Образцы экрана чата в данных сводки: утром — demos, в недельной — features[].sample. */
 function samples(data, weekly) {
