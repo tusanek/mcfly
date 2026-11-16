@@ -34,10 +34,16 @@ function fakeHome() {
 }
 /** Подставной запуск: «озвучка» пишет длительности, «сборка» — файл ролика. */
 const fakeRun = (calls = []) => async (bin, args, opts) => {
-  calls.push({ bin, args, opts });
+  const call = { bin, args, opts }; calls.push(call);
   if (opts.label === 'озвучка') fs.writeFileSync(args[4], JSON.stringify(Object.fromEntries(Object.keys(JSON.parse(fs.readFileSync(args[2], 'utf8'))).map((k) => [k, 2]))));
-  else fs.writeFileSync(args[4], 'mp4');
+  else if (opts.label === 'сборка ролика') { call.props = JSON.parse(fs.readFileSync(args.find((a) => a.startsWith('--props=')).slice(8), 'utf8')); fs.writeFileSync(args[4], 'mp4'); }
 };
+/** Свойства, с которыми собран ролик из этих сцен. */
+async function builtProps(scenes, video = {}) {
+  const calls = [];
+  await buildVideo({ ...cfg, video: { ...cfg.video, ...video } }, { scenes, name: 'props-test', now: NOW, run: fakeRun(calls), vp: fakeHome() });
+  return calls.find((c) => c.props).props;
+}
 
 test('summaryScenes: главное — что сделано и как это выглядит; диктору — только русские слова', () => {
   const scenes = summaryScenes(DATA, cfg, { now: NOW });
@@ -81,12 +87,12 @@ test('демонстрация: образец изменения — сцена
   assert.equal(demo.kind, 'chat');
   assert.deepEqual(demo.chat, { text: SAMPLE.text, buttons: [['Убрать 1', 'Вернуть']] });
   assert.deepEqual(demo.lines, ['Ты нажал «Убрать 2»']);
-  assert.equal(demo.speech, 'Вот как это выглядит.');
+  assert.equal(demo.speech, 'Вот пример. Ты нажал «Убрать два».');
   assert.ok(demo.hold >= 3.5);
   // два изменения — по главному образцу от каждого; одно — два его первых образца
   const two = summaryScenes({ ...DATA, demos: [SAMPLE, { ...SAMPLE, title: 'второй' }, { ...SAMPLE, change: 'другое', title: 'из другого' }] }, cfg, { now: NOW }).filter((s) => s.kind === 'chat');
   assert.deepEqual(two.map((s) => s.lines[0]), ['Ты нажал «Убрать 2»', 'из другого']);
-  assert.equal(two[1].speech, 'И ещё один пример.');
+  assert.equal(two[1].speech, 'И ещё пример. Из другого.');
   const one = summaryScenes({ ...DATA, demos: [SAMPLE, { ...SAMPLE, title: 'второй' }, { ...SAMPLE, title: 'третий' }] }, cfg, { now: NOW }).filter((s) => s.kind === 'chat');
   assert.deepEqual(one.map((s) => s.lines[0]), ['Ты нажал «Убрать 2»', 'второй']);
 });
@@ -138,10 +144,11 @@ test('buildVideo: озвучка → длительности → сборка; 
   assert.equal(r.file, path.join(vp.out, 'summary-test.mp4'));
   assert.ok(fs.existsSync(r.file));
   assert.ok(r.seconds >= 10);
-  assert.deepEqual(calls.map((c) => c.opts.label), ['озвучка', 'сборка ролика']);
+  assert.deepEqual(calls.map((c) => c.opts.label), ['озвучка', 'ускорение голоса', 'сборка ролика']);
+  assert.ok(calls[1].args.includes('atempo=1.1'));
   assert.equal(calls[0].args[0], '-I'); // питон без подхвата модулей из текущей папки
   assert.equal(calls[0].args[5], 'eugene');
-  assert.ok(calls[1].args.some((a) => a.startsWith('--props=')));
+  assert.ok(calls[2].args.some((a) => a.startsWith('--props=')));
   assert.ok(!fs.existsSync(path.dirname(calls[0].args[2])), 'временная папка убрана');
   assert.ok(fs.existsSync(path.join(vp.app, 'src', 'Summary.jsx')), 'шаблон ролика скопирован из комплекта');
 });
@@ -248,4 +255,29 @@ test('doctor проверяет окружение ролика только п�
   const empty = videoPaths(cfg, { home: tmpDir('video-empty-') });
   const checks = doctor({ projectDir: dir, log: () => {}, power: null, video: (c) => videoProblems(c, { ...empty, python: '/нет/python', model: '/нет/model.pt' }) });
   assert.ok(checks.some((c) => !c.ok && /ролик-сводка: нет окружения озвучки/.test(c.label) && /mcfly video setup/.test(c.hint)));
+});
+
+test('0.15.0 настройки: voice_speed по умолчанию 1.1; вне 0.9–1.3 — ошибка называет поле', () => {
+  assert.equal(parseConfig('project: demo').video.voice_speed, 1.1);
+  assert.throws(() => parseConfig('project: demo\nvideo:\n  voice_speed: 2'), /video\.voice_speed/);
+});
+
+test('0.15.0 темп: сцена режиссёра (hold 0) длится как речь; сцена из кода — не дольше речи плюс 2 с', async () => {
+  const props = await builtProps([{ key: 's0', kind: 'text', title: 'а', lines: [], speech: 'р', hold: 0 }, { key: 's1', kind: 'chat', title: 'б', lines: [], speech: 'р', hold: 9, chat: { text: 'т', buttons: [] } }, { key: 's2', kind: 'text', title: 'в', lines: [], speech: 'р', hold: 3 }], { voice_speed: 1 });
+  assert.deepEqual(props.scenes.map((s) => s.duration), [2, 4, 3]);
+  assert.ok(props.scenes.every((s) => !('speech' in s) && !('hold' in s)));
+});
+
+test('0.15.0 скорость голоса: при 1.25 речь 2 с занимает 1.6 с; при 1 ускорение не запускается; поля оформления доходят до шаблона', async () => {
+  const props = await builtProps([{ key: 's0', kind: 'hook', title: 'а', lines: [], speech: 'р', hold: 0, accent: '#ffb648', tag: 'Новое' }], { voice_speed: 1.25 });
+  assert.equal(props.scenes[0].voice, 1.6); assert.equal(props.scenes[0].accent, '#ffb648'); assert.equal(props.scenes[0].tag, 'Новое');
+  const calls = [];
+  await buildVideo({ ...cfg, video: { ...cfg.video, voice_speed: 1 } }, { scenes: [{ key: 's0', kind: 'text', title: 'а', lines: [], speech: 'р', hold: 0 }], name: 'x', now: NOW, run: fakeRun(calls), vp: fakeHome() });
+  assert.deepEqual(calls.map((c) => c.opts.label), ['озвучка', 'сборка ролика']);
+});
+
+test('0.15.0 запасные сцены: у образца чата речь о сути, фраз-пустышек нет', () => {
+  const chats = summaryScenes(DATA, cfg, { now: NOW }).filter((s) => s.kind === 'chat');
+  assert.ok(chats.length > 0);
+  for (const s of chats) { assert.doesNotMatch(s.speech, /Вот как это выглядит|И ещё один пример/); assert.ok(s.speech.length >= 20); }
 });

@@ -2,8 +2,8 @@ import React from 'react';
 import { AbsoluteFill, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
 import { Audio } from '@remotion/media';
 
-const VOICE_DELAY = 8; // кадров тишины перед голосом в каждой сцене
-const TAIL = 0.9; // секунд после голоса
+const VOICE_DELAY = 3; // кадров тишины перед голосом в каждой сцене
+const TAIL = 0.3; // секунд после голоса: сцена не висит в тишине
 
 export const sceneFrames = (scene, fps) => Math.ceil((scene.duration + TAIL) * fps) + VOICE_DELAY;
 export const totalFrames = (scenes, fps) => Math.max(1, scenes.reduce((sum, s) => sum + sceneFrames(s, fps), 0));

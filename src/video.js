@@ -6,6 +6,7 @@ import { exists, ensureDir, readJson, writeJson, pad2, localDateKey } from './ut
 import { MCFLY_ROOT } from './prompt.js';
 import { loadState, saveState } from './state.js';
 import { speakable, clipSentences, numWords, numGenitive, plural, MONTHS_GEN } from './speech.js';
+import { CHARS_PER_SECOND, SCENE_GAP } from './storyboard.js';
 
 // 0.12.0: сводка коротким роликом с голосом — по желанию проекта (video.enabled). Текст сводки уходит как раньше и первым;
 // ролик собирается после него и приходит отдельным сообщением. Любой сбой сборки — только строка в чат, текст уже у владельца.
@@ -48,7 +49,6 @@ const SPOKEN = { ok: 'успешно', missed: 'пропущено', error: 'с�
 const SHOWN = { ok: '✅ успешно', missed: '⚠️ пропущено', error: '❌ сбой', timeout: '⏱ остановлено по времени', quota: '⛔ лимит подписки', network: '🌐 не было связи', locked: '🔒 не запускалось' };
 // Номера пунктов и вопросов (I22, Q4) в ролике не нужны: остаётся название, а где его нет — ничего
 const noIds = (t) => String(t).replace(/(?<![\p{L}\p{N}])[A-Z]\d+(?![\p{L}\p{N}])\s*:?/gu, ' ').replace(/\s*—\s*кнопка\s+«[^»]*»/g, '').replace(/\s+([,.;:])/g, '$1').replace(/(?:,\s*)+(?=[,.;:]|$)/g, '').replace(/\s+/g, ' ').trim();
-const CHARS_PER_SECOND = 14; // темп диктора: по нему текст укладывается в video.max_seconds
 const RUNS = ['прогон', 'прогона', 'прогонов'];
 
 // Дело владельца — то, что делается руками вне бота (правка на ноутбуке, сервере, в базе, запуск скрипта). Одобрить, выбрать,
@@ -123,7 +123,9 @@ function pickDemos(all) {
 /** Сцена-демонстрация: экран чата с сообщением и кнопками. Возвращает аргументы add. */
 function demoScene(d, i) {
   const text = d.text.split('\n').slice(0, 14).join('\n').slice(0, 520);
-  return ['Как это выглядит', [clipSentences(noIds(plain(d.title)) || noIds(plain(d.change)).replace(/^«|»$/g, ''), 110)], i ? 'И ещё один пример.' : 'Вот как это выглядит.',
+  // Речь — о сути образца, а не «вот как это выглядит»: экран чата не висит в тишине (0.15.0)
+  const name = clipSentences(noIds(plain(d.title)) || noIds(plain(d.change)).replace(/^«|»$/g, ''), 110);
+  return ['Как это выглядит', [name], `${i ? 'И ещё пример.' : 'Вот пример.'} ${dot(cap(name))}`,
     { kind: 'chat', chat: { text, buttons: d.buttons.slice(0, 3).map((row) => row.slice(0, 4)) }, hold: Math.min(10, 3.5 + text.length / 45) }];
 }
 
@@ -196,6 +198,10 @@ export function weeklyScenes(data, cfg) {
   return scenes;
 }
 
+const FPS = 30;
+/** Кадров в сцене — та же формула, что в шаблоне (video/src): речь, хвост 0,3 с и 3 кадра до голоса. */
+export const sceneFrames = (duration) => Math.ceil((duration + 0.3) * FPS) + 3;
+
 /** Запуск с лимитом времени: по истечении убиваем всю группу процессов (у сборщика есть дочерний браузер). */
 export function runTool(bin, args, { cwd, timeoutMs, label }) {
   return new Promise((resolve, reject) => {
@@ -228,17 +234,29 @@ export async function buildVideo(cfg, { scenes, name, kind = 'Утренняя �
   try {
     syncTemplate(vp);
     const durationsFile = path.join(work, 'durations.json');
+    const speed = cfg.video.voice_speed || 1;
+    const voiceDir = path.join(work, 'public', 'voice'); const rawDir = speed === 1 ? voiceDir : path.join(work, 'raw');
     writeJson(path.join(work, 'scenes.json'), Object.fromEntries(scenes.map((s) => [s.key, s.speech])));
-    await run(vp.python, ['-I', path.join(vp.app, 'silero.py'), path.join(work, 'scenes.json'), path.join(work, 'public', 'voice'), durationsFile, cfg.video.voice, vp.model], { cwd: work, timeoutMs: deadline - Date.now(), label: 'озвучка' });
+    await run(vp.python, ['-I', path.join(vp.app, 'silero.py'), path.join(work, 'scenes.json'), rawDir, durationsFile, cfg.video.voice, vp.model], { cwd: work, timeoutMs: deadline - Date.now(), label: 'озвучка' });
     const durations = readJson(durationsFile, null);
     if (!durations || scenes.some((s) => !(durations[s.key] > 0))) throw new Error('озвучка: нет длительностей сцен');
-    const props = { project: cfg.project, kind, date: `${now.getDate()} ${MONTHS_GEN[now.getMonth()]}`, scenes: scenes.map((s) => ({ key: s.key, kind: s.kind || 'text', title: s.title, lines: s.lines, chat: s.chat || null, bar: s.bar || null, voice: durations[s.key], duration: Math.max(durations[s.key], s.hold || 0) })) };
+    // Скорость голоса: растяжение по времени без изменения тона — ffmpeg из состава сборщика, одним запуском на все сцены
+    if (speed !== 1) {
+      ensureDir(voiceDir);
+      await run(process.execPath, [vp.cli, 'ffmpeg', '-y', '-loglevel', 'error', ...scenes.flatMap((s) => ['-i', path.join(rawDir, `${s.key}.wav`)]),
+        ...scenes.flatMap((s, i) => ['-map', `${i}:a`, '-filter:a', `atempo=${speed}`, path.join(voiceDir, `${s.key}.wav`)])], { cwd: work, timeoutMs: deadline - Date.now(), label: 'ускорение голоса' });
+    }
+    // Темп (0.15.0): сцена длится как речь; у сцен из кода время «на чтение» (hold) — нижняя граница, но не дольше речи плюс 2 с
+    const props = { project: cfg.project, kind, date: `${now.getDate()} ${MONTHS_GEN[now.getMonth()]}`, scenes: scenes.map(({ speech: _s, hold, ...s }) => {
+      const voice = Math.round(durations[s.key] / speed * 100) / 100;
+      return { ...s, kind: s.kind || 'text', chat: s.chat || null, bar: s.bar || null, voice, duration: hold ? Math.min(Math.max(voice, hold), voice + 2) : voice };
+    }) };
     writeJson(path.join(work, 'props.json'), props);
     const file = path.join(ensureDir(vp.out), `${name}.mp4`);
     await run(process.execPath, [vp.cli, 'render', 'src/index.jsx', 'Summary', file, `--props=${path.join(work, 'props.json')}`, `--public-dir=${path.join(work, 'public')}`, '--log=error'],
       { cwd: vp.app, timeoutMs: deadline - Date.now(), label: 'сборка ролика' });
     if (!exists(file)) throw new Error('сборка ролика: файл не появился');
-    return { file, seconds: Math.round(props.scenes.reduce((n, s) => n + s.duration + 1.2, 0)) };
+    return { file, seconds: Math.round(props.scenes.reduce((n, s) => n + sceneFrames(s.duration), 0) / FPS) };
   } finally { fs.rmSync(work, { recursive: true, force: true }); }
 }
 

@@ -69,6 +69,7 @@ design:
 video:
   enabled: false
   voice: eugene                 # aidar, baya, kseniya, eugene, xenia
+  voice_speed: 1.1              # скорость голоса: от 0.9 до 1.3
   max_seconds: 60               # примерная длина утреннего ролика
   weekly_max_seconds: 120       # примерная длина недельного: чем длиннее, тем больше новых возможностей показано отдельно
   timeout_minutes: 10           # сколько ждать сборку
