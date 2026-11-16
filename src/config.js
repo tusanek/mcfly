@@ -32,7 +32,7 @@ export const DEFAULT_CONFIG = {
   // Находки для доработки самого mcfly (0.11.0): агенты и сессии регистрируют, владелец одобряет в боте, одобренное — в общий ящик inbox
   findings: { enabled: true, inbox: '~/mcfly-inbox.md' },
   // Сводка коротким роликом с голосом (0.12.0): после текста сводки, отдельным сообщением; pronounce — { слово: как прочитать }
-  video: { enabled: false, voice: 'eugene', max_seconds: 60, timeout_minutes: 10, pronounce: {}, python: '', model: '' },
+  video: { enabled: false, voice: 'eugene', max_seconds: 60, timeout_minutes: 10, pronounce: {} },
 };
 
 function merge(base, over) {
@@ -82,7 +82,6 @@ export function validate(cfg) {
   if (!(video.max_seconds >= 20 && video.max_seconds <= 180)) errors.push('video.max_seconds: от 20 до 180');
   if (!(video.timeout_minutes > 0 && video.timeout_minutes <= 60)) errors.push('video.timeout_minutes: больше 0 и не больше 60');
   if (!video.pronounce || typeof video.pronounce !== 'object' || Array.isArray(video.pronounce) || Object.values(video.pronounce).some((v) => typeof v !== 'string')) errors.push('video.pronounce: словарь «слово: как прочитать»');
-  for (const k of ['python', 'model']) if (typeof video[k] !== 'string') errors.push(`video.${k}: строка — путь, пусто — по умолчанию`);
   if (!cfg.links || typeof cfg.links !== 'object' || Array.isArray(cfg.links)) errors.push('links: словарь «подпись: адрес»');
   else for (const [k, v] of Object.entries(cfg.links)) if (!/^https?:\/\/[^\s"<>]+$/.test(String(v))) errors.push(`links.${k}: адрес http:// или https:// без пробелов, кавычек и <>`);
   if (errors.length) throw new Error('Ошибки в mcfly/config.yaml:\n- ' + errors.join('\n- '));

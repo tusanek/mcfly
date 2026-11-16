@@ -13,18 +13,22 @@ import { speakable, clipSentences, numWords, plural, dateWords, MONTHS_GEN } fro
 
 const template = () => path.join(MCFLY_ROOT, 'video'); // функцией: модули ссылаются друг на друга по кругу, при загрузке MCFLY_ROOT ещё нет
 export const MODEL_URL = 'https://models.silero.ai/models/tts/ru/v5_ru.pt';
-const expand = (f) => (String(f).startsWith('~') ? path.join(os.homedir(), String(f).slice(1)) : String(f));
+/** Имя проекта для папки роликов: только буквы, цифры, «_» и «-» — из папки роликов по имени не выйти. */
+export const projectSlug = (name) => String(name ?? '').replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'project';
 
-/** Где лежит всё для роликов: приложение Remotion, питон с синтезатором, модель голоса, готовые ролики. Общее на все проекты. */
+/**
+ * Где лежит всё для роликов: приложение Remotion, питон с синтезатором, модель голоса, готовые ролики. Общее на все проекты.
+ * Пути к питону и модели из настроек проекта не берутся: config.yaml правят агенты, а это запускаемый файл и модель с кодом внутри.
+ */
 export function videoPaths(cfg, { home = path.join(os.homedir(), '.mcfly', 'video') } = {}) {
   // Готовое окружение навыка video-explainer подходит как есть — второй гигабайт ставить незачем
   const shared = path.join(os.homedir(), '.video-explainer');
   const first = (list) => list.find((f) => exists(f)) || list[0];
   return {
-    home, app: path.join(home, 'app'), out: path.join(home, 'out', String(cfg.project)),
+    home, app: path.join(home, 'app'), out: path.join(home, 'out', projectSlug(cfg.project)),
     cli: path.join(home, 'app', 'node_modules', '@remotion', 'cli', 'remotion-cli.js'),
-    python: cfg.video.python ? expand(cfg.video.python) : first([path.join(home, 'venv', 'bin', 'python'), path.join(shared, 'venv', 'bin', 'python')]),
-    model: cfg.video.model ? expand(cfg.video.model) : first([path.join(home, 'models', 'v5_ru.pt'), path.join(shared, 'models', 'v5_ru.pt')]),
+    python: first([path.join(home, 'venv', 'bin', 'python'), path.join(shared, 'venv', 'bin', 'python')]),
+    model: first([path.join(home, 'models', 'v5_ru.pt'), path.join(shared, 'models', 'v5_ru.pt')]),
   };
 }
 

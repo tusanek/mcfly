@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import path from 'node:path';
-import { summaryScenes, videoPaths, videoProblems, buildVideo, sendSummaryVideo, pruneVideos, runTool } from '../src/video.js';
+import { projectSlug, summaryScenes, videoPaths, videoProblems, buildVideo, sendSummaryVideo, pruneVideos, runTool } from '../src/video.js';
 import { summaryData, sendSummary } from '../src/summary.js';
 import { parseConfig } from '../src/config.js';
 import { createTelegram } from '../src/telegram.js';
@@ -20,7 +20,7 @@ const DATA = {
 /** Установленное окружение роликов в подставной папке. */
 function fakeHome() {
   const home = tmpDir('video-home-');
-  const vp = videoPaths({ ...cfg, video: { ...cfg.video, python: path.join(home, 'python'), model: path.join(home, 'model.pt') } }, { home });
+  const vp = { ...videoPaths(cfg, { home }), python: path.join(home, 'python'), model: path.join(home, 'model.pt') };
   fs.mkdirSync(path.dirname(vp.cli), { recursive: true });
   for (const f of [vp.cli, vp.python, vp.model]) fs.writeFileSync(f, '');
   return vp;
@@ -169,6 +169,19 @@ test('telegram.sendVideo: файл и поля уходят формой; бол
   await assert.rejects(bad.sendVideo('7', file), /sendVideo: Bad Request: file is too big/);
 });
 
+test('безопасность: имя проекта не выводит из папки роликов, пути к питону и модели из настроек не берутся', () => {
+  const home = tmpDir('video-home-');
+  for (const name of ['../../etc', '..', '/abs/path', 'a/../../b', '.ssh']) {
+    const out = videoPaths({ ...cfg, project: name }, { home }).out;
+    assert.equal(path.dirname(out), path.join(home, 'out'), name);
+    assert.doesNotMatch(path.basename(out), /^\.|\//, name);
+  }
+  assert.equal(projectSlug('demo.v2'), 'demo-v2');
+  assert.equal(projectSlug('..'), 'project');
+  const vp = videoPaths({ ...cfg, video: { ...cfg.video, python: '/tmp/evil', model: '/tmp/evil.pt' } }, { home });
+  assert.ok(!vp.python.includes('evil') && !vp.model.includes('evil'));
+});
+
 test('pruneVideos оставляет последние ролики', () => {
   const dir = tmpDir();
   for (const n of ['summary-2026-11-10-0800', 'summary-2026-11-11-0800', 'summary-2026-11-12-0800']) fs.writeFileSync(path.join(dir, `${n}.mp4`), '');
@@ -187,7 +200,8 @@ test('настройки video: по умолчанию выключено; ош
 test('doctor проверяет окружение ролика только при video.enabled', () => {
   const dir = bareProject();
   assert.ok(!doctor({ projectDir: dir, log: () => {}, power: null }).some((c) => /ролик-сводка/.test(c.label)));
-  fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), 'project: demo\nvideo:\n  enabled: true\n  python: /нет/python\n  model: /нет/model.pt\n');
-  const checks = doctor({ projectDir: dir, log: () => {}, power: null });
+  fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), 'project: demo\nvideo:\n  enabled: true\n');
+  const empty = videoPaths(cfg, { home: tmpDir('video-empty-') });
+  const checks = doctor({ projectDir: dir, log: () => {}, power: null, video: (c) => videoProblems(c, { ...empty, python: '/нет/python', model: '/нет/model.pt' }) });
   assert.ok(checks.some((c) => !c.ok && /ролик-сводка: нет окружения озвучки/.test(c.label) && /mcfly video setup/.test(c.hint)));
 });

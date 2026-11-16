@@ -16,7 +16,7 @@ import { videoProblems } from './video.js';
 
 function ver(bin, args = ['--version']) { const r = spawnSync(bin, args, { encoding: 'utf8' }); return r.status === 0 ? String(r.stdout || r.stderr).trim().split('\n')[0] : null; }
 
-export function doctor({ projectDir, probe = false, log = console.log, launchctl = runLaunchctl, power = process.platform === 'darwin' ? readPower : null }) {
+export function doctor({ projectDir, probe = false, log = console.log, launchctl = runLaunchctl, power = process.platform === 'darwin' ? readPower : null, video = videoProblems }) {
   const p = paths(projectDir); loadEnv(projectDir);
   const checks = [];
   const add = (ok, label, hint = '') => checks.push({ ok: !!ok, label, hint });
@@ -62,7 +62,7 @@ export function doctor({ projectDir, probe = false, log = console.log, launchctl
   }
   if (cfg?.video?.enabled) {
     // 0.12.0: ролик-сводка включён — проверяем сборщик, окружение озвучки и модель голоса
-    const missing = videoProblems(cfg);
+    const missing = video(cfg);
     if (missing.length) for (const m of missing) add(false, `ролик-сводка: ${m.label}`, m.hint);
     else add(true, `ролик-сводка: сборщик и озвучка на месте (голос ${cfg.video.voice})`);
   }
