@@ -44,6 +44,17 @@ const Chat = ({ chat, frame, fps }) => {
   );
 };
 
+/** Полоса «сделано из всего»: заполняется на глазах — цели, успешные прогоны, занятый лимит. */
+const Bar = ({ bar, frame, fps }) => {
+  const t = spring({ frame: frame - 8, fps, config: { damping: 200 }, durationInFrames: 40 });
+  const share = Math.max(0, Math.min(1, bar.done / bar.total));
+  return (
+    <div style={{ height: 44, borderRadius: 22, background: C.line, marginBottom: 56, overflow: 'hidden' }}>
+      <div style={{ width: `${share * t * 100}%`, height: '100%', borderRadius: 22, background: C.accent }} />
+    </div>
+  );
+};
+
 const Scene = ({ scene, index, count }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -70,7 +81,9 @@ const Scene = ({ scene, index, count }) => {
           {scene.lines[0] ? <div style={{ color: C.dim, fontSize: 40, marginBottom: 36, opacity: head }}>{scene.lines[0]}</div> : null}
           <Chat chat={scene.chat} frame={frame} fps={fps} />
         </>
-      ) : scene.lines.map((line, i) => {
+      ) : null}
+      {scene.kind !== 'chat' && scene.bar && scene.bar.total > 0 ? <Bar bar={scene.bar} frame={frame} fps={fps} /> : null}
+      {scene.kind === 'chat' && scene.chat ? null : scene.lines.map((line, i) => {
         const t = spring({ frame: frame - 6 - i * 7, fps, config: { damping: 200 } });
         return (
           <div key={i} style={{ color: C.text, fontSize: size, lineHeight: 1.32, marginBottom: size * 0.62, opacity: t, transform: `translateY(${(1 - t) * 30}px)` }}>

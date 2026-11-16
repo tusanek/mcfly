@@ -68,7 +68,8 @@ design:
 video:
   enabled: false
   voice: eugene                 # aidar, baya, kseniya, eugene, xenia
-  max_seconds: 60               # примерная длина ролика
+  max_seconds: 60               # примерная длина утреннего ролика
+  weekly_max_seconds: 120       # примерная длина недельного: чем длиннее, тем больше новых возможностей показано отдельно
   timeout_minutes: 10           # сколько ждать сборку
   pronounce: {}                 # иностранные слова диктор пропускает; чтобы читал: { myapp: "май +апп" } — «+» перед ударной гласной
 

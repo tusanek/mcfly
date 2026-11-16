@@ -73,7 +73,7 @@ export function summaryScenes(data, cfg, { now = new Date() } = {}) {
   const total = stats.reduce((n, [, c]) => n + c, 0);
   const failed = stats.filter(([st]) => st !== 'ok');
   const runsLine = !total ? (data.running ? '▶️ прогон идёт сейчас' : 'Прогонов не было') : failed.length ? '' : `✅ ${total} ${plural(total, RUNS)} — ${total === 1 ? 'успешно' : 'все успешно'}`;
-  add(cfg.project, ['Утренняя сводка', `${now.getDate()} ${MONTHS_GEN[now.getMonth()]}`, runsLine], say(cfg.project) ? `Доброе утро. Сводка по проекту ${cfg.project}.` : 'Доброе утро. Утренняя сводка.');
+  add(cfg.project, ['Утренняя сводка', `${now.getDate()} ${MONTHS_GEN[now.getMonth()]}`, runsLine], say(cfg.project) ? `Доброе утро. Сводка по проекту ${cfg.project}.` : 'Доброе утро. Утренняя сводка.', { hold: 0 });
 
   // Прогоны — отдельной сценой и вслух, только когда что-то не удалось: это требует внимания
   if (failed.length) {
@@ -132,54 +132,62 @@ const dayMonth = (d) => `${d.getDate()} ${MONTHS_GEN[d.getMonth()]}`;
 const count = (n, words, gender = 'm') => `${numWords(n, gender)} ${plural(n, words)}`;
 
 /**
- * Сцены недельного ролика (0.13.0) из weeklyData: что завершено и как это выглядит, цели, прогоны, что ждёт владельца, лимит
- * подписки, что дальше. Те же правила, что у утреннего: заголовки диктор не читает, номеров пунктов нет.
+ * Сцены недельного ролика (0.13.0) из weeklyData. Главное — новые возможности: каждой своя сцена с показом на примере (экран чата
+ * из образца) и одной фразой «что это даёт»; сколько влезет в video.weekly_max_seconds, остальные — списком. Исправления и
+ * технические доработки в ролик не идут (их отсеивает notableFeatures). Цели — полосой; прогоны и лимит — только когда требуют
+ * внимания; что решается кнопками в боте — не идёт. Заголовки диктор не читает, номеров пунктов нет.
  */
 export function weeklyScenes(data, cfg) {
   const say = (t) => speakable(t, cfg.video.pronounce);
   const scenes = [];
   const add = (title, lines, speech, extra = {}) => { const shown = lines.filter(Boolean); scenes.push({ key: `s${scenes.length}`, kind: 'text', title, lines: shown, speech: say(speech), hold: readSeconds([title, ...shown]), ...extra }); };
-  add(cfg.project, ['Итоги недели', `${dayMonth(data.since)} — ${dayMonth(data.now)}`], say(cfg.project) ? `Добрый вечер. Итоги недели по проекту ${cfg.project}.` : 'Добрый вечер. Итоги недели.');
+  const feats = (data.features || []).map((f) => ({ ...f, title: noIds(plain(f.title)), benefit: noIds(plain(f.benefit)) })).filter((f) => f.title);
+  const NEW = ['новая возможность', 'новые возможности', 'новых возможностей'];
+  // Заставка — без паузы на чтение: сразу к делу
+  add(cfg.project, ['Итоги недели', `${dayMonth(data.since)} — ${dayMonth(data.now)}`, feats.length ? `Новых возможностей: ${feats.length}` : ''],
+    `Добрый вечер. ${say(cfg.project) ? `Итоги недели по проекту ${cfg.project}.` : 'Итоги недели.'}${feats.length ? ` За неделю — ${count(feats.length, NEW, 'f')}.` : ''}`, { hold: 0 });
 
-  const closed = (data.closed || []).map(bare).filter(Boolean);
-  const n = data.closed?.length || 0;
-  const shown = closed.slice(-4).map((t) => `• ${clipSentences(t, 90)}`);
-  if (closed.length > 4) shown.push(`…и ещё ${closed.length - 4}`);
-  const tasks = data.tasksDone ? `Закрыто задач: ${data.tasksDone}` : '';
-  const doneSpeech = n ? `Команда завершила ${count(n, ['изменение', 'изменения', 'изменений'], 'n')}${closed.length ? `. ${n > 2 ? 'Среди них: ' : ''}${closed.slice(-2).map((t) => clipSentences(t, 110)).join('; ')}` : ''}.`
-    : data.tasksDone ? `Завершённых изменений за неделю нет, закрыто ${count(data.tasksDone, ['задача', 'задачи', 'задач'], 'f')}.` : 'Завершённых изменений за неделю нет.';
-  add('Завершено за неделю', n ? [...shown, tasks] : ['Завершённых изменений нет', tasks], doneSpeech);
-  for (const [i, d] of pickDemos(data.demos).entries()) add(...demoScene(d, i));
+  // Сколько возможностей показать отдельными сценами: по времени ролика; первыми — из бэклога владельца и крупные, порядок — как делались
+  const room = Math.min(12, Math.max(2, Math.floor(((cfg.video.weekly_max_seconds || 120) - 24) / 9)));
+  const picked = new Set([...feats].sort((a, b) => b.weight - a.weight).slice(0, room));
+  for (const f of feats.filter((x) => picked.has(x))) {
+    const benefit = clipSentences(f.benefit, 110);
+    const speech = `${dot(clipSentences(f.title, 90))}${benefit ? ` ${dot(cap(benefit))}` : ''}`;
+    if (f.sample) {
+      const text = f.sample.text.split('\n').slice(0, 10).join('\n').slice(0, 380);
+      add(clipSentences(f.title, 70), [benefit], speech, { kind: 'chat', chat: { text, buttons: f.sample.buttons.slice(0, 2).map((row) => row.slice(0, 4)) }, hold: Math.min(8, 3 + text.length / 60) });
+    } else add(clipSentences(f.title, 70), [benefit], speech);
+  }
+  const rest = feats.filter((x) => !picked.has(x));
+  if (rest.length) {
+    add('И ещё', [...rest.slice(0, 6).map((f) => `• ${clipSentences(f.title, 70)}`), rest.length > 6 ? `…и ещё ${rest.length - 6}` : ''], `И ещё ${count(rest.length, NEW, 'f')} — на экране.`);
+  }
+  if (!feats.length) {
+    const n = data.closed?.length || 0;
+    add('За неделю', [n ? `Завершено изменений: ${n}` : 'Завершённых изменений нет', n ? 'Исправления и доработки, которых снаружи не видно' : ''],
+      n ? `Заметных новых возможностей за неделю нет. Команда завершила ${count(n, ['изменение', 'изменения', 'изменений'], 'n')} — это исправления и внутренние доработки.` : 'Завершённых изменений за неделю нет.');
+  }
 
   if (data.goals) {
     const g = data.goals;
     add('Цели', [`Сделано ${g.done} из ${g.total}`, g.delta > 0 ? `+${g.delta} за неделю` : '', g.milestone ? `Веха: ${clipSentences(plain(g.milestone), 140)}` : ''],
-      `По целям сделано ${numWords(g.done)} из ${numGenitive(g.total)} ${g.total % 10 === 1 && g.total % 100 !== 11 ? 'пункта' : 'пунктов'}.${g.delta > 0 ? ` За неделю — плюс ${numWords(g.delta)}.` : ''}`);
+      `По целям сделано ${numWords(g.done)} из ${numGenitive(g.total)} ${g.total % 10 === 1 && g.total % 100 !== 11 ? 'пункта' : 'пунктов'}.${g.delta > 0 ? ` За неделю — плюс ${numWords(g.delta)}.` : ''}`, { bar: { done: g.done, total: g.total } });
   }
 
+  // Прогоны и лимит — только когда требуют внимания
   const stats = Object.entries(data.runs?.stats || {}).filter(([, c]) => c > 0);
   const total = data.runs?.total || 0;
   const failed = stats.filter(([st]) => st !== 'ok');
-  if (!total) add('Прогоны', ['Прогонов не было'], 'Прогонов за неделю не было.');
-  else if (!failed.length) add('Прогоны', [`✅ ${total} ${plural(total, RUNS)} — ${total === 1 ? 'успешно' : 'все успешно'}`], total === 1 ? 'Единственный прогон за неделю прошёл успешно.' : 'Все прогоны за неделю прошли успешно.');
-  else {
+  if (failed.length) {
     const ok = total - failed.reduce((s, [, c]) => s + c, 0);
-    add('Прогоны', [`Всего ${total}`, ok ? `${SHOWN.ok} — ${ok}` : '', ...failed.map(([st, c]) => `${SHOWN[st] || st} — ${c}`)],
-      `За неделю ${count(total, RUNS)}. Не все прошли гладко: ${failed.map(([st, c]) => `${SPOKEN[st] || 'с другим исходом'} — ${numWords(c)}`).join(', ')}.`);
+    add('Требует внимания', [`Прогонов: ${total}`, ok ? `${SHOWN.ok} — ${ok}` : '', ...failed.map(([st, c]) => `${SHOWN[st] || st} — ${c}`)],
+      `Не все прогоны за неделю прошли гладко: ${failed.map(([st, c]) => `${SPOKEN[st] || 'с другим исходом'} — ${numWords(c)}`).join(', ')}.`, { bar: { done: ok, total } });
   }
-
-  const w = data.waiting || { questions: [], pending: 0, proposed: 0 };
-  const parts = [w.questions.length ? `${count(w.questions.length, ['вопрос', 'вопроса', 'вопросов'])} без ответа` : '', w.pending ? `${count(w.pending, ['план', 'плана', 'планов'])} на одобрении` : '',
-    w.proposed ? count(w.proposed, ['предложение', 'предложения', 'предложений'], 'n') : ''].filter(Boolean);
-  if (parts.length) {
-    add('Ждёт вас', [...w.questions.slice(0, 2).map((q) => `• ${clipSentences(noIds(plain(q.text)), 110)}`), w.pending ? `Планов на одобрении: ${w.pending}` : '', w.proposed ? `Предложений без решения: ${w.proposed}` : ''],
-      `Вашего решения ждут: ${parts.join(', ')}. Всё это — в боте.`);
-  }
-
-  if (data.usage) {
-    const u = data.usage; const now = Math.round(u.now * 100); const peak = u.peak != null && u.peak > u.now ? Math.round(u.peak * 100) : 0;
-    add('Лимит подписки', [`Недельный лимит занят на ${now} %`, peak ? `За неделю доходил до ${peak} %` : '', u.quotaStops ? `Остановок из-за лимита: ${u.quotaStops}` : ''],
-      `Недельный лимит подписки занят на ${now}%.${u.quotaStops ? ` Из-за лимита остановлено: ${count(u.quotaStops, RUNS)}.` : ''}`);
+  const u = data.usage;
+  if (u && (u.now >= 0.8 || u.quotaStops)) {
+    const now = Math.round(u.now * 100);
+    add('Лимит подписки', [`Недельный лимит занят на ${now} %`, u.quotaStops ? `Остановок из-за лимита: ${u.quotaStops}` : ''],
+      `Недельный лимит подписки занят на ${now}%.${u.quotaStops ? ` Из-за лимита остановлено: ${count(u.quotaStops, RUNS)}.` : ''}`, { bar: { done: now, total: 100 } });
   }
 
   const titles = (data.work || []).map((x) => ({ title: bare(x.title), progress: plain(x.progress) })).filter((x) => x.title);
@@ -224,7 +232,7 @@ export async function buildVideo(cfg, { scenes, name, kind = 'Утренняя �
     await run(vp.python, ['-I', path.join(vp.app, 'silero.py'), path.join(work, 'scenes.json'), path.join(work, 'public', 'voice'), durationsFile, cfg.video.voice, vp.model], { cwd: work, timeoutMs: deadline - Date.now(), label: 'озвучка' });
     const durations = readJson(durationsFile, null);
     if (!durations || scenes.some((s) => !(durations[s.key] > 0))) throw new Error('озвучка: нет длительностей сцен');
-    const props = { project: cfg.project, kind, date: `${now.getDate()} ${MONTHS_GEN[now.getMonth()]}`, scenes: scenes.map((s) => ({ key: s.key, kind: s.kind || 'text', title: s.title, lines: s.lines, chat: s.chat || null, voice: durations[s.key], duration: Math.max(durations[s.key], s.hold || 0) })) };
+    const props = { project: cfg.project, kind, date: `${now.getDate()} ${MONTHS_GEN[now.getMonth()]}`, scenes: scenes.map((s) => ({ key: s.key, kind: s.kind || 'text', title: s.title, lines: s.lines, chat: s.chat || null, bar: s.bar || null, voice: durations[s.key], duration: Math.max(durations[s.key], s.hold || 0) })) };
     writeJson(path.join(work, 'props.json'), props);
     const file = path.join(ensureDir(vp.out), `${name}.mp4`);
     await run(process.execPath, [vp.cli, 'render', 'src/index.jsx', 'Summary', file, `--props=${path.join(work, 'props.json')}`, `--public-dir=${path.join(work, 'public')}`, '--log=error'],
