@@ -7,17 +7,18 @@ import { ensureDir, writeText, exists, pad2 } from './util.js';
 
 export function labelFor(project, job) { return `com.mcfly.${project}.${job}`; }
 /** Когда запускается задание: «02:00» или «каждые 10 мин». */
-export const jobWhen = (j) => (j.keepAlive ? `постоянно, цикл ${Math.round(j.window / 60)} мин` : j.interval ? `каждые ${Math.round(j.interval / 60)} мин` : `${pad2(j.hour)}:${pad2(j.minute)}`);
+const WEEKDAYS = ['', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'];
+export const jobWhen = (j) => (j.keepAlive ? `постоянно, цикл ${Math.round(j.window / 60)} мин` : j.interval ? `каждые ${Math.round(j.interval / 60)} мин` : `${j.weekday ? `${WEEKDAYS[j.weekday]} ` : ''}${pad2(j.hour)}:${pad2(j.minute)}`);
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-export function buildPlist({ label, node, mcflyBin, args, projectDir, hour, minute, interval, keepAlive = false, logPath, pathEnv, home, abandonGroup = false }) {
+export function buildPlist({ label, node, mcflyBin, args, projectDir, hour, minute, interval, weekday = 0, keepAlive = false, logPath, pathEnv, home, abandonGroup = false }) {
   // keepAlive: задание работает постоянно — launchd перезапускает его после выхода, но не чаще раза в минуту.
   const when = keepAlive
     ? `  <key>KeepAlive</key><true/>\n  <key>ThrottleInterval</key><integer>60</integer>`
     : interval
     ? `  <key>StartInterval</key><integer>${interval}</integer>`
     : `  <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>${hour}</integer><key>Minute</key><integer>${minute}</integer></dict>`;
+  <dict>${weekday ? `<key>Weekday</key><integer>${weekday}</integer>` : ''}<key>Hour</key><integer>${hour}</integer><key>Minute</key><integer>${minute}</integer></dict>`;
   const arr = [node, mcflyBin, ...args].map((a) => `    <string>${esc(a)}</string>`).join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -47,6 +48,8 @@ export function planJobs(cfg, { projectDir, node, mcflyBin, logsDir, pathEnv, ho
   const jobs = cfg.schedule.slots.map((slot) => { const m = parseSlot(slot); return { label: labelFor(cfg.project, `run-${slot.replace(':', '')}`), hour: Math.floor(m / 60), minute: m % 60, args: ['run', '--mode', 'night', '--project', projectDir] }; });
   const s = parseSlot(cfg.schedule.summary_at);
   jobs.push({ label: labelFor(cfg.project, 'summary'), hour: Math.floor(s / 60), minute: s % 60, args: ['summary', '--send', '--project', projectDir] });
+  // 0.13.0: недельная сводка — раз в неделю; у launchd воскресенье — и 0, и 7
+  if (cfg.schedule.weekly_day > 0) { const w = parseSlot(cfg.schedule.weekly_at); jobs.push({ label: labelFor(cfg.project, 'weekly'), weekday: cfg.schedule.weekly_day, hour: Math.floor(w / 60), minute: w % 60, args: ['summary', '--weekly', '--send', '--project', projectDir] }); }
   // Опрос ответов и нажатий кнопок из Telegram: иначе ответ на сводку применится только к ночному прогону.
   // Постоянное задание (KeepAlive): цикл длинного опроса answers_every_minutes минут, после выхода launchd сразу запускает новый.
   // StartInterval не годится: на батарее таймер сдвигается, и запуск, пришедшийся на ещё живой цикл, пропадает (02.10 — 10 минут без опроса).
@@ -63,12 +66,12 @@ export function defaultPathEnv() {
 }
 export function launchAgentsDir() { return path.join(os.homedir(), 'Library', 'LaunchAgents'); }
 
-/** Метки заданий проекта в LaunchAgents: ровно `com.mcfly.<проект>.run-ЧЧММ` или `.summary` — задания проекта `demo.v2` проекту `demo` не принадлежат. */
+/** Метки заданий проекта в LaunchAgents: ровно `com.mcfly.<проект>.run-ЧЧММ`, `.summary`, `.weekly` или `.answers` — задания проекта `demo.v2` проекту `demo` не принадлежат. */
 export function ownLabels(files, project) {
   const prefix = `com.mcfly.${project}.`;
   return files.filter((f) => f.startsWith(prefix) && f.endsWith('.plist'))
     .map((f) => f.slice(0, -'.plist'.length))
-    .filter((label) => /^(run-\d{4}|summary|answers)$/.test(label.slice(prefix.length)));
+    .filter((label) => /^(run-\d{4}|summary|weekly|answers)$/.test(label.slice(prefix.length)));
 }
 
 /** Метки заданий проекта, которых нет в плане: слот убрали из конфигурации. */
