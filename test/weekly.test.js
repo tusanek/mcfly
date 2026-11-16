@@ -81,11 +81,16 @@ test('weeklyData: пропуски считаются только с перво
 test('sendWeekly: отправляет текст, запоминает цели — следующая сводка показывает прирост; ролик только при video.enabled', async () => {
   process.env.TOK_WEEKLY = 'x';
   const p = project(); const sent = []; const clips = [];
-  const tg = { sendMessage: async (chat, text, opts) => { sent.push({ chat, text, opts }); return [{ message_id: 5 }]; } };
+  const widgets = [];
+  const tg = { sendMessage: async (chat, text, opts) => { sent.push({ chat, text, opts }); return [{ message_id: 5 }]; }, sendWidget: async (chat, html, opts) => { widgets.push({ chat, html, opts }); } };
   const video = async (pp, c, o) => { clips.push(o); return { sent: true }; };
   const r = await sendWeekly(p, cfg, { now: NOW, telegram: tg, log: () => {}, video });
   assert.equal(r.sent, true);
   assert.equal(r.video, null);
+  assert.equal(r.list, 'widget');
+  assert.equal(widgets.length, 1);
+  assert.equal(widgets[0].opts.replyTo, 5);
+  assert.match(widgets[0].html, /Бот здоровается с владельцем/);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].opts.html, true);
   assert.equal(loadState(p).weekly_goals_done, 2);
@@ -141,9 +146,11 @@ test('weeklyScenes: исправления и невидимые доработ�
   put(2, 'I3', 'Внутренняя перестройка хранения', 'team', ''); // снаружи не видно
   put(3, 'I4', 'Работа без связи', 'owner-backlog', ''); // из бэклога владельца — без образца, текстом
   put(4, 'I5', 'Подсказка в меню', 'team', sample);
+  put(5, 'I6', 'неудобно:\n  непонятно, что делает кнопка', 'owner-note', sample); // заметка владельца — жалоба, не возможность
   fs.writeFileSync(p.ideas, JSON.stringify({ ideas }));
   const data = weeklyData(p, cfg, { now: NOW });
-  assert.equal(data.closed.length, 5);
+  assert.equal(data.closed.length, 6);
+  assert.deepEqual(data.items.at(-1), { ...data.items.at(-1), title: 'Неудобно: непонятно, что делает кнопка', notable: false });
   assert.deepEqual(data.features.map((f) => f.title), ['Напоминания', 'Работа без связи', 'Подсказка в меню']);
   const tight = weeklyScenes(data, { ...cfg, video: { ...cfg.video, weekly_max_seconds: 30 } });
   assert.deepEqual(tight.map((s) => s.title), ['demo', 'Напоминания', 'Работа без связи', 'И ещё', 'Что дальше']);

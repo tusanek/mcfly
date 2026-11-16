@@ -4,7 +4,7 @@ import { actionErrors } from './action-config.js';
 
 export const DEFAULT_CONFIG = {
   project: 'project',
-  schedule: { slots: ['00:00', '04:00'], tolerance_minutes: 30, summary_at: '08:00', answers_every_minutes: 10, weekly_day: 7, weekly_at: '19:00' },
+  schedule: { slots: ['00:00', '04:00'], tolerance_minutes: 30, summary_at: '08:00', answers_every_minutes: 10, weekly_day: 7, weekly_at: '19:00', weekly_list: 'widget' },
   run: { max_minutes: 180, permission_mode: 'auto', model: '', max_budget_usd: 0, claude_bin: 'claude', lead_agent: 'mcfly:lead', extra_args: [], network_retries: 6, network_retry_minutes: 10, api_stall_minutes: 10, api_retry_span_minutes: 20, chain_max_weekly: 0.7, chain_max_five_hour: 0.9, chain_max_runs: 8, vpn_service: '', scutil_bin: 'scutil', telegram_start: true },
   escalation: {
     answer_deadline_hours: 24,
@@ -52,6 +52,7 @@ export function validate(cfg) {
   for (const s of cfg.schedule.slots) if (!/^\d{2}:\d{2}$/.test(String(s))) errors.push(`schedule.slots: неверный слот "${s}" (нужно HH:MM)`);
   if (!/^\d{2}:\d{2}$/.test(String(cfg.schedule.summary_at))) errors.push('schedule.summary_at: нужно HH:MM');
   if (!(Number.isInteger(cfg.schedule.weekly_day) && cfg.schedule.weekly_day >= 0 && cfg.schedule.weekly_day <= 7)) errors.push('schedule.weekly_day: день недельной сводки от 1 (понедельник) до 7 (воскресенье), 0 — без неё');
+  if (!['widget', 'rich', 'text', 'off'].includes(cfg.schedule.weekly_list)) errors.push('schedule.weekly_list: widget (виджетом Telegram), rich (расширенным сообщением), text (текстом) или off (не присылать полный список)');
   if (!/^\d{2}:\d{2}$/.test(String(cfg.schedule.weekly_at))) errors.push('schedule.weekly_at: нужно HH:MM');
   if (!(Number.isInteger(cfg.schedule.answers_every_minutes) && cfg.schedule.answers_every_minutes >= 0)) errors.push('schedule.answers_every_minutes: целое число от 0');
   if (!(cfg.run.max_minutes > 0)) errors.push('run.max_minutes: должно быть больше 0');
