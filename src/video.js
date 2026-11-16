@@ -46,8 +46,8 @@ const plain = (html) => String(html ?? '').replace(/<[^>]+>/g, '').replace(/&lt;
 // Исход прогонов словами для счёта: «успешно — два, пропущено — один»
 const SPOKEN = { ok: 'успешно', missed: 'пропущено', error: 'сорвалось из-за сбоя', timeout: 'остановлено по времени', quota: 'остановлено из-за лимита подписки', network: 'не состоялось из-за связи', locked: 'не запускалось' };
 const SHOWN = { ok: '✅ успешно', missed: '⚠️ пропущено', error: '❌ сбой', timeout: '⏱ остановлено по времени', quota: '⛔ лимит подписки', network: '🌐 не было связи', locked: '🔒 не запускалось' };
-// Вслух не читаем перечни номеров («I14, I15, I16 и ещё 7») и отсылки к кнопкам: они есть на экране и в сообщении
-const aloud = (t) => String(t).replace(/(?<![\p{L}\p{N}])[A-Z]\d+(?:(?:\s*,\s*|\s+и\s+)[A-Z]\d+)+(?:\s+и ещё \d+)?/gu, 'несколько пунктов').replace(/\s*—\s*кнопка\s+«[^»]*»/g, '');
+// Номера пунктов и вопросов (I22, Q4) в ролике не нужны: остаётся название, а где его нет — ничего
+const noIds = (t) => String(t).replace(/(?<![\p{L}\p{N}])[A-Z]\d+(?![\p{L}\p{N}])\s*:?/gu, ' ').replace(/\s*—\s*кнопка\s+«[^»]*»/g, '').replace(/\s+([,.;:])/g, '$1').replace(/(?:,\s*)+(?=[,.;:]|$)/g, '').replace(/\s+/g, ' ').trim();
 const CHARS_PER_SECOND = 14; // темп диктора: по нему текст укладывается в video.max_seconds
 const RUNS = ['прогон', 'прогона', 'прогонов'];
 
@@ -62,15 +62,16 @@ export function summaryScenes(data, cfg, { now = new Date() } = {}) {
   const add = (title, lines, speech) => scenes.push({ key: `s${scenes.length}`, title, lines: lines.filter(Boolean), speech: say(speech) });
   add(cfg.project, ['Утренняя сводка', `${day} ${MONTHS_GEN[month - 1]}`], `Доброе утро. Сводка по проекту ${cfg.project} от ${dateWords(day, month)}.`);
 
-  // Нужное от владельца — сразу после заставки: ради этого сводку и открывают
-  const need = data.need.map(plain);
-  if (need.length) {
-    const shown = need.slice(0, 4).map((x, i) => `${i + 1}. ${clipSentences(x, 120)}`);
-    if (need.length > 4) shown.push(`…и ещё ${need.length - 4}`);
-    const first = clipSentences(aloud(need[0]), 160);
-    const count = `${numWords(need.length)} ${plural(need.length, ['пункт', 'пункта', 'пунктов'])}`;
-    add(`Нужно от вас: ${need.length}`, shown, `От вас нужно: ${count}. ${need.length > 1 ? 'Первый' : 'Вот он'}: ${first}${/[.!?…]$/.test(first) ? '' : '.'}${need.length > 1 ? ' Остальное — на экране и в сообщении.' : ''}`);
-  } else add('От вас ничего не нужно', ['Можно просто посмотреть, что сделано'], 'От вас сейчас ничего не нужно.');
+  // Дела владельца — сразу после заставки. Одобрения, вопросы и решения по спискам в ролик не идут (0.12.0, решение владельца):
+  // они решаются кнопками под текстом сводки, а перечень номеров на слух и на экране ролика бесполезен.
+  const todo = (data.todo || []).map(plain).map(noIds).filter(Boolean);
+  if (todo.length) {
+    const shown = todo.slice(0, 4).map((x, i) => `${i + 1}. ${clipSentences(x, 120)}`);
+    if (todo.length > 4) shown.push(`…и ещё ${todo.length - 4}`);
+    const first = clipSentences(todo[0], 160);
+    const count = `${numWords(todo.length, 'n')} ${plural(todo.length, ['дело', 'дела', 'дел'])}`;
+    add(`Нужно сделать: ${todo.length}`, shown, `От вас нужно ${count}. ${todo.length > 1 ? 'Первое' : 'Вот оно'}: ${first}${/[.!?…]$/.test(first) ? '' : '.'}${todo.length > 1 ? ' Остальное — на экране и в сообщении.' : ''}`);
+  }
 
   const stats = Object.entries(data.runStats).filter(([, n]) => n > 0);
   const total = stats.reduce((n, [, c]) => n + c, 0);
@@ -80,17 +81,21 @@ export function summaryScenes(data, cfg, { now = new Date() } = {}) {
   else add('Прогонов не было', data.running ? ['▶️ один идёт сейчас'] : [], data.running ? 'Законченных прогонов не было, один идёт сейчас.' : 'Прогонов не было.');
 
   // Пересказ последнего прогона: на него уходит всё время, что осталось от остальных сцен
-  const next = plain(data.next);
-  const nextSpeech = `Дальше: ${clipSentences(next, 140)}. Хорошего дня.`;
+  // Что дальше — названиями, без номеров; «одобрите» и «выберите» сюда не попадают
+  const titles = (data.work || []).map((w) => ({ title: noIds(plain(w.title)).replace(/^«|»$/g, ''), progress: plain(w.progress) })).filter((w) => w.title);
+  const next = titles.length ? `Команда продолжит: ${titles.slice(0, 2).map((w) => `${w.title} — ${w.progress}`).join('; ')}`
+    : data.work?.length ? 'Команда продолжит начатое' : data.planning ? 'Команда составит план по взятым предложениям' : 'Работы в очереди у команды нет';
+  const nextSpeech = `Дальше. ${clipSentences(next, 180)}. Хорошего дня.`;
   const last = data.plain[data.plain.length - 1];
   if (last) {
     const para = (lead) => (last.text.split('\n').find((l) => l.startsWith(`${lead}:`)) || '').slice(lead.length + 1).trim();
-    const done = para('Что сделано') || last.text.replace(/\n/g, ' ');
+    const raw = noIds(para('Что сделано') || last.text.replace(/\n/g, ' '));
+    const done = raw.charAt(0).toUpperCase() + raw.slice(1);
     const used = scenes.reduce((n, s) => n + s.speech.length, 0) + say(nextSpeech).length;
     const room = Math.max(160, cfg.video.max_seconds * CHARS_PER_SECOND - used);
     add('Что сделано', [clipSentences(done, 330)], `Что сделано. ${clipSentences(done, Math.min(room, 420))}`);
   }
-  add('Что дальше', [clipSentences(next, 220)], nextSpeech);
+  add('Что дальше', titles.length ? titles.slice(0, 2).map((w) => `${clipSentences(w.title, 110)} — ${w.progress}`) : [next], nextSpeech);
   return scenes;
 }
 

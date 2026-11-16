@@ -260,7 +260,8 @@ export function composeSummary(p, cfg, opts = {}) { return summaryData(p, cfg, o
 
 /**
  * Сводка и её части (0.12.0): html — текст для Telegram; остальное — те же данные по кускам, из них собирается ролик-сводка:
- * need — пункты «Нужно от вас» (HTML), plain — пересказы прогонов, runStats — { статус: сколько }, changes — строки изменений, next — следующий прогон.
+ * need — все пункты «Нужно от вас» (HTML), todo — только дела из отчётов и передачи смены, без одобрений и решений по спискам,
+ * work — что команда делает дальше: [{ title, progress }], planning — взяты ли пункты, по которым ещё нет плана, plain — пересказы прогонов, runStats — { статус: сколько }, changes — строки изменений, next — следующий прогон.
  */
 export function summaryData(p, cfg, { now = new Date(), since = null } = {}) {
   const records = readMetrics(p);
@@ -364,7 +365,7 @@ export function summaryData(p, cfg, { now = new Date(), since = null } = {}) {
   // 0.9.0: отчёты «Сделано» и метрики в Telegram не идут — они в techTail (терминал) и в файлах проекта.
   const statusCount = {};
   for (const st of [...runs.map((r) => r.status), ...expected.map(() => 'missed')]) statusCount[st] = (statusCount[st] || 0) + 1;
-  return { html: L.join('\n'), need: [...need, ...fromText], plain: plainRuns.map(({ r, text }) => ({ slot: r.slot || hhmm(new Date(r.started_at)), text })), runStats: statusCount, running: live.length > 0, changes: ch, next };
+  return { html: L.join('\n'), need: [...need, ...fromText], todo: fromText, work: work.map((c) => ({ title: changeTitle(p, c), progress: progress(c) })), planning: !!ideasBrief(p, cfg)?.taken?.length, plain: plainRuns.map(({ r, text }) => ({ slot: r.slot || hhmm(new Date(r.started_at)), text })), runStats: statusCount, running: live.length > 0, changes: ch, next };
 }
 
 /**

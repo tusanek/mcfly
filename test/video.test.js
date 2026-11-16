@@ -12,9 +12,11 @@ import { cfg, bareProject, tmpDir } from './helpers.js';
 
 const NOW = new Date(2026, 10, 16, 8, 0);
 const DATA = {
-  need: ['Одобрить <b>План 2</b>: кнопка «Отменить» под ответом бота (авто-одобрение 17.11 04:00)', 'Вопрос <b>Q4</b>: хранить ли историю дольше 30 дней'],
-  plain: [{ slot: '04:00', text: 'Что сделано: Бот отвечает на правку одной фразой. Версия 1.4.0 лежит в ветке main.\nЗачем: Так быстрее.\nЧто дальше: Напоминания.' }],
-  runStats: { ok: 2, missed: 1 }, running: false, changes: [], next: 'команда возьмёт «Напоминания» — задач 0 из 6',
+  need: ['Одобрить <b>План 2</b>: кнопка «Отменить» под ответом бота (авто-одобрение 17.11 04:00)', 'Решить по предложениям: I14, I15 и ещё 7 — кнопка «💡 Предложения»', 'проверить вход с телефона на версии 1.4.0'],
+  todo: ['проверить вход с телефона на версии 1.4.0', 'вписать адрес календаря в настройки'],
+  plain: [{ slot: '04:00', text: 'Что сделано: Бот отвечает на правку одной фразой, пункт I22 закрыт. Версия 1.4.0 лежит в ветке main.\nЗачем: Так быстрее.\nЧто дальше: Напоминания.' }],
+  runStats: { ok: 2, missed: 1 }, running: false, changes: [], next: 'команда продолжит I22 (сделано 0 из 6 шагов)',
+  work: [{ title: 'I22 «Напоминания за 15 минут»', progress: 'сделано 0 из 6 шагов' }], planning: false,
 };
 
 /** Установленное окружение роликов в подставной папке. */
@@ -32,30 +34,37 @@ const fakeRun = (calls = []) => async (bin, args, opts) => {
   else fs.writeFileSync(args[4], 'mp4');
 };
 
-test('summaryScenes: сцены по сводке; диктору — только русские слова, на экране текст как в сводке', () => {
+test('summaryScenes: сцены по сводке; диктору — только русские слова', () => {
   const scenes = summaryScenes(DATA, cfg, { now: NOW });
-  assert.deepEqual(scenes.map((s) => s.title), ['demo', 'Нужно от вас: 2', '3 прогона', 'Что сделано', 'Что дальше']);
+  assert.deepEqual(scenes.map((s) => s.title), ['demo', 'Нужно сделать: 2', '3 прогона', 'Что сделано', 'Что дальше']);
   assert.deepEqual(scenes.map((s) => s.key), ['s0', 's1', 's2', 's3', 's4']);
   for (const s of scenes) assert.doesNotMatch(s.speech, /[0-9A-Za-z<>]/, s.speech);
   assert.match(scenes[0].speech, /Сводка по проекту демо от шестнадцатого ноября/);
-  assert.match(scenes[1].speech, /От вас нужно: два пункта\. Первый: Одобрить План два/);
-  assert.match(scenes[1].speech, /Остальное — на экране и в сообщении\.$/);
-  assert.equal(scenes[1].lines[1], '2. Вопрос Q4: хранить ли историю дольше 30 дней');
+  assert.match(scenes[1].speech, /От вас нужно два дела\. Первое: проверить вход с телефона на версии один точка четыре точка ноль\. Остальное — на экране и в сообщении\.$/);
+  assert.deepEqual(scenes[1].lines, ['1. проверить вход с телефона на версии 1.4.0', '2. вписать адрес календаря в настройки']);
   assert.match(scenes[2].speech, /Было три прогона: успешно — два, пропущено — один\./);
   assert.match(scenes[3].speech, /Версия один точка четыре точка ноль лежит в ветке мэйн/);
   assert.doesNotMatch(scenes[3].speech, /Так быстрее/); // в ролик идёт только «Что сделано»
-  assert.match(scenes[4].speech, /задач ноль из шести\. Хорошего дня\.$/);
+  assert.match(scenes[4].speech, /Команда продолжит: Напоминания за пятнадцать минут — сделано ноль из шести шагов\. Хорошего дня\.$/);
+  assert.deepEqual(scenes[4].lines, ['Напоминания за 15 минут — сделано 0 из 6 шагов']);
 });
 
-test('summaryScenes: перечень номеров и отсылку к кнопке диктор не читает', () => {
-  const scenes = summaryScenes({ ...DATA, need: ['Решить по предложениям: I14, I15, I16 и ещё 7 — кнопка «💡 Предложения»'] }, cfg, { now: NOW });
-  assert.match(scenes[1].speech, /Вот он: Решить по предложениям: несколько пунктов\.$/);
-  assert.match(scenes[1].lines[0], /I14, I15, I16 и ещё 7/); // на экране — как в сводке
+test('0.12.0: одобрения, решения по спискам и номера пунктов в ролик не идут — ни на экран, ни диктору', () => {
+  const all = (scenes) => scenes.map((s) => [s.title, ...s.lines, s.speech].join(' ')).join(' ');
+  const text = all(summaryScenes(DATA, cfg, { now: NOW }));
+  assert.doesNotMatch(text, /Одобрить|одобр|Решить по предложениям|кнопка|I14|I22|ай двадцать два/);
+  // дел нет — сцены «нужно» нет вовсе, даже если ждут одобрения
+  const idle = summaryScenes({ ...DATA, todo: [], work: [], next: 'работы нет — одобрите План 2' }, cfg, { now: NOW });
+  assert.deepEqual(idle.map((s) => s.title), ['demo', '3 прогона', 'Что сделано', 'Что дальше']);
+  assert.doesNotMatch(all(idle), /одобр/i);
+  assert.match(idle[3].speech, /Работы в очереди у команды нет/);
+  const planning = summaryScenes({ ...DATA, work: [], planning: true }, cfg, { now: NOW });
+  assert.match(planning[4].speech, /Команда составит план по взятым предложениям/);
 });
 
-test('summaryScenes: пустая ночь — без сцены «Что сделано»; словарь проекта правит произношение', () => {
-  const scenes = summaryScenes({ need: [], plain: [], runStats: {}, running: false, changes: [], next: 'работы нет' }, { ...cfg, project: 'acme', video: { ...cfg.video, pronounce: { acme: '+акме' } } }, { now: NOW });
-  assert.deepEqual(scenes.map((s) => s.title), ['acme', 'От вас ничего не нужно', 'Прогонов не было', 'Что дальше']);
+test('summaryScenes: пустая ночь; словарь проекта правит произношение', () => {
+  const scenes = summaryScenes({ need: [], todo: [], plain: [], runStats: {}, running: false, changes: [], next: 'работы нет', work: [], planning: false }, { ...cfg, project: 'acme', video: { ...cfg.video, pronounce: { acme: '+акме' } } }, { now: NOW });
+  assert.deepEqual(scenes.map((s) => s.title), ['acme', 'Прогонов не было', 'Что дальше']);
   assert.match(scenes[0].speech, /проекту \+акме от/);
 });
 
@@ -74,6 +83,8 @@ test('summaryData отдаёт те же данные, что в тексте с
   const d = summaryData(p, cfg, { now: NOW, since: new Date(2026, 10, 15, 8, 0) });
   assert.match(d.html, /Нужно от вас \(1\)/);
   assert.deepEqual(d.need, ['проверить вход с телефона']);
+  assert.deepEqual(d.todo, ['проверить вход с телефона']);
+  assert.deepEqual(d.work, []);
   assert.deepEqual(d.plain, [{ slot: '04:00', text: 'Что сделано: починили вход.' }]);
   assert.equal(d.runStats.ok, 1);
   assert.ok(d.next);
