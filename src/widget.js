@@ -75,8 +75,7 @@ export function weeklyRichHtml(data, cfg) {
   const g = data.goals;
   return `<h3>📋 ${esc(cfg.project)} · итоги недели ${dm(data.since)}–${dm(data.now)}</h3>`
     + `<p>Завершено изменений: ${all.length}${items.length < all.length ? ` (в списке последние ${items.length})` : ''}.${g ? ` Цели: сделано ${g.done} из ${g.total}${g.delta > 0 ? `, +${g.delta} за неделю` : ''}.` : ''}</p>`
-    + part('Новое', items.filter((x) => x.notable), true) + part('Исправления и доработки', items.filter((x) => !x.notable), false)
-    + '<footer>Раздел сворачивается и раскрывается нажатием на его заголовок.</footer>';
+    + part('Новое', items.filter((x) => x.notable), true) + part('Исправления и доработки', items.filter((x) => !x.notable), false);
 }
 
 /** Тот же список обычным текстом (HTML Telegram) — когда виджет и расширенное сообщение не приняты или выключены. */
