@@ -1,6 +1,6 @@
 # src: код CLI mcfly
 
-Вход: cli.js (разбор команд: run, summary, answers, status, ideas, finding, question, approval, metric, telegram, action, remind, schedule). Тесты к модулю: test/<модуль>.test.js (нет отдельных тестов у action-config, chain, notices, state).
+Вход: cli.js (разбор команд: run, summary, answers, status, ideas, finding, question, approval, metric, telegram, action, remind, schedule, video). Тесты к модулю: test/<модуль>.test.js (нет отдельных тестов у action-config, chain, notices, state).
 
 ## Прогон
 - runner.js - прогон: лок, запись прогона, коммит служебных файлов, запасная сводка, уведомления в Telegram, передача смены на ночь.
@@ -18,6 +18,8 @@
 - answers.js - разбор сообщений владельца и запись ответов в файлы проекта.
 - overview.js - экраны бота: статус, цели, статистика, предложения, меню.
 - summary.js - утренняя сводка: разделы отчёта, «Нужно от вас», кнопки.
+- video.js - сводка роликом с голосом: сцены из данных сводки, озвучка и сборка с лимитом времени, отправка, `mcfly video setup`.
+- speech.js - текст для диктора: числа, время и даты словами, иностранные слова по словарю и русскими буквами.
 - notices.js - очередь сообщений, не ушедших из-за связи.
 - reminders.js - напоминания владельцу в чат бота.
 

@@ -12,10 +12,11 @@ import { isTrusted, hasActions } from './actions.js';
 import { mainBranchIssue } from './init.js';
 import { labelFor, runLaunchctl } from './schedule.js';
 import { readPower, powerChecks } from './power.js';
+import { videoProblems } from './video.js';
 
 function ver(bin, args = ['--version']) { const r = spawnSync(bin, args, { encoding: 'utf8' }); return r.status === 0 ? String(r.stdout || r.stderr).trim().split('\n')[0] : null; }
 
-export function doctor({ projectDir, probe = false, log = console.log, launchctl = runLaunchctl, power = process.platform === 'darwin' ? readPower : null }) {
+export function doctor({ projectDir, probe = false, log = console.log, launchctl = runLaunchctl, power = process.platform === 'darwin' ? readPower : null, video = videoProblems }) {
   const p = paths(projectDir); loadEnv(projectDir);
   const checks = [];
   const add = (ok, label, hint = '') => checks.push({ ok: !!ok, label, hint });
@@ -58,6 +59,12 @@ export function doctor({ projectDir, probe = false, log = console.log, launchctl
       add(loaded, loaded ? 'бот отвечает на кнопки и сообщения (задание answers работает)' : 'бот не будет отвечать на кнопки и сообщения — нет задания answers', 'выполните mcfly schedule install');
     }
     if (cfg.run.vpn_service) { const st = vpnStatus(cfg.run.vpn_service, { scutil: cfg.run.scutil_bin }); add(st, `VPN «${cfg.run.vpn_service}»: ${st || 'не найден'}`, 'имя сервиса — как в scutil --nc list'); }
+  }
+  if (cfg?.video?.enabled) {
+    // 0.12.0: ролик-сводка включён — проверяем сборщик, окружение озвучки и модель голоса
+    const missing = video(cfg);
+    if (missing.length) for (const m of missing) add(false, `ролик-сводка: ${m.label}`, m.hint);
+    else add(true, `ролик-сводка: сборщик и озвучка на месте (голос ${cfg.video.voice})`);
   }
   for (const name of cfg?.design?.skills || []) {
     // Навык из дополнения («дополнение:навык») по папкам не проверить — только предупреждаем

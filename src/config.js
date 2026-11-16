@@ -31,6 +31,8 @@ export const DEFAULT_CONFIG = {
   design: { skills: [] },
   // Находки для доработки самого mcfly (0.11.0): агенты и сессии регистрируют, владелец одобряет в боте, одобренное — в общий ящик inbox
   findings: { enabled: true, inbox: '~/mcfly-inbox.md' },
+  // Сводка коротким роликом с голосом (0.12.0): после текста сводки, отдельным сообщением; pronounce — { слово: как прочитать }
+  video: { enabled: false, voice: 'eugene', max_seconds: 60, timeout_minutes: 10, pronounce: {} },
 };
 
 function merge(base, over) {
@@ -74,6 +76,12 @@ export function validate(cfg) {
   if (!Array.isArray(skills) || skills.some((x) => typeof x !== 'string' || !/^[\w:.-]+$/.test(x))) errors.push('design.skills: список названий навыков, например [impeccable]');
   if (typeof cfg.findings?.enabled !== 'boolean') errors.push('findings.enabled: true или false');
   if (typeof cfg.findings?.inbox !== 'string' || !cfg.findings.inbox.trim()) errors.push('findings.inbox: путь к файлу общего ящика, например ~/mcfly-inbox.md');
+  const video = cfg.video || {};
+  if (typeof video.enabled !== 'boolean') errors.push('video.enabled: true или false');
+  if (!['aidar', 'baya', 'kseniya', 'eugene', 'xenia'].includes(video.voice)) errors.push('video.voice: один из голосов aidar, baya, kseniya, eugene, xenia');
+  if (!(video.max_seconds >= 20 && video.max_seconds <= 180)) errors.push('video.max_seconds: от 20 до 180');
+  if (!(video.timeout_minutes > 0 && video.timeout_minutes <= 60)) errors.push('video.timeout_minutes: больше 0 и не больше 60');
+  if (!video.pronounce || typeof video.pronounce !== 'object' || Array.isArray(video.pronounce) || Object.values(video.pronounce).some((v) => typeof v !== 'string')) errors.push('video.pronounce: словарь «слово: как прочитать»');
   if (!cfg.links || typeof cfg.links !== 'object' || Array.isArray(cfg.links)) errors.push('links: словарь «подпись: адрес»');
   else for (const [k, v] of Object.entries(cfg.links)) if (!/^https?:\/\/[^\s"<>]+$/.test(String(v))) errors.push(`links.${k}: адрес http:// или https:// без пробелов, кавычек и <>`);
   if (errors.length) throw new Error('Ошибки в mcfly/config.yaml:\n- ' + errors.join('\n- '));

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { readText, fmtShort, fmtDay, fmtDuration, truncate, pad2 } from './util.js';
 import { readMetrics, aggregate, formatEvents, runStats } from './metrics.js';
 import { loadQuestions, openQuestions } from './questions.js';
-import { listChanges, pendingApprovals, approvedWithWork, pausedChanges, pausedUntil, proposalExcerpt, approvalDeadline, isAutoApprovable, proposalSamples } from './approvals.js';
+import { listChanges, pendingApprovals, approvedWithWork, pausedChanges, pausedUntil, proposalExcerpt, approvalDeadline, isAutoApprovable, proposalSamples, archivedSince } from './approvals.js';
 import { loadIdeas, ideasBrief } from './ideas.js';
 import { expectedSlots, slotKey } from './window.js';
 import { loadState, saveState } from './state.js';
@@ -15,6 +15,7 @@ import { enqueueNotice } from './notices.js';
 import { listActions } from './action-config.js';
 import { currentRun } from './runner.js';
 import { pendingFindings } from './findings.js';
+import { sendSummaryVideo } from './video.js';
 
 // 0.9.0: статусы для владельца — словами, без жаргона («квота», «API»)
 export const STATUS_RU = { ok: 'прошёл успешно', missed: 'пропущен: Mac спал или был выключен', error: 'сорвался из-за сбоя', timeout: 'остановлен: не уложился в отведённое время', quota: 'остановлен: кончился лимит подписки', network: 'не состоялся: не было связи с Claude (проверьте VPN и интернет)', locked: 'не запускался: шёл другой прогон' };
@@ -255,7 +256,14 @@ export function nextRunText(work, pend, progress, esc = (t) => t, ideas = null, 
   return 'работы нет — одобрите изменение или напишите команде заметку';
 }
 
-export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) {
+export function composeSummary(p, cfg, opts = {}) { return summaryData(p, cfg, opts).html; }
+
+/**
+ * Сводка и её части (0.12.0): html — текст для Telegram; остальное — те же данные по кускам, из них собирается ролик-сводка:
+ * need — все пункты «Нужно от вас» (HTML), todo — только дела из отчётов и передачи смены, без одобрений и решений по спискам,
+ * work — что команда делает дальше: [{ title, progress }], demos — образцы «как это выглядит» завершённых за период и идущих изменений, planning — взяты ли пункты, по которым ещё нет плана, plain — пересказы прогонов, runStats — { статус: сколько }, changes — строки изменений, next — следующий прогон.
+ */
+export function summaryData(p, cfg, { now = new Date(), since = null } = {}) {
   const records = readMetrics(p);
   const runs = records.filter((r) => r.type === 'run' && (!since || new Date(r.started_at) > since));
   const changes = listChanges(p.openspecChanges);
@@ -346,7 +354,8 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
     const parts = [ids('proposed') && `ждут решения: ${ids('proposed')}`, ids('taken') && `взяты, команда спланирует: ${ids('taken')}`].filter(Boolean);
     if (fresh.length) L.push(`💡 Новых предложений: ${fresh.length}${parts.length ? ` — ${parts.join('; ')}` : ''}`);
   }
-  L.push('', `<b>🗓 Следующий прогон:</b> ${nextRunText(work, pend, progress, escHtml, ideasBrief(p, cfg), (c) => changeTitle(p, c, escHtml, { short: true }))}`);
+  const next = nextRunText(work, pend, progress, escHtml, ideasBrief(p, cfg), (c) => changeTitle(p, c, escHtml, { short: true }));
+  L.push('', `<b>🗓 Следующий прогон:</b> ${next}`);
   if (nightCurrent) {
     const lines = shiftSection(nightCurrent.path, 'Предложение на день');
     if (lines.length) L.push('', '<b>🌅 Предложение на день</b>', ...lines.map(inline));
@@ -354,7 +363,10 @@ export function composeSummary(p, cfg, { now = new Date(), since = null } = {}) 
   if (day && (!since || shiftTime(day) > since) && /\(источник: авто\)/.test(readText(day.path, '').split('\n')[0])) L.push('⚠️ смену не сдали — ночь шла по авто-передаче');
 
   // 0.9.0: отчёты «Сделано» и метрики в Telegram не идут — они в techTail (терминал) и в файлах проекта.
-  return L.join('\n');
+  const demos = [...archivedSince(p.openspecChanges, since), ...work].flatMap((c) => proposalSamples(c).filter((x) => x.text || x.buttons.length).map((x) => ({ change: changeTitle(p, c), ...x })));
+  const statusCount = {};
+  for (const st of [...runs.map((r) => r.status), ...expected.map(() => 'missed')]) statusCount[st] = (statusCount[st] || 0) + 1;
+  return { html: L.join('\n'), need: [...need, ...fromText], todo: fromText, work: work.map((c) => ({ title: changeTitle(p, c), progress: progress(c) })), planning: !!ideasBrief(p, cfg)?.taken?.length, demos, plain: plainRuns.map(({ r, text }) => ({ slot: r.slot || hhmm(new Date(r.started_at)), text })), runStats: statusCount, running: live.length > 0, changes: ch, next };
 }
 
 /**
@@ -409,17 +421,18 @@ export function summaryKeyboard(p, cfg) {
   return rows;
 }
 
-export async function sendSummary(p, cfg, { now = new Date(), telegram = null, log = console.log } = {}) {
+export async function sendSummary(p, cfg, { now = new Date(), telegram = null, log = console.log, video = sendSummaryVideo } = {}) {
   const state = loadState(p);
   const since = state.last_summary_at ? new Date(state.last_summary_at) : new Date(now.getTime() - 24 * 3600_000);
-  const html = composeSummary(p, cfg, { now, since });
+  const data = summaryData(p, cfg, { now, since }); const html = data.html;
   const token = process.env[cfg.telegram.token_env];
   if (!token || !cfg.telegram.chat_id) { log(htmlToPlain(html)); log('\n(Telegram не настроен: сводка выведена в консоль)'); return { sent: false, text: html }; }
   const tg = telegram || createTelegram({ token });
   // Не влезла в одно сообщение — несколько по границам строк; кнопки под первым.
   const parts = splitHtml(html, TG_MAX); const keyboard = summaryKeyboard(p, cfg);
+  let firstId = null;
   try {
-    for (const [i, part] of parts.entries()) await tg.sendMessage(cfg.telegram.chat_id, part, { html: true, keyboard: i === 0 ? keyboard : null });
+    for (const [i, part] of parts.entries()) { const sent = await tg.sendMessage(cfg.telegram.chat_id, part, { html: true, keyboard: i === 0 ? keyboard : null }); if (i === 0) firstId = sent?.[0]?.message_id ?? null; }
   } catch (e) {
     // Короткая тревога простым текстом; last_summary_at не двигается — следующая сводка охватит и этот период. Ошибка — дальше, launchd увидит код 1.
     const alarm = `⚠️ mcfly ${cfg.project}: сводка не отправлена (${truncate(String(e?.message || e), 300)}), смотрите \`mcfly summary\``;
@@ -428,5 +441,7 @@ export async function sendSummary(p, cfg, { now = new Date(), telegram = null, l
   }
   state.last_summary_at = now.toISOString(); saveState(p, state);
   log(`Сводка отправлена (${html.length} символов${parts.length > 1 ? `, сообщений ${parts.length}` : ''}).`);
-  return { sent: true, text: html };
+  // 0.12.0: ролик — после текста и отдельным сообщением; его сбой сводку не срывает
+  const clip = cfg.video?.enabled ? await video(p, cfg, { data, tg, now, replyTo: firstId, log }) : null;
+  return { sent: true, text: html, video: clip };
 }

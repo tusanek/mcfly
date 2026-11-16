@@ -52,6 +52,8 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   action prepare|exec <id> --ticket <t>           служебные: их запускает бот после нажатия кнопки
   finding add --text <t> [--evidence <t>]        находка для доработки самого mcfly (не проекта); владелец решает в боте, передавать ли
   finding list | finding send <Fн> | finding drop <Fн>   список; передать в общий ящик или убрать (только владелец в терминале)
+  video setup | video build [--send]              ролик-сводка с голосом (video.enabled): установить сборщик и озвучку (около 2 ГБ);
+                                                  собрать ролик из текущей сводки (--send — отправить в Telegram)
   remind list | remind rm <Rн>                    напоминания владельцу (ставятся в боте: «напомни 19:00 текст»)
 Общие флаги: --project <dir> (по умолчанию текущий каталог или MCFLY_PROJECT_DIR)`;
 
@@ -311,6 +313,24 @@ export async function main(argv) {
         const id = String(rest[0] || '').toUpperCase();
         if (!/^R\d+$/.test(id)) { console.error('Укажите номер: mcfly remind rm R3 (список — mcfly remind list)'); return 1; }
         const line = cancelReminder(p, id, now); log(line); return line.startsWith('✖️') ? 0 : 1;
+      }
+      break;
+    }
+    case 'video': {
+      const { setupVideo, buildVideo, summaryScenes, sendSummaryVideo } = await import('./video.js');
+      const { summaryData } = await import('./summary.js');
+      if (sub === 'setup') { try { await setupVideo(cfg, { log }); return 0; } catch (e) { console.error(`Установка не удалась: ${e.message}`); return 1; } }
+      if (sub === 'build') {
+        const data = summaryData(p, cfg, { now, since: new Date(now.getTime() - 24 * 3600_000) });
+        if (values.send) {
+          const token = process.env[cfg.telegram.token_env];
+          if (!token || !cfg.telegram.chat_id) { console.error('Telegram не настроен: нет токена или chat_id.'); return 1; }
+          const { createTelegram } = await import('./telegram.js');
+          return (await sendSummaryVideo(p, cfg, { data, tg: createTelegram({ token }), now, log })).sent ? 0 : 1;
+        }
+        const scenes = summaryScenes(data, cfg, { now });
+        for (const s of scenes) log(`${s.key} «${s.title}»: ${s.speech}`);
+        try { const r = await buildVideo(cfg, { scenes, name: 'preview', now }); log(`Ролик: ${r.file} (${r.seconds} с)`); return 0; } catch (e) { console.error(`Ролик не собран: ${e.message}`); return 1; }
       }
       break;
     }

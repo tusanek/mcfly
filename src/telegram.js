@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 export function chunk(text, max = 4000) {
   const out = []; let rest = text;
   while (rest.length > max) {
@@ -46,6 +48,28 @@ export function createTelegram({ token, fetchImpl = globalThis.fetch, timeoutMs 
         results.push(await call('sendMessage', body));
       }
       return results;
+    },
+    /**
+     * Видео файлом с диска (0.12.0): подпись, ответ на сообщение replyTo. Бот принимает до 50 МБ; на загрузку — отдельный, длинный срок.
+     */
+    async sendVideo(chatId, file, { caption = '', replyTo = null, duration = 0, width = 0, height = 0, uploadTimeoutMs = 180_000 } = {}) {
+      const size = fs.statSync(file).size;
+      if (size > 50 * 1024 * 1024) throw new Error(`Telegram sendVideo: файл ${Math.round(size / 1024 / 1024)} МБ, бот принимает до 50 МБ`);
+      const form = new FormData();
+      form.set('chat_id', String(chatId)); form.set('supports_streaming', 'true');
+      if (caption) form.set('caption', caption);
+      if (replyTo) form.set('reply_parameters', JSON.stringify({ message_id: replyTo, allow_sending_without_reply: true }));
+      for (const [k, v] of Object.entries({ duration, width, height })) if (v) form.set(k, String(v));
+      form.set('video', new Blob([fs.readFileSync(file)], { type: 'video/mp4' }), path.basename(file));
+      let res;
+      try { res = await fetchImpl(`${base}/sendVideo`, { method: 'POST', body: form, signal: AbortSignal.timeout(uploadTimeoutMs) }); } catch (e) {
+        if (e?.name === 'TimeoutError' || e?.name === 'AbortError') throw new Error(`Telegram sendVideo: нет ответа за ${Math.round(uploadTimeoutMs / 1000)} с`);
+        throw e;
+      }
+      let data;
+      try { data = await res.json(); } catch { throw new Error(`Telegram sendVideo: HTTP ${res.status}`); }
+      if (!data?.ok) throw new Error(`Telegram sendVideo: ${data?.description || res.status}`);
+      return data.result;
     },
     getUpdates(offset = 0, timeoutSec = 0) { return call('getUpdates', { offset, timeout: timeoutSec, allowed_updates: ['message', 'callback_query'] }); },
     answerCallbackQuery(id, text = '') { return call('answerCallbackQuery', { callback_query_id: id, text }); },
