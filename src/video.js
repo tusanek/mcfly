@@ -199,6 +199,7 @@ export function weeklyScenes(data, cfg) {
 }
 
 const FPS = 30;
+const CRF = 30; // сжатие ролика: недельный на две минуты — не больше 20 МБ
 /** Кадров в сцене — та же формула, что в шаблоне (video/src): речь, хвост 0,3 с и 3 кадра до голоса. */
 export const sceneFrames = (duration) => Math.ceil((duration + 0.3) * FPS) + 3;
 
@@ -226,10 +227,13 @@ export function syncTemplate(vp) {
  * Собрать ролик: озвучка сцен → длина сцен по голосу → картинка. Возвращает { file, seconds }.
  * Всё вместе — не дольше video.timeout_minutes; рабочие файлы — во временной папке, она удаляется.
  */
-export async function buildVideo(cfg, { scenes, name, kind = 'Утренняя сводка', now = new Date(), run = runTool, vp = videoPaths(cfg) }) {
+const BIG_FILE = 45 * 1024 * 1024; // боты Telegram отправляют файлы до 50 МБ
+const sceneProps = ({ speech: _s, hold: _h, ...s }) => ({ ...s, kind: s.kind || 'text', chat: s.chat || null, bar: s.bar || null });
+
+export async function buildVideo(cfg, { scenes, name, weekly = false, kind = weekly ? 'Итоги недели' : 'Утренняя сводка', now = new Date(), run = runTool, vp = videoPaths(cfg), timeoutMs = cfg.video.timeout_minutes * 60_000 }) {
   const missing = videoProblems(cfg, vp);
   if (missing.length) throw new Error(`${missing.map((m) => m.label).join('; ')} — ${missing[0].hint}`);
-  const deadline = Date.now() + cfg.video.timeout_minutes * 60_000;
+  const deadline = Date.now() + timeoutMs;
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-video-'));
   try {
     syncTemplate(vp);
@@ -247,16 +251,47 @@ export async function buildVideo(cfg, { scenes, name, kind = 'Утренняя �
         ...scenes.flatMap((s, i) => ['-map', `${i}:a`, '-filter:a', `atempo=${speed}`, path.join(voiceDir, `${s.key}.wav`)])], { cwd: work, timeoutMs: deadline - Date.now(), label: 'ускорение голоса' });
     }
     // Темп (0.15.0): сцена длится как речь; у сцен из кода время «на чтение» (hold) — нижняя граница, но не дольше речи плюс 2 с
-    const props = { project: cfg.project, kind, date: `${now.getDate()} ${MONTHS_GEN[now.getMonth()]}`, scenes: scenes.map(({ speech: _s, hold, ...s }) => {
+    const props = { project: cfg.project, kind, date: `${now.getDate()} ${MONTHS_GEN[now.getMonth()]}`, scenes: scenes.map((s) => {
       const voice = Math.round(durations[s.key] / speed * 100) / 100;
-      return { ...s, kind: s.kind || 'text', chat: s.chat || null, bar: s.bar || null, voice, duration: hold ? Math.min(Math.max(voice, hold), voice + 2) : voice };
+      return { ...sceneProps(s), voice, duration: s.hold ? Math.min(Math.max(voice, s.hold), voice + 2) : voice };
     }) };
     writeJson(path.join(work, 'props.json'), props);
     const file = path.join(ensureDir(vp.out), `${name}.mp4`);
-    await run(process.execPath, [vp.cli, 'render', 'src/index.jsx', 'Summary', file, `--props=${path.join(work, 'props.json')}`, `--public-dir=${path.join(work, 'public')}`, '--log=error'],
+    // Сжатие: обычное; файл больше 45 МБ — ещё раз, сильнее и в меньшем размере кадра
+    const render = (quality) => run(process.execPath, [vp.cli, 'render', 'src/index.jsx', weekly ? 'Weekly' : 'Daily', file, `--props=${path.join(work, 'props.json')}`, `--public-dir=${path.join(work, 'public')}`, ...quality, '--log=error'],
       { cwd: vp.app, timeoutMs: deadline - Date.now(), label: 'сборка ролика' });
+    await render([`--crf=${CRF}`]);
     if (!exists(file)) throw new Error('сборка ролика: файл не появился');
-    return { file, seconds: Math.round(props.scenes.reduce((n, s) => n + sceneFrames(s.duration), 0) / FPS) };
+    if (fs.statSync(file).size > BIG_FILE) await render(['--crf=36', '--scale=0.75']);
+    return { file, seconds: Math.round(props.scenes.reduce((n, s) => n + sceneFrames(s.duration), 0) / FPS), bytes: fs.statSync(file).size };
+  } finally { fs.rmSync(work, { recursive: true, force: true }); }
+}
+
+/**
+ * Кадры для зрителя (0.15.0): по картинке NN.png на сцену в dir, без озвучки — длина сцены оценивается по тексту диктора.
+ * Кадр берётся на 70 % сцены, когда всё уже появилось. Возвращает пути к файлам.
+ */
+export async function renderStills(cfg, { scenes, dir, weekly = false, now = new Date(), run = runTool, vp = videoPaths(cfg), timeoutMs = 5 * 60_000 }) {
+  const missing = videoProblems(cfg, vp);
+  if (missing.length) throw new Error(`${missing.map((m) => m.label).join('; ')} — ${missing[0].hint}`);
+  const deadline = Date.now() + timeoutMs;
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-stills-'));
+  try {
+    syncTemplate(vp); ensureDir(dir);
+    const speed = cfg.video.voice_speed || 1;
+    const list = scenes.map((s) => {
+      const voice = Math.max(1.5, Math.round(s.speech.length / (CHARS_PER_SECOND * speed) * 100) / 100);
+      return { ...sceneProps(s), voice: false, duration: s.hold ? Math.min(Math.max(voice, s.hold), voice + 2) : voice };
+    });
+    writeJson(path.join(work, 'props.json'), { project: cfg.project, kind: weekly ? 'Итоги недели' : 'Утренняя сводка', date: `${now.getDate()} ${MONTHS_GEN[now.getMonth()]}`, scenes: list });
+    const files = []; let from = 0;
+    for (const [i, s] of list.entries()) {
+      const n = sceneFrames(s.duration); const file = path.join(dir, `${pad2(i + 1)}.png`);
+      await run(process.execPath, [vp.cli, 'still', 'src/index.jsx', weekly ? 'Weekly' : 'Daily', file, `--frame=${from + Math.min(n - 10, Math.round(n * 0.7))}`, `--props=${path.join(work, 'props.json')}`, '--scale=0.5', '--log=error'],
+        { cwd: vp.app, timeoutMs: deadline - Date.now(), label: `кадр ${i + 1}` });
+      files.push(file); from += n;
+    }
+    return files;
   } finally { fs.rmSync(work, { recursive: true, force: true }); }
 }
 
@@ -276,7 +311,7 @@ export async function sendSummaryVideo(p, cfg, { data, tg, now = new Date(), rep
   try {
     const scenes = weekly ? weeklyScenes(data, cfg) : summaryScenes(data, cfg, { now });
     const name = `${weekly ? 'weekly' : 'summary'}-${localDateKey(now)}-${pad2(now.getHours())}${pad2(now.getMinutes())}`;
-    const { file, seconds } = await build(cfg, { scenes, name, now, ...(weekly ? { kind: 'Итоги недели' } : {}) });
+    const { file, seconds } = await build(cfg, { scenes, name, now, weekly });
     await tg.sendVideo(cfg.telegram.chat_id, file, { caption: `🎬 ${weekly ? 'Итоги недели к' : 'Сводка за'} ${pad2(now.getDate())}.${pad2(now.getMonth() + 1)} · ${mmss(seconds)}`, replyTo, duration: seconds, width: 1080, height: 1920 });
     pruneVideos(path.dirname(file));
     log(`Ролик сводки отправлен (${mmss(seconds)}, ${file}).`);

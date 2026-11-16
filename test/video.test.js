@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import path from 'node:path';
-import { projectSlug, summaryScenes, videoPaths, videoProblems, buildVideo, sendSummaryVideo, pruneVideos, runTool } from '../src/video.js';
+import { projectSlug, summaryScenes, videoPaths, videoProblems, buildVideo, renderStills, sendSummaryVideo, pruneVideos, runTool } from '../src/video.js';
 import { summaryData, sendSummary } from '../src/summary.js';
 import { parseConfig } from '../src/config.js';
 import { createTelegram } from '../src/telegram.js';
@@ -36,6 +36,7 @@ function fakeHome() {
 const fakeRun = (calls = []) => async (bin, args, opts) => {
   const call = { bin, args, opts }; calls.push(call);
   if (opts.label === 'озвучка') fs.writeFileSync(args[4], JSON.stringify(Object.fromEntries(Object.keys(JSON.parse(fs.readFileSync(args[2], 'utf8'))).map((k) => [k, 2]))));
+  else if (args[1] === 'still') fs.writeFileSync(args[4], 'png');
   else if (opts.label === 'сборка ролика') { call.props = JSON.parse(fs.readFileSync(args.find((a) => a.startsWith('--props=')).slice(8), 'utf8')); fs.writeFileSync(args[4], 'mp4'); }
 };
 /** Свойства, с которыми собран ролик из этих сцен. */
@@ -150,7 +151,7 @@ test('buildVideo: озвучка → длительности → сборка; 
   assert.equal(calls[0].args[5], 'eugene');
   assert.ok(calls[2].args.some((a) => a.startsWith('--props=')));
   assert.ok(!fs.existsSync(path.dirname(calls[0].args[2])), 'временная папка убрана');
-  assert.ok(fs.existsSync(path.join(vp.app, 'src', 'Summary.jsx')), 'шаблон ролика скопирован из комплекта');
+  assert.ok(fs.existsSync(path.join(vp.app, 'src', 'Daily.jsx')), 'шаблон ролика скопирован из комплекта');
 });
 
 test('buildVideo: нет окружения — понятная ошибка, ничего не запускается', async () => {
@@ -280,4 +281,40 @@ test('0.15.0 запасные сцены: у образца чата речь о
   const chats = summaryScenes(DATA, cfg, { now: NOW }).filter((s) => s.kind === 'chat');
   assert.ok(chats.length > 0);
   for (const s of chats) { assert.doesNotMatch(s.speech, /Вот как это выглядит|И ещё один пример/); assert.ok(s.speech.length >= 20); }
+});
+
+const TWO = [{ key: 's0', kind: 'hook', title: 'а', lines: [], speech: 'Первая сцена ролика.', hold: 0 }, { key: 's1', kind: 'finale', title: 'б', lines: [], speech: 'Вторая сцена.', hold: 0 }];
+
+test('0.15.0 buildVideo: утренний ролик — оформление Daily, недельный — Weekly; возвращает размер файла', async () => {
+  const calls = []; const vp = fakeHome();
+  const r = await buildVideo(cfg, { scenes: TWO, name: 'a', run: fakeRun(calls), vp });
+  const w = await buildVideo(cfg, { scenes: TWO, name: 'b', run: fakeRun(calls), vp, weekly: true });
+  const renders = calls.filter((c) => c.opts.label === 'сборка ролика');
+  assert.deepEqual(renders.map((c) => c.args[3]), ['Daily', 'Weekly']); assert.deepEqual(renders.map((c) => c.props.kind), ['Утренняя сводка', 'Итоги недели']);
+  assert.equal(r.bytes, 3); assert.equal(w.bytes, 3); assert.ok(renders[0].args.includes('--crf=30'));
+});
+
+test('0.15.0 buildVideo: файл больше 45 МБ пересобирается сильнее сжатым', async () => {
+  const calls = []; let n = 0;
+  const run = async (bin, args, opts) => {
+    if (opts.label !== 'сборка ролика') return fakeRun(calls)(bin, args, opts);
+    calls.push({ bin, args, opts }); n += 1;
+    fs.writeFileSync(args[4], Buffer.alloc(n === 1 ? 46 * 1024 * 1024 : 1024));
+  };
+  const r = await buildVideo(cfg, { scenes: TWO, name: 'big', run, vp: fakeHome() });
+  const renders = calls.filter((c) => c.opts.label === 'сборка ролика');
+  assert.equal(renders.length, 2); assert.ok(renders[1].args.includes('--crf=36') && renders[1].args.includes('--scale=0.75')); assert.equal(r.bytes, 1024);
+});
+
+test('0.15.0 buildVideo: свой предел времени (timeoutMs) вместо video.timeout_minutes', async () => {
+  const calls = [];
+  await buildVideo(cfg, { scenes: TWO, name: 't', run: fakeRun(calls), vp: fakeHome(), timeoutMs: 5 * 60_000 });
+  assert.ok(calls.every((c) => c.opts.timeoutMs <= 5 * 60_000 && c.opts.timeoutMs > 4 * 60_000));
+});
+
+test('0.15.0 renderStills: кадр на сцену, без озвучки, в оформлении своего ролика', async () => {
+  const calls = []; const dir = path.join(tmpDir('stills-'), 'stills');
+  const files = await renderStills(cfg, { scenes: TWO, dir, weekly: true, run: fakeRun(calls), vp: fakeHome() });
+  assert.deepEqual(files.map((f) => path.basename(f)), ['01.png', '02.png']); assert.ok(files.every((f) => fs.existsSync(f)));
+  assert.ok(calls.every((c) => c.args[1] === 'still' && c.args[3] === 'Weekly')); assert.equal(calls.length, 2);
 });

@@ -353,7 +353,7 @@ export async function main(argv) {
         }
         const scenes = weekly ? weeklyScenes(data, cfg) : summaryScenes(data, cfg, { now });
         for (const s of scenes) log(`${s.key} «${s.title}»: ${s.speech}`);
-        try { const r = await buildVideo(cfg, { scenes, name: weekly ? 'preview-weekly' : 'preview', now, ...(weekly ? { kind: 'Итоги недели' } : {}) }); log(`Ролик: ${r.file} (${r.seconds} с)`); return 0; } catch (e) { console.error(`Ролик не собран: ${e.message}`); return 1; }
+        try { const r = await buildVideo(cfg, { scenes, name: weekly ? 'preview-weekly' : 'preview', now, weekly }); log(`Ролик: ${r.file} (${r.seconds} с)`); return 0; } catch (e) { console.error(`Ролик не собран: ${e.message}`); return 1; }
       }
       break;
     }

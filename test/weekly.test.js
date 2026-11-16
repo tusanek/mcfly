@@ -179,7 +179,7 @@ test('sendSummaryVideo weekly: своё имя файла, подпись и в�
   const c = { ...cfg, video: { ...cfg.video, enabled: true } };
   const r = await sendSummaryVideo(p, c, { data: weeklyData(p, c, { now: NOW }), tg, now: NOW, replyTo: 5, log: () => {}, weekly: true, build: async (_, o) => { built.push(o); return { file: '/tmp/x/weekly.mp4', seconds: 61 }; } });
   assert.equal(r.sent, true);
-  assert.equal(built[0].kind, 'Итоги недели');
+  assert.equal(built[0].weekly, true);
   assert.match(built[0].name, /^weekly-2026-11-15-1900$/);
   assert.equal(calls[0][2].caption, '🎬 Итоги недели к 15.11 · 1:01');
 });
