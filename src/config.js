@@ -52,7 +52,7 @@ export function validate(cfg) {
   for (const s of cfg.schedule.slots) if (!/^\d{2}:\d{2}$/.test(String(s))) errors.push(`schedule.slots: неверный слот "${s}" (нужно HH:MM)`);
   if (!/^\d{2}:\d{2}$/.test(String(cfg.schedule.summary_at))) errors.push('schedule.summary_at: нужно HH:MM');
   if (!(Number.isInteger(cfg.schedule.weekly_day) && cfg.schedule.weekly_day >= 0 && cfg.schedule.weekly_day <= 7)) errors.push('schedule.weekly_day: день недельной сводки от 1 (понедельник) до 7 (воскресенье), 0 — без неё');
-  if (!['widget', 'text', 'off'].includes(cfg.schedule.weekly_list)) errors.push('schedule.weekly_list: widget (виджетом Telegram), text (текстом) или off (не присылать полный список)');
+  if (!['widget', 'rich', 'text', 'off'].includes(cfg.schedule.weekly_list)) errors.push('schedule.weekly_list: widget (виджетом Telegram), rich (расширенным сообщением), text (текстом) или off (не присылать полный список)');
   if (!/^\d{2}:\d{2}$/.test(String(cfg.schedule.weekly_at))) errors.push('schedule.weekly_at: нужно HH:MM');
   if (!(Number.isInteger(cfg.schedule.answers_every_minutes) && cfg.schedule.answers_every_minutes >= 0)) errors.push('schedule.answers_every_minutes: целое число от 0');
   if (!(cfg.run.max_minutes > 0)) errors.push('run.max_minutes: должно быть больше 0');

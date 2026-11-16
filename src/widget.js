@@ -61,7 +61,24 @@ export function weeklyWidget(data, cfg) {
   return { html, caption, total: items.length, shown };
 }
 
-/** Тот же список обычным текстом (HTML Telegram) — когда виджет не принят или выключен. */
+/**
+ * Тот же список расширенным сообщением (Bot API 10.1, sendRichMessage, разметка HTML): заголовок, строка целей и два сворачиваемых
+ * раздела; каждый пункт — тоже сворачиваемый: название видно сразу, польза открывается нажатием. Пределы Telegram — 32768 знаков
+ * и 500 блоков; лишние (самые старые) пункты отбрасываются с пометкой.
+ */
+export function weeklyRichHtml(data, cfg) {
+  const all = [...(data.items || [])].reverse();
+  const items = all.slice(0, 200);
+  const one = (x) => (x.benefit ? `<details><summary>${esc(x.title)}</summary><p>${esc(truncate(x.benefit, 300))}</p></details>` : `<p>${esc(x.title)}</p>`);
+  const part = (title, list, open) => (list.length ? `<details${open ? ' open' : ''}><summary><b>${title} · ${list.length}</b></summary>${list.map(one).join('')}</details>` : '');
+  const g = data.goals;
+  return `<h3>📋 ${esc(cfg.project)} · итоги недели ${dm(data.since)}–${dm(data.now)}</h3>`
+    + `<p>Завершено изменений: ${all.length}${items.length < all.length ? ` (в списке последние ${items.length})` : ''}.${g ? ` Цели: сделано ${g.done} из ${g.total}${g.delta > 0 ? `, +${g.delta} за неделю` : ''}.` : ''}</p>`
+    + part('Новое', items.filter((x) => x.notable), true) + part('Исправления и доработки', items.filter((x) => !x.notable), false)
+    + '<footer>Нажмите на пункт, чтобы увидеть, что он даёт.</footer>';
+}
+
+/** Тот же список обычным текстом (HTML Telegram) — когда виджет и расширенное сообщение не приняты или выключены. */
 export function weeklyListHtml(data, cfg) {
   const items = [...(data.items || [])].reverse();
   if (!items.length) return '';

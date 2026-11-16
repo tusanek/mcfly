@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { weeklyWidget, weeklyListHtml, packedSize } from '../src/widget.js';
+import { weeklyWidget, weeklyRichHtml, weeklyListHtml, packedSize } from '../src/widget.js';
 import { sendWeeklyList } from '../src/weekly.js';
 import { DEFAULT_CONFIG, parseConfig } from '../src/config.js';
 import { createTelegram } from '../src/telegram.js';
@@ -48,25 +48,42 @@ test('weeklyListHtml: тот же список текстом, по раздел
   assert.equal(weeklyListHtml(data([]), cfg), '');
 });
 
-test('sendWeeklyList: виджетом ответом на сводку; не принят — текстом; off — ничего', async () => {
-  const d = data([item(1)]); const calls = [];
-  const ok = { sendWidget: async (...a) => { calls.push(['widget', ...a]); }, sendMessage: async (...a) => { calls.push(['text', ...a]); return [{}]; } };
+test('weeklyRichHtml: расширенное сообщение — два сворачиваемых раздела, пункт раскрывается в пользу', () => {
+  const html = weeklyRichHtml(data([item(1), item(2, false, ''), { title: 'A <b> & c', benefit: 'x < y', notable: true }]), cfg);
+  assert.match(html, /^<h3>📋 demo · итоги недели 08\.11–15\.11<\/h3><p>Завершено изменений: 3\. Цели: сделано 2 из 4, \+1 за неделю\.<\/p>/);
+  assert.match(html, /<details open><summary><b>Новое · 2<\/b><\/summary><details><summary>A &lt;b&gt; &amp; c<\/summary><p>x &lt; y<\/p><\/details><details><summary>Возможность номер 1<\/summary>/);
+  assert.match(html, /<details><summary><b>Исправления и доработки · 1<\/b><\/summary><p>Возможность номер 2<\/p><\/details>/);
+  const big = weeklyRichHtml(data(Array.from({ length: 260 }, (_, i) => item(i))), cfg);
+  assert.match(big, /Завершено изменений: 260 \(в списке последние 200\)/);
+  assert.ok(big.length < 32768);
+});
+
+test('sendWeeklyList: начинаем с выбранного способа, не принят — следующий: виджет → расширенное сообщение → текст', async () => {
+  const d = data([item(1)]); const calls = []; const lines = [];
+  const ok = { sendWidget: async (...a) => { calls.push(['widget', ...a]); }, sendRichMessage: async (...a) => { calls.push(['rich', ...a]); }, sendMessage: async (...a) => { calls.push(['text', ...a]); return [{}]; } };
+  const mode = (m) => ({ ...cfg, schedule: { ...cfg.schedule, weekly_list: m } });
   assert.equal(await sendWeeklyList(cfg, { data: d, tg: ok, replyTo: 5, log: () => {} }), 'widget');
   assert.equal(calls[0][0], 'widget'); assert.equal(calls[0][1], '7');
   assert.deepEqual(calls[0][3], { caption: '📋 demo: все изменения недели — 1', replyTo: 5 });
-  const lines = []; calls.length = 0;
-  const old = { ...ok, sendWidget: async () => { throw new Error('Telegram sendWidget: Not Found'); } };
-  assert.equal(await sendWeeklyList(cfg, { data: d, tg: old, log: (s) => lines.push(s) }), 'text');
-  assert.match(lines[0], /Виджет со списком недели не отправлен: Telegram sendWidget: Not Found; отправляю список текстом/);
+  calls.length = 0;
+  const closed = { ...ok, sendWidget: async () => { throw new Error('Telegram sendWidget: Bad Request: INPUT_MEDIA_WIDGET_NOT_ALLOWED'); } };
+  assert.equal(await sendWeeklyList(cfg, { data: d, tg: closed, replyTo: 5, log: (s) => lines.push(s) }), 'rich');
+  assert.match(lines[0], /Список недели виджетом не отправлен: .*INPUT_MEDIA_WIDGET_NOT_ALLOWED/);
+  assert.match(lines[1], /отправлен расширенным сообщением \(пунктов 1\)/);
+  assert.deepEqual([calls[0][0], calls[0][3]], ['rich', { replyTo: 5 }]);
+  calls.length = 0;
+  const old = { ...closed, sendRichMessage: async () => { throw new Error('Not Found'); } };
+  assert.equal(await sendWeeklyList(cfg, { data: d, tg: old, log: () => {} }), 'text');
   assert.equal(calls[0][0], 'text');
   calls.length = 0;
-  assert.equal(await sendWeeklyList({ ...cfg, schedule: { ...cfg.schedule, weekly_list: 'text' } }, { data: d, tg: ok, log: () => {} }), 'text');
-  assert.equal(calls[0][0], 'text');
+  assert.equal(await sendWeeklyList(mode('rich'), { data: d, tg: ok, log: () => {} }), 'rich');
+  assert.equal(await sendWeeklyList(mode('text'), { data: d, tg: ok, log: () => {} }), 'text');
+  assert.deepEqual(calls.map((c) => c[0]), ['rich', 'text']);
   calls.length = 0;
-  assert.equal(await sendWeeklyList({ ...cfg, schedule: { ...cfg.schedule, weekly_list: 'off' } }, { data: d, tg: ok, log: () => {} }), null);
+  assert.equal(await sendWeeklyList(mode('off'), { data: d, tg: ok, log: () => {} }), null);
   assert.equal(await sendWeeklyList(cfg, { data: data([]), tg: ok, log: () => {} }), null);
   assert.equal(calls.length, 0);
-  const dead = { sendWidget: async () => { throw new Error('x'); }, sendMessage: async () => { throw new Error('y'); } };
+  const dead = { sendWidget: async () => { throw new Error('x'); }, sendRichMessage: async () => { throw new Error('z'); }, sendMessage: async () => { throw new Error('y'); } };
   assert.equal(await sendWeeklyList(cfg, { data: d, tg: dead, log: () => {} }), null, 'сбой списка сводку не срывает');
 });
 
@@ -78,7 +95,16 @@ test('telegram.sendWidget: запрос sendWidget с подписью и отв
   assert.deepEqual(seen[0][1], { chat_id: '7', html: '<b>x</b>', caption: 'Подпись', reply_parameters: { message_id: 3, allow_sending_without_reply: true } });
 });
 
-test('настройки: weekly_list — widget, text или off', () => {
+test('telegram.sendRichMessage: запрос sendRichMessage с разметкой HTML', async () => {
+  const seen = [];
+  const tg = createTelegram({ token: 't', fetchImpl: async (url, opts) => { seen.push([url, JSON.parse(opts.body)]); return { json: async () => ({ ok: true, result: { message_id: 9 } }) }; } });
+  await tg.sendRichMessage('7', '<h3>x</h3>', { replyTo: 3 });
+  assert.match(seen[0][0], /\/sendRichMessage$/);
+  assert.deepEqual(seen[0][1], { chat_id: '7', rich_message: { html: '<h3>x</h3>' }, reply_parameters: { message_id: 3, allow_sending_without_reply: true } });
+});
+
+test('настройки: weekly_list — widget, rich, text или off', () => {
   assert.equal(parseConfig('project: demo').schedule.weekly_list, 'widget');
+  assert.equal(parseConfig('project: demo\nschedule: { weekly_list: rich }').schedule.weekly_list, 'rich');
   assert.throws(() => parseConfig('project: demo\nschedule: { weekly_list: file }'), /weekly_list/);
 });

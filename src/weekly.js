@@ -11,7 +11,7 @@ import { enqueueNotice } from './notices.js';
 import { parseGoals } from './overview.js';
 import { escHtml, inline, htmlToPlain, splitHtml, changeTitle, progressWords, STATUS_COUNT_RU } from './summary.js';
 import { sendSummaryVideo } from './video.js';
-import { weeklyWidget, weeklyListHtml } from './widget.js';
+import { weeklyWidget, weeklyRichHtml, weeklyListHtml } from './widget.js';
 
 // 0.13.0: недельная сводка — раз в неделю (schedule.weekly_day, schedule.weekly_at), итог за семь дней: что завершено, что в работе,
 // продвижение по целям, прогоны и их исход, что ждёт владельца, расход лимита подписки. При video.enabled — ещё и роликом.
@@ -34,11 +34,15 @@ export function closedItems(p, archived, ideas) {
     const named = idea ? String(idea.title || '') : '';
     // Без пункта списка название — первая фраза описания: пользу из того же описания не повторяем
     const own1 = changeTitle(p, c).replace(/^«|»$/g, '');
-    const title = named || own1.charAt(0).toUpperCase() + own1.slice(1);
+    // Название — одной строкой, с заглавной буквы, не длиннее 90 знаков: заметки владельца бывают обрывком фразы в несколько строк
+    const one = (named || own1).replace(/`/g, '').replace(/\s+/g, ' ').trim();
+    const title = truncate(one.charAt(0).toUpperCase() + one.slice(1), 90);
     const sample = proposalSamples(c).find((x) => x.text) || proposalSamples(c).find((x) => x.buttons.length) || null;
     const own = idea?.source === 'owner-backlog';
-    out.push({ title, benefit: String(idea?.benefit || (named ? proposalExcerpt(c, 200) : '') || '').replace(/`/g, ''), sample: sample ? { text: sample.text, buttons: sample.buttons } : null,
-      weight: (own ? 10 : 0) + (SIZE_RANK[idea?.size] || 1) + (sample ? 1 : 0), notable: !FIX_LIKE.test(title) && !!(sample || own) });
+    // Заметка владельца («неудобно то-то») — жалоба или просьба поправить, а не новая возможность
+    const note = idea?.source === 'owner-note';
+    out.push({ title, benefit: String(idea?.benefit || (named ? proposalExcerpt(c, 200) : '') || '').replace(/`/g, '').replace(/\s+/g, ' ').trim(), sample: sample ? { text: sample.text, buttons: sample.buttons } : null,
+      weight: (own ? 10 : 0) + (SIZE_RANK[idea?.size] || 1) + (sample ? 1 : 0), notable: !note && !FIX_LIKE.test(title) && !!(sample || own) });
   }
   return out;
 }
@@ -123,27 +127,27 @@ export function weeklyData(p, cfg, { now = new Date(), since = new Date(now.getT
 export function composeWeekly(p, cfg, opts = {}) { return weeklyData(p, cfg, opts).html; }
 
 /**
- * Полный список завершённого за неделю отдельным сообщением (schedule.weekly_list): widget — виджетом Telegram с вкладками
- * и листанием; не принят (старый клиент API, не личный чат, не влез) — тем же списком обычным текстом; text — сразу текстом;
- * off — не присылать. Никогда не бросает исключение. Возвращает 'widget' | 'text' | null.
+ * Полный список завершённого за неделю отдельным сообщением (schedule.weekly_list). Способы по убыванию: widget — виджет Telegram
+ * с вкладками и листанием; rich — расширенное сообщение со сворачиваемыми разделами; text — обычный текст. Начинаем с выбранного,
+ * не принят (нет доступа к виджетам, старый сервер API, не влез) — следующий. off — не присылать. Никогда не бросает исключение.
+ * Возвращает 'widget' | 'rich' | 'text' | null.
  */
 export async function sendWeeklyList(cfg, { data, tg, replyTo = null, log = console.log }) {
-  const mode = cfg.schedule.weekly_list;
+  const mode = cfg.schedule.weekly_list; const chat = cfg.telegram.chat_id;
   if (mode === 'off' || !data.items?.length) return null;
-  if (mode === 'widget') {
-    const w = weeklyWidget(data, cfg);
-    try {
-      if (!w) throw new Error('список не влез в предел размера виджета');
-      await tg.sendWidget(cfg.telegram.chat_id, w.html, { caption: w.caption, replyTo });
-      log(`Список недели отправлен виджетом (пунктов ${w.shown} из ${w.total}).`);
-      return 'widget';
-    } catch (e) { log(`Виджет со списком недели не отправлен: ${truncate(String(e?.message || e), 300)}; отправляю список текстом.`); }
+  const ways = {
+    widget: async () => { const w = weeklyWidget(data, cfg); if (!w) throw new Error('список не влез в предел размера виджета'); await tg.sendWidget(chat, w.html, { caption: w.caption, replyTo }); },
+    rich: async () => { await tg.sendRichMessage(chat, weeklyRichHtml(data, cfg), { replyTo }); },
+    text: async () => { for (const part of splitHtml(weeklyListHtml(data, cfg))) await tg.sendMessage(chat, part, { html: true }); },
+  };
+  const NAMES = { widget: 'виджетом', rich: 'расширенным сообщением', text: 'текстом' };
+  const order = Object.keys(ways); 
+  for (const way of order.slice(Math.max(0, order.indexOf(mode)))) {
+    try { await ways[way](); log(`Список недели отправлен ${NAMES[way]} (пунктов ${data.items.length}).`); return way; } catch (e) {
+      log(`Список недели ${NAMES[way]} не отправлен: ${truncate(String(e?.message || e), 300)}`);
+    }
   }
-  try {
-    for (const part of splitHtml(weeklyListHtml(data, cfg))) await tg.sendMessage(cfg.telegram.chat_id, part, { html: true });
-    log('Список недели отправлен текстом.');
-    return 'text';
-  } catch (e) { log(`Список недели не отправлен: ${truncate(String(e?.message || e), 300)}`); return null; }
+  return null;
 }
 
 /**

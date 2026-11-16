@@ -81,6 +81,12 @@ export function createTelegram({ token, fetchImpl = globalThis.fetch, timeoutMs 
       if (replyTo) body.reply_parameters = { message_id: replyTo, allow_sending_without_reply: true };
       return call('sendWidget', body);
     },
+    /** Расширенное сообщение (Bot API 10.1, 0.14.0): заголовки, списки, сворачиваемые блоки; html — в разметке Rich HTML. */
+    sendRichMessage(chatId, html, { replyTo = null } = {}) {
+      const body = { chat_id: chatId, rich_message: { html } };
+      if (replyTo) body.reply_parameters = { message_id: replyTo, allow_sending_without_reply: true };
+      return call('sendRichMessage', body);
+    },
     getUpdates(offset = 0, timeoutSec = 0) { return call('getUpdates', { offset, timeout: timeoutSec, allowed_updates: ['message', 'callback_query'] }); },
     answerCallbackQuery(id, text = '') { return call('answerCallbackQuery', { callback_query_id: id, text }); },
     /** Меню команд «/» в чате с ботом: [{ command, description }]. */
