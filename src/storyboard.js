@@ -10,7 +10,11 @@ export const SCENE_GAP = 0.4; // секунд между сценами: хво�
 const SCREEN_LIMIT = { text: 420, chat: 120, hook: 160, finale: 200, number: 160, compare: 120, steps: 420 };
 const SCREEN_PER_SPEECH = 1.5; // знаков на экране на знак речи: больше — не успеть прочитать, пока говорит диктор
 const CHAT_SPEECH_MIN = 56; // речь к экрану чата — около четырёх секунд
-const STYLE_FIELDS = ['tag', 'icon', 'mark', 'style'];
+// Оформление (необязательно): что из этого рисует шаблон — см. video/src/Daily.jsx и Weekly.jsx
+export const SCENE_ACCENTS = ['amber', 'mint', 'sky', 'coral', 'violet'];
+export const SCENE_STYLES = ['note', 'bubbles', 'checks'];
+export const SCENE_ICONS = ['mic', 'moon', 'sun', 'bell', 'repeat', 'calendar', 'shield', 'edit', 'undo', 'flag', 'spark', 'pulse', 'arrow', 'check', 'chat'];
+const TEXT_FIELDS = ['tag', 'mark'];
 const IDS = /(?<![\p{L}\p{N}])[A-Z]\d+(?![\p{L}\p{N}])/u;
 const IN_BOT = /кнопк|одобр|в боте/i;
 
@@ -59,8 +63,10 @@ export function checkStoryboard(raw, data, cfg, { weekly = false } = {}) {
       if (total > limit) errors.push(`${at}: текста на экране ${total} знаков, для вида «${s.kind}» не больше ${limit}`);
       if (s.kind === 'steps' && (lines.length < 2 || lines.length > 6)) errors.push(`${at}: в «steps» от 2 до 6 строк`);
     }
-    if (s.accent != null && !(str(s.accent) && /^#[0-9a-f]{6}$/i.test(s.accent))) errors.push(`${at}: accent — цвет вида #rrggbb`);
-    for (const f of STYLE_FIELDS) if (s[f] != null && !(str(s[f]) && s[f].length <= 24)) errors.push(`${at}: ${f} — строка до 24 знаков`);
+    if (s.accent != null && !(SCENE_ACCENTS.includes(s.accent) || (str(s.accent) && /^#[0-9a-f]{6}$/i.test(s.accent)))) errors.push(`${at}: accent — один из ${SCENE_ACCENTS.join(', ')} или цвет вида #rrggbb`);
+    if (s.style != null && !SCENE_STYLES.includes(s.style)) errors.push(`${at}: style — один из ${SCENE_STYLES.join(', ')}`);
+    if (s.icon != null && !SCENE_ICONS.includes(s.icon)) errors.push(`${at}: icon — один из ${SCENE_ICONS.join(', ')}`);
+    for (const f of TEXT_FIELDS) if (s[f] != null && !(str(s[f]) && s[f].length <= 24)) errors.push(`${at}: ${f} — строка до 24 знаков`);
     if (s.kind === 'number' && !(isObj(s.number) && Number.isFinite(Number(s.number.value)) && str(s.number.label))) errors.push(`${at}: «number» требует number: { value: число, label: подпись, unit?: знак }`);
     if (s.kind === 'compare' && !(isObj(s.compare) && str(s.compare.before) && str(s.compare.after) && (s.compare.before + s.compare.after).length <= 300)) errors.push(`${at}: «compare» требует compare: { before, after }, вместе до 300 знаков`);
     if (s.bar != null && !(isObj(s.bar) && Number(s.bar.total) > 0 && Number(s.bar.done) >= 0)) errors.push(`${at}: bar: { done, total }, total больше нуля`);

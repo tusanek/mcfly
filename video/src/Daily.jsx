@@ -16,7 +16,7 @@ const ACCENTS = {
   violet: ['#b9a0ff', '#7f8cff'],
 };
 const BY_KIND = { hook: 'amber', compare: 'mint', chat: 'sky', text: 'amber', steps: 'violet', number: 'mint', finale: 'amber' };
-const accentOf = (scene) => ACCENTS[scene.accent] || ACCENTS[BY_KIND[scene.kind]] || ACCENTS.amber;
+const accentOf = (scene) => ACCENTS[scene.accent] || (/^#[0-9a-f]{6}$/i.test(scene.accent || '') ? [scene.accent, scene.accent] : null) || ACCENTS[BY_KIND[scene.kind]] || ACCENTS.amber;
 
 const SOFT = { damping: 200 };
 const POP = { damping: 14, stiffness: 140, mass: 0.8 };

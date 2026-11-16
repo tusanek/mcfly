@@ -41,10 +41,12 @@ test('обязательные поля видов', () => {
   bad((s) => { s[0].speech = 'Ой'; return s; }, /нет текста диктора/);
   bad((s) => { s[0].bar = { done: 1, total: 0 }; return s; }, /bar/);
 });
-test('поля оформления: цвет — #rrggbb, остальные — короткие строки', () => {
+test('поля оформления: цвет — имя или #rrggbb, значок и стиль — из списка, ярлык — короткая строка', () => {
   bad((s) => { s[0].accent = 'red'; return s; }, /accent/);
   bad((s) => { s[0].tag = 'x'.repeat(25); return s; }, /tag/);
-  assert.deepEqual(checkStoryboard(GOOD.map((s) => ({ ...s, accent: '#ffb648', tag: 'Новое', icon: 'star', mark: 'Повторы', style: 'note' })), DATA, cfg), []);
+  bad((s) => { s[0].icon = 'rocket'; return s; }, /icon/);
+  bad((s) => { s[0].style = 'neon'; return s; }, /style/);
+  assert.deepEqual(checkStoryboard(GOOD.map((s, i) => ({ ...s, accent: i ? 'mint' : '#ffb648', tag: 'Новое', icon: 'spark', mark: 'Повторы', style: 'note' })), DATA, cfg), []);
 });
 test('номера пунктов — ни на экране, ни в речи', () => {
   bad((s) => { s[0].title = 'Пункт I22 готов'; return s; }, /номера пунктов/);

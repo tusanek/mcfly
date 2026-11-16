@@ -10,7 +10,7 @@ const GLASS = 'rgba(255,255,255,0.045)';
 const EDGE = 'rgba(255,255,255,0.09)';
 
 /** Цвет сцены: необязательное поле "accent" в раскадровке — имя из набора или свой цвет (#rrggbb). */
-const PALETTE = { amber: '#ffb648', teal: '#4fd6c4', violet: '#a990ff', blue: '#6cb6ff', coral: '#ff8f6b', green: '#7fe0a0' };
+const PALETTE = { amber: '#ffb648', mint: '#4fd6c4', violet: '#a990ff', sky: '#6cb6ff', coral: '#ff8f6b' };
 const accentOf = (scene) => PALETTE[scene.accent] || (/^#[0-9a-f]{6}$/i.test(scene.accent || '') ? scene.accent : C.accent);
 
 const SOFT = { damping: 200 };
