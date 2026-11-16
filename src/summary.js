@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { readText, fmtShort, fmtDay, fmtDuration, truncate, pad2 } from './util.js';
 import { readMetrics, aggregate, formatEvents, runStats } from './metrics.js';
 import { loadQuestions, openQuestions } from './questions.js';
-import { listChanges, pendingApprovals, approvedWithWork, pausedChanges, pausedUntil, proposalExcerpt, approvalDeadline, isAutoApprovable, proposalSamples } from './approvals.js';
+import { listChanges, pendingApprovals, approvedWithWork, pausedChanges, pausedUntil, proposalExcerpt, approvalDeadline, isAutoApprovable, proposalSamples, archivedSince } from './approvals.js';
 import { loadIdeas, ideasBrief } from './ideas.js';
 import { expectedSlots, slotKey } from './window.js';
 import { loadState, saveState } from './state.js';
@@ -261,7 +261,7 @@ export function composeSummary(p, cfg, opts = {}) { return summaryData(p, cfg, o
 /**
  * Сводка и её части (0.12.0): html — текст для Telegram; остальное — те же данные по кускам, из них собирается ролик-сводка:
  * need — все пункты «Нужно от вас» (HTML), todo — только дела из отчётов и передачи смены, без одобрений и решений по спискам,
- * work — что команда делает дальше: [{ title, progress }], planning — взяты ли пункты, по которым ещё нет плана, plain — пересказы прогонов, runStats — { статус: сколько }, changes — строки изменений, next — следующий прогон.
+ * work — что команда делает дальше: [{ title, progress }], demos — образцы «как это выглядит» завершённых за период и идущих изменений, planning — взяты ли пункты, по которым ещё нет плана, plain — пересказы прогонов, runStats — { статус: сколько }, changes — строки изменений, next — следующий прогон.
  */
 export function summaryData(p, cfg, { now = new Date(), since = null } = {}) {
   const records = readMetrics(p);
@@ -363,9 +363,10 @@ export function summaryData(p, cfg, { now = new Date(), since = null } = {}) {
   if (day && (!since || shiftTime(day) > since) && /\(источник: авто\)/.test(readText(day.path, '').split('\n')[0])) L.push('⚠️ смену не сдали — ночь шла по авто-передаче');
 
   // 0.9.0: отчёты «Сделано» и метрики в Telegram не идут — они в techTail (терминал) и в файлах проекта.
+  const demos = [...archivedSince(p.openspecChanges, since), ...work].flatMap((c) => proposalSamples(c).filter((x) => x.text || x.buttons.length).map((x) => ({ change: changeTitle(p, c), ...x })));
   const statusCount = {};
   for (const st of [...runs.map((r) => r.status), ...expected.map(() => 'missed')]) statusCount[st] = (statusCount[st] || 0) + 1;
-  return { html: L.join('\n'), need: [...need, ...fromText], todo: fromText, work: work.map((c) => ({ title: changeTitle(p, c), progress: progress(c) })), planning: !!ideasBrief(p, cfg)?.taken?.length, plain: plainRuns.map(({ r, text }) => ({ slot: r.slot || hhmm(new Date(r.started_at)), text })), runStats: statusCount, running: live.length > 0, changes: ch, next };
+  return { html: L.join('\n'), need: [...need, ...fromText], todo: fromText, work: work.map((c) => ({ title: changeTitle(p, c), progress: progress(c) })), planning: !!ideasBrief(p, cfg)?.taken?.length, demos, plain: plainRuns.map(({ r, text }) => ({ slot: r.slot || hhmm(new Date(r.started_at)), text })), runStats: statusCount, running: live.length > 0, changes: ch, next };
 }
 
 /**

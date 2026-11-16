@@ -14,6 +14,14 @@ export function readChange(dir) {
   const { done: tasksDone, open: tasksOpen } = countTasks(readText(path.join(dir, 'tasks.md'), ''));
   return { name: path.basename(dir), dir, meta, mcfly: meta.mcfly || {}, tasksDone, tasksOpen, proposal: readText(path.join(dir, 'proposal.md'), '') };
 }
+/** Изменения, ушедшие в архив после момента since (по времени папки): их образцы показывает ролик-сводка (0.12.0). */
+export function archivedSince(changesDir, since) {
+  const dir = path.join(changesDir, 'archive');
+  if (!exists(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith('.'))
+    .map((d) => ({ d, at: fs.statSync(path.join(dir, d.name)).mtime })).filter((x) => !since || x.at > since).sort((a, b) => a.at - b.at)
+    .map((x) => readChange(path.join(dir, x.d.name)));
+}
 export function listChanges(changesDir) {
   if (!exists(changesDir)) return [];
   return fs.readdirSync(changesDir, { withFileTypes: true })

@@ -17,6 +17,33 @@ const lineSize = (lines) => {
   return chars < 120 ? 72 : chars < 240 ? 62 : chars < 380 ? 53 : 46;
 };
 
+/** Демонстрация: схематичный экран чата — сообщение бота и кнопки под ним, как в образце из описания изменения. */
+const Chat = ({ chat, frame, fps }) => {
+  const t = spring({ frame: frame - 10, fps, config: { damping: 200 } });
+  const size = chat.text.length < 160 ? 46 : chat.text.length < 320 ? 40 : 35;
+  return (
+    <div style={{ background: '#0a0f19', border: `2px solid ${C.line}`, borderRadius: 44, padding: '40px 36px 44px', opacity: t, transform: `translateY(${(1 - t) * 40}px)` }}>
+      {chat.text ? (
+        <div style={{ background: C.panel, color: C.text, fontSize: size, lineHeight: 1.34, padding: '30px 34px', borderRadius: '34px 34px 34px 10px', whiteSpace: 'pre-wrap', maxWidth: '94%' }}>
+          {chat.text}
+        </div>
+      ) : null}
+      {chat.buttons.map((row, r) => {
+        const b = spring({ frame: frame - 22 - r * 6, fps, config: { damping: 200 } });
+        return (
+          <div key={r} style={{ display: 'flex', gap: 14, marginTop: 14, opacity: b }}>
+            {row.map((label, i) => (
+              <div key={i} style={{ flex: 1, textAlign: 'center', background: C.line, color: C.text, fontSize: 36, fontWeight: 600, padding: '22px 10px', borderRadius: 20, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                {label}
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 const Scene = ({ scene, index, count }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -34,11 +61,16 @@ const Scene = ({ scene, index, count }) => {
       <div style={{ color: C.accent, fontSize: 40, fontWeight: 600, letterSpacing: 1, opacity: head }}>
         {index + 1} / {count}
       </div>
-      <div style={{ color: C.text, fontSize: scene.title.length > 22 ? 78 : 96, fontWeight: 800, lineHeight: 1.08, marginTop: 18, opacity: head, transform: `translateY(${(1 - head) * 40}px)` }}>
+      <div style={{ color: C.text, fontSize: scene.title.length > 44 ? 62 : scene.title.length > 22 ? 78 : 96, fontWeight: 800, lineHeight: 1.08, marginTop: 18, opacity: head, transform: `translateY(${(1 - head) * 40}px)` }}>
         {scene.title}
       </div>
       <div style={{ width: 120, height: 8, borderRadius: 4, background: C.accent, margin: '44px 0 52px', transform: `scaleX(${head})`, transformOrigin: 'left' }} />
-      {scene.lines.map((line, i) => {
+      {scene.kind === 'chat' && scene.chat ? (
+        <>
+          {scene.lines[0] ? <div style={{ color: C.dim, fontSize: 40, marginBottom: 36, opacity: head }}>{scene.lines[0]}</div> : null}
+          <Chat chat={scene.chat} frame={frame} fps={fps} />
+        </>
+      ) : scene.lines.map((line, i) => {
         const t = spring({ frame: frame - 6 - i * 7, fps, config: { damping: 200 } });
         return (
           <div key={i} style={{ color: C.text, fontSize: size, lineHeight: 1.32, marginBottom: size * 0.62, opacity: t, transform: `translateY(${(1 - t) * 30}px)` }}>

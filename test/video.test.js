@@ -11,13 +11,18 @@ import { appendMetric } from '../src/metrics.js';
 import { cfg, bareProject, tmpDir } from './helpers.js';
 
 const NOW = new Date(2026, 10, 16, 8, 0);
+const SAMPLE = { change: 'I22 «Кнопка «Вернуть»»', title: 'Ты нажал «Убрать 2»', text: 'Твои повторы:\n1. Зарядка — каждый день', buttons: [['Убрать 1', 'Вернуть']] };
 const DATA = {
-  need: ['Одобрить <b>План 2</b>: кнопка «Отменить» под ответом бота (авто-одобрение 17.11 04:00)', 'Решить по предложениям: I14, I15 и ещё 7 — кнопка «💡 Предложения»', 'проверить вход с телефона на версии 1.4.0'],
-  todo: ['проверить вход с телефона на версии 1.4.0', 'вписать адрес календаря в настройки'],
-  plain: [{ slot: '04:00', text: 'Что сделано: Бот отвечает на правку одной фразой, пункт I22 закрыт. Версия 1.4.0 лежит в ветке main.\nЗачем: Так быстрее.\nЧто дальше: Напоминания.' }],
-  runStats: { ok: 2, missed: 1 }, running: false, changes: [], next: 'команда продолжит I22 (сделано 0 из 6 шагов)',
-  work: [{ title: 'I22 «Напоминания за 15 минут»', progress: 'сделано 0 из 6 шагов' }], planning: false,
+  need: ['Одобрить <b>План 2</b>: кнопка «Отменить» (авто-одобрение 17.11 04:00)', 'Решить по предложениям: I14, I15 и ещё 7 — кнопка «💡 Предложения»', 'вписать адрес календаря в settings.env на сервере'],
+  todo: ['одобрить restore-removed-repeat', 'вписать адрес календаря в settings.env на сервере', 'нажать кнопку «Готово» в боте', 'запустить скрипт переноса базы'],
+  plain: [
+    { slot: '00:00', text: 'Что сделано: Бот показывает встречи из Google Календаря.\nЗачем: Чтобы план дня был полным.\nЧто дальше: Напоминания.' },
+    { slot: '04:00', text: 'Что сделано: бот отвечает на правку одной фразой, пункт I22 закрыт. Версия 1.4.0 лежит в ветке main.\nЗачем: Так быстрее.\nЧто дальше: Напоминания.' },
+  ],
+  runStats: { ok: 2 }, running: false, changes: [], next: 'команда продолжит I22 (сделано 0 из 6 шагов)',
+  work: [{ title: 'I22 «Напоминания за 15 минут»', progress: 'сделано 0 из 6 шагов' }], planning: false, demos: [SAMPLE],
 };
+const all = (scenes) => scenes.map((s) => [s.title, ...s.lines, s.speech].join(' ')).join(' ');
 
 /** Установленное окружение роликов в подставной папке. */
 function fakeHome() {
@@ -34,45 +39,72 @@ const fakeRun = (calls = []) => async (bin, args, opts) => {
   else fs.writeFileSync(args[4], 'mp4');
 };
 
-test('summaryScenes: сцены по сводке; диктору — только русские слова', () => {
+test('summaryScenes: главное — что сделано и как это выглядит; диктору — только русские слова', () => {
   const scenes = summaryScenes(DATA, cfg, { now: NOW });
-  assert.deepEqual(scenes.map((s) => s.title), ['demo', 'Нужно сделать: 2', '3 прогона', 'Что сделано', 'Что дальше']);
-  assert.deepEqual(scenes.map((s) => s.key), ['s0', 's1', 's2', 's3', 's4']);
+  assert.deepEqual(scenes.map((s) => s.title), ['demo', 'Нужно от вас', 'Что сделано', 'Что сделано', 'Как это выглядит', 'Что дальше']);
+  assert.deepEqual(scenes.map((s) => s.key), ['s0', 's1', 's2', 's3', 's4', 's5']);
   for (const s of scenes) assert.doesNotMatch(s.speech, /[0-9A-Za-z<>]/, s.speech);
-  assert.match(scenes[0].speech, /Сводка по проекту демо от шестнадцатого ноября/);
-  assert.match(scenes[1].speech, /От вас нужно два дела\. Первое: проверить вход с телефона на версии один точка четыре точка ноль\. Остальное — на экране и в сообщении\.$/);
-  assert.deepEqual(scenes[1].lines, ['1. проверить вход с телефона на версии 1.4.0', '2. вписать адрес календаря в настройки']);
-  assert.match(scenes[2].speech, /Было три прогона: успешно — два, пропущено — один\./);
-  assert.match(scenes[3].speech, /Версия один точка четыре точка ноль лежит в ветке мэйн/);
-  assert.doesNotMatch(scenes[3].speech, /Так быстрее/); // в ролик идёт только «Что сделано»
-  assert.match(scenes[4].speech, /Команда продолжит: Напоминания за пятнадцать минут — сделано ноль из шести шагов\. Хорошего дня\.$/);
-  assert.deepEqual(scenes[4].lines, ['Напоминания за 15 минут — сделано 0 из 6 шагов']);
+  // прогоны без сбоев — одной строкой на заставке, вслух о них ни слова
+  assert.deepEqual(scenes[0].lines, ['Утренняя сводка', '16 ноября', '✅ 2 прогона — все успешно']);
+  assert.equal(scenes[0].speech, 'Доброе утро. Утренняя сводка.'); // название латиницей без словаря не читается
+  assert.equal(scenes[2].speech, 'Бот показывает встречи из гугл Календаря. Чтобы план дня был полным.');
+  assert.deepEqual(scenes[2].lines, ['Бот показывает встречи из Google Календаря.', 'Зачем: Чтобы план дня был полным.']);
+  assert.match(scenes[3].speech, /^Бот отвечает на правку одной фразой, пункт закрыт\. Версия один точка четыре точка ноль лежит в ветке\./);
+  assert.equal(scenes[5].speech, 'Команда продолжит: Напоминания за пятнадцать минут — сделано ноль из шести шагов. Хорошего дня.');
+  assert.deepEqual(scenes[5].lines, ['Напоминания за 15 минут — сделано 0 из 6 шагов']);
 });
 
-test('0.12.0: одобрения, решения по спискам и номера пунктов в ролик не идут — ни на экран, ни диктору', () => {
-  const all = (scenes) => scenes.map((s) => [s.title, ...s.lines, s.speech].join(' ')).join(' ');
-  const text = all(summaryScenes(DATA, cfg, { now: NOW }));
-  assert.doesNotMatch(text, /Одобрить|одобр|Решить по предложениям|кнопка|I14|I22|ай двадцать два/);
-  // дел нет — сцены «нужно» нет вовсе, даже если ждут одобрения
-  const idle = summaryScenes({ ...DATA, todo: [], work: [], next: 'работы нет — одобрите План 2' }, cfg, { now: NOW });
-  assert.deepEqual(idle.map((s) => s.title), ['demo', '3 прогона', 'Что сделано', 'Что дальше']);
-  assert.doesNotMatch(all(idle), /одобр/i);
-  assert.match(idle[3].speech, /Работы в очереди у команды нет/);
-  const planning = summaryScenes({ ...DATA, work: [], planning: true }, cfg, { now: NOW });
-  assert.match(planning[4].speech, /Команда составит план по взятым предложениям/);
+test('заголовки диктор не читает', () => {
+  for (const s of summaryScenes(DATA, cfg, { now: NOW })) assert.doesNotMatch(s.speech, /^(Что сделано|Что дальше|Дальше|Нужно от вас|Нужно сделать)[.:]/, s.speech);
 });
 
-test('summaryScenes: пустая ночь; словарь проекта правит произношение', () => {
-  const scenes = summaryScenes({ need: [], todo: [], plain: [], runStats: {}, running: false, changes: [], next: 'работы нет', work: [], planning: false }, { ...cfg, project: 'acme', video: { ...cfg.video, pronounce: { acme: '+акме' } } }, { now: NOW });
-  assert.deepEqual(scenes.map((s) => s.title), ['acme', 'Прогонов не было', 'Что дальше']);
-  assert.match(scenes[0].speech, /проекту \+акме от/);
+test('дела владельца — только то, что делается вне бота; одобрения и кнопки в ролик не идут', () => {
+  const scenes = summaryScenes(DATA, cfg, { now: NOW });
+  assert.deepEqual(scenes[1].lines, ['1. вписать адрес календаря в settings.env на сервере', '2. запустить скрипт переноса базы']);
+  assert.equal(scenes[1].speech, 'От вас нужно: вписать адрес календаря в на сервере. И ещё одно дело — на экране.');
+  assert.doesNotMatch(all(scenes), /одобр|Решить по предложениям|кнопку «Готово»|I14|I22/i);
+  const none = summaryScenes({ ...DATA, todo: ['одобрить restore-removed-repeat', 'ответить на вопрос в Telegram'] }, cfg, { now: NOW });
+  assert.ok(!none.some((s) => s.title === 'Нужно от вас'));
 });
 
-test('summaryScenes: длинный пересказ укладывается в video.max_seconds', () => {
+test('прогоны: отдельной сценой и вслух — только когда что-то не удалось', () => {
+  const bad = summaryScenes({ ...DATA, runStats: { ok: 2, error: 1, missed: 2 } }, cfg, { now: NOW });
+  assert.equal(bad[1].title, 'Требует внимания');
+  assert.deepEqual(bad[1].lines, ['❌ сбой — 1', '⚠️ пропущено — 2', '✅ успешно — 2']);
+  assert.equal(bad[1].speech, 'Не все прогоны прошли гладко: сорвалось из за сбоя — один, пропущено — два.');
+  assert.deepEqual(bad[0].lines, ['Утренняя сводка', '16 ноября']);
+  assert.ok(!summaryScenes(DATA, cfg, { now: NOW }).some((s) => s.title === 'Требует внимания'));
+});
+
+test('демонстрация: образец изменения — сцена-чат с текстом и кнопками; держится, пока успеешь прочитать', () => {
+  const demo = summaryScenes(DATA, cfg, { now: NOW })[4];
+  assert.equal(demo.kind, 'chat');
+  assert.deepEqual(demo.chat, { text: SAMPLE.text, buttons: [['Убрать 1', 'Вернуть']] });
+  assert.deepEqual(demo.lines, ['Ты нажал «Убрать 2»']);
+  assert.equal(demo.speech, 'Вот как это выглядит.');
+  assert.ok(demo.hold >= 3.5);
+  // два изменения — по главному образцу от каждого; одно — два его первых образца
+  const two = summaryScenes({ ...DATA, demos: [SAMPLE, { ...SAMPLE, title: 'второй' }, { ...SAMPLE, change: 'другое', title: 'из другого' }] }, cfg, { now: NOW }).filter((s) => s.kind === 'chat');
+  assert.deepEqual(two.map((s) => s.lines[0]), ['Ты нажал «Убрать 2»', 'из другого']);
+  assert.equal(two[1].speech, 'И ещё один пример.');
+  const one = summaryScenes({ ...DATA, demos: [SAMPLE, { ...SAMPLE, title: 'второй' }, { ...SAMPLE, title: 'третий' }] }, cfg, { now: NOW }).filter((s) => s.kind === 'chat');
+  assert.deepEqual(one.map((s) => s.lines[0]), ['Ты нажал «Убрать 2»', 'второй']);
+});
+
+test('пустая ночь и словарь проекта', () => {
+  const scenes = summaryScenes({ need: [], todo: [], plain: [], runStats: {}, running: false, changes: [], next: 'работы нет — одобрите План 2', work: [], planning: false, demos: [] }, { ...cfg, project: 'acme', video: { ...cfg.video, pronounce: { acme: '+акме' } } }, { now: NOW });
+  assert.deepEqual(scenes.map((s) => s.title), ['acme', 'Что дальше']);
+  assert.equal(scenes[0].speech, 'Доброе утро. Сводка по проекту +акме.');
+  assert.deepEqual(scenes[0].lines, ['Утренняя сводка', '16 ноября', 'Прогонов не было']);
+  assert.equal(scenes[1].speech, 'Работы в очереди у команды нет. Хорошего дня.');
+  assert.match(summaryScenes({ ...DATA, work: [], planning: true }, cfg, { now: NOW }).at(-1).speech, /Команда составит план по взятым предложениям/);
+});
+
+test('длинные пересказы укладываются в video.max_seconds', () => {
   const long = `Что сделано: ${'Команда сделала ещё одну полезную вещь для владельца. '.repeat(40)}`;
-  const scenes = summaryScenes({ ...DATA, plain: [{ slot: '04:00', text: long }] }, { ...cfg, video: { ...cfg.video, max_seconds: 30 } }, { now: NOW });
-  assert.ok(scenes.reduce((n, s) => n + s.speech.length, 0) <= 30 * 14 + 200);
-  assert.ok(scenes[3].lines[0].length <= 331);
+  const scenes = summaryScenes({ ...DATA, plain: [{ slot: '00:00', text: long }, { slot: '04:00', text: long }] }, { ...cfg, video: { ...cfg.video, max_seconds: 30 } }, { now: NOW });
+  assert.ok(scenes.reduce((n, s) => n + s.speech.length, 0) <= 30 * 14 + 250);
+  assert.ok(scenes.filter((s) => s.title === 'Что сделано').every((s) => s.lines[0].length <= 301));
 });
 
 test('summaryData отдаёт те же данные, что в тексте сводки', () => {
@@ -85,6 +117,7 @@ test('summaryData отдаёт те же данные, что в тексте с
   assert.deepEqual(d.need, ['проверить вход с телефона']);
   assert.deepEqual(d.todo, ['проверить вход с телефона']);
   assert.deepEqual(d.work, []);
+  assert.deepEqual(d.demos, []);
   assert.deepEqual(d.plain, [{ slot: '04:00', text: 'Что сделано: починили вход.' }]);
   assert.equal(d.runStats.ok, 1);
   assert.ok(d.next);

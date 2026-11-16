@@ -72,33 +72,15 @@ export function timeWords(h, m) {
 
 // Частые слова из сводок mcfly; «+» перед гласной — подсказка ударения синтезатору. Проект дополняет словарь в video.pronounce.
 export const PRONOUNCE = {
-  mcfly: 'макфл+ай', telegram: 'телегр+ам', claude: 'клод', 'claude code': 'клод код', mac: 'мак', macos: 'мак ос', vpn: 'ви пи эн', git: 'гит', github: 'гитх+аб',
-  api: 'а пэ +и', openspec: 'оупен спек', cli: 'си эл +ай', ok: 'окей', id: 'ай д+и', url: 'ю эр +эл', pr: 'пи +ар', ci: 'си +ай', json: 'джейсон', yaml: 'ямл',
-  google: 'гугл', yandex: 'яндекс', android: 'андроид', ios: 'ай о +эс', email: 'имейл', web: 'веб', online: 'онлайн',
-  main: 'мэйн', master: 'мастер', doctor: 'доктор', python: 'пайтон', node: 'ноуд', npm: 'эн пи +эм', bot: 'бот', backlog: 'бэклог', readme: 'ридми',
+  mcfly: 'макфл+ай', telegram: 'телегр+ам', claude: 'клод', mac: 'мак', vpn: 'ви пи эн', github: 'гитх+аб', api: 'а пэ +и', bot: 'бот',
+  google: 'гугл', yandex: 'яндекс', android: 'андроид', email: 'имейл', web: 'веб', online: 'онлайн', ok: 'окей',
 };
-const LETTER = { a: 'эй', b: 'би', c: 'си', d: 'ди', e: 'и', f: 'эф', g: 'джи', h: 'эйч', i: 'ай', j: 'джей', k: 'кей', l: 'эл', m: 'эм', n: 'эн', o: 'оу', p: 'пи', q: 'кью', r: 'эр', s: 'эс', t: 'ти', u: 'ю', v: 'ви', w: 'дабл ю', x: 'икс', y: 'уай', z: 'зед' };
-const PAIRS = [['sch', 'ш'], ['sh', 'ш'], ['ch', 'ч'], ['th', 'т'], ['ph', 'ф'], ['ck', 'к'], ['oo', 'у'], ['ee', 'и'], ['ya', 'я'], ['yu', 'ю'], ['zh', 'ж'], ['kh', 'х'], ['ts', 'ц']];
-const SINGLE = { a: 'а', b: 'б', c: 'к', d: 'д', e: 'е', f: 'ф', g: 'г', h: 'х', i: 'и', j: 'дж', k: 'к', l: 'л', m: 'м', n: 'н', o: 'о', p: 'п', q: 'к', r: 'р', s: 'с', t: 'т', u: 'у', v: 'в', w: 'в', x: 'кс', y: 'и', z: 'з' };
-
-/** Иностранное слово русскими буквами, грубо: лучше неточно, чем молчание. Одна буква — по названию («Q» → «кью»). */
-export function translit(word) {
-  let w = String(word).toLowerCase();
-  if (w.length === 1) return LETTER[w] || '';
-  let out = '';
-  while (w) {
-    const pair = PAIRS.find(([from]) => w.startsWith(from));
-    if (pair) { out += pair[1]; w = w.slice(pair[0].length); continue; }
-    out += SINGLE[w[0]] ?? ''; w = w.slice(1);
-  }
-  return out;
-}
-
 const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
- * Текст, который диктор прочитает целиком: без разметки и значков, числа, время и даты — словами, иностранные слова — по словарю
- * (pronounce проекта важнее общего), а чего в словаре нет — русскими буквами. Пути, адреса и имена файлов выбрасываются.
+ * Текст, который диктор прочитает целиком: без разметки и значков, числа, время и даты — словами. Иностранные слова читаются
+ * только по словарю (pronounce проекта важнее общего); чего в словаре нет — пропускается: владелец прочитает это на экране (0.12.0).
+ * Пути, адреса и имена файлов выбрасываются.
  */
 export function speakable(text, pronounce = {}) {
   let t = String(text ?? '').replace(/<[^>]+>/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, ' и ');
@@ -111,15 +93,15 @@ export function speakable(text, pronounce = {}) {
   for (const key of Object.keys(dict).sort((a, b) => b.length - a.length)) {
     t = t.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escRe(key)}(?![\\p{L}\\p{N}])`, 'giu'), ` ${dict[key]} `);
   }
+  t = t.replace(/[A-Za-z][A-Za-z0-9]*(?:[-_.][A-Za-z0-9]+)*/g, ' ').replace(/«\s*»|"\s*"/g, ' ');
   t = t.replace(/(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)/g, (_, h, m) => ` ${timeWords(Number(h), Number(m))} `);
   t = t.replace(/(?<![\d.])(\d{1,2})\.(\d{2})(?:\.(?:\d{4}|\d{2}))?(?![\d.])/g, (all, d, m) => { const w = dateWords(Number(d), Number(m)); return w ? ` ${w} ` : all; });
   t = t.replace(/(\d+)\s*%/g, (_, n) => ` ${numWords(n)} ${plural(Number(n), ['процент', 'процента', 'процентов'])} `);
   t = t.replace(/(\d)[.,](?=\d)/g, '$1 точка ');
   t = t.replace(/(?<![\p{L}\p{N}])(из|от|до|около|после|без)\s+(\d{1,2})(?!\d|[.:]\d)/giu, (_, prep, n) => `${prep} ${numGenitive(n)}`);
   t = t.replace(/\d+/g, (n) => ` ${numWords(n)} `);
-  t = t.replace(/[A-Za-z]+/g, (w) => ` ${translit(w)} `);
   t = t.replace(/[_/\\|*#=<>[\]{}~^@$]/g, ' ').replace(/\s*·\s*/g, ', ').replace(/[()]/g, ', ').replace(/\s+-\s+/g, ' — ').replace(/(?<=\S)-(?=\S)/g, ' ');
-  return t.replace(/\s+/g, ' ').replace(/\s+([,.!?:;])/g, '$1').replace(/[,.!?:;](?:\s*[,.!?:;])+/g, (run) => (run.match(/[.!?]/) || [run[0]])[0]).replace(/^[\s,.:;—]+/, '').trim();
+  return t.replace(/\s+/g, ' ').replace(/«\s+/g, '«').replace(/\s+»/g, '»').replace(/\s+([,.!?:;])/g, '$1').replace(/[,.!?:;](?:\s*[,.!?:;])+/g, (run) => (run.match(/[.!?]/) || [run[0]])[0]).replace(/^[\s,.:;—]+/, '').trim();
 }
 
 /** Обрезать по границе предложения, а если первое же длиннее max — по границе слова с многоточием. */

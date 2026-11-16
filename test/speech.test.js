@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { numWords, plural, dateWords, timeWords, translit, speakable, clipSentences } from '../src/speech.js';
+import { numWords, plural, dateWords, timeWords, numGenitive, speakable, clipSentences } from '../src/speech.js';
 
 test('numWords: числа словами, род, тысячи', () => {
   assert.equal(numWords(0), 'ноль');
@@ -29,30 +29,29 @@ test('plural, dateWords, timeWords', () => {
   assert.equal(timeWords(19, 30), 'девятнадцать тридцать');
 });
 
-test('translit: иностранное слово русскими буквами, одна буква — по названию', () => {
-  assert.equal(translit('demo'), 'демо');
-  assert.equal(translit('shop'), 'шоп');
-  assert.equal(translit('Q'), 'кью');
+test('numGenitive: «из шести», «до двадцати одного»', () => {
+  assert.deepEqual([1, 6, 20, 21, 99].map(numGenitive), ['одного', 'шести', 'двадцати', 'двадцати одного', 'девяноста девяти']);
 });
 
 test('speakable: в тексте для диктора не остаётся цифр, латиницы и разметки', () => {
-  const src = '☀️ <b>demo</b> · 16.11 — прогон 04:00 прошёл за 55 мин, готово 70% задач (`src/cli.js`, README.md), версия 0.11.3, вопрос Q4 &amp; I71';
+  const src = '☀️ <b>Проект</b> · 16.11 — прогон 04:00 прошёл за 55 мин, готово 70% задач (`src/cli.js`, README.md), версия 0.11.3, сделано 3 из 6 &amp; ещё';
   const out = speakable(src);
   assert.doesNotMatch(out, /[0-9A-Za-z<>`&]/);
-  assert.match(out, /демо/);
   assert.match(out, /шестнадцатого ноября/);
   assert.match(out, /четыре ноль ноль/);
   assert.match(out, /пятьдесят пять мин/);
   assert.match(out, /семьдесят процентов/);
   assert.match(out, /ноль точка одиннадцать точка три/);
-  assert.match(out, /кью четыре/);
-  assert.doesNotMatch(out, /ридми|срк/); // имена файлов и пути выброшены, а не прочитаны по буквам
+  assert.match(out, /три из шести/);
 });
 
-test('speakable: словарь проекта важнее общего, «+» из словаря остаётся ударением', () => {
+test('speakable: иностранные слова читаются только по словарю, остальные пропускаются', () => {
   assert.equal(speakable('Проект mcfly готов'), 'Проект макфл+ай готов');
   assert.equal(speakable('Проект Acme готов', { acme: '+акме' }), 'Проект +акме готов');
   assert.equal(speakable('mcfly', { mcfly: 'мак флай' }), 'мак флай');
+  assert.equal(speakable('Одобрить restore-removed-repeat и проверить'), 'Одобрить и проверить');
+  assert.equal(speakable('версия v2 в ветке main готова'), 'версия в ветке готова');
+  assert.equal(speakable('встречи из «Google Календаря»'), 'встречи из «гугл Календаря»');
   assert.equal(speakable('2 + 2'), 'два плюс два');
 });
 
