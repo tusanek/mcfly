@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import path from 'node:path';
-import { projectSlug, summaryScenes, videoPaths, videoProblems, buildVideo, renderStills, sendSummaryVideo, pruneVideos, runTool } from '../src/video.js';
+import { makeSummaryVideo, projectSlug, summaryScenes, videoPaths, videoProblems, buildVideo, renderStills, sendSummaryVideo, pruneVideos, runTool } from '../src/video.js';
 import { summaryData, sendSummary } from '../src/summary.js';
 import { parseConfig } from '../src/config.js';
 import { createTelegram } from '../src/telegram.js';
@@ -22,6 +22,8 @@ const DATA = {
   runStats: { ok: 2 }, running: false, changes: [], next: 'команда продолжит I22 (сделано 0 из 6 шагов)',
   work: [{ title: 'I22 «Напоминания за 15 минут»', progress: 'сделано 0 из 6 шагов' }], planning: false, demos: [SAMPLE],
 };
+/** Без режиссёра: сцены из кода, настоящий claude в тестах не запускается. */
+const noDirector = async (_p, _c, o) => ({ scenes: o.baseScenes, source: 'fallback', reason: '', workDir: null });
 const all = (scenes) => scenes.map((s) => [s.title, ...s.lines, s.speech].join(' ')).join(' ');
 
 /** Установленное окружение роликов в подставной папке. */
@@ -169,7 +171,7 @@ test('runTool: по истечении времени процесс убива�
 test('sendSummaryVideo: ролик уходит ответом на сводку с подписью', async () => {
   const p = paths(bareProject()); const sent = [];
   const tg = { sendVideo: async (chat, file, opts) => { sent.push({ chat, file, opts }); }, sendMessage: async () => assert.fail('сообщений о сбое быть не должно') };
-  const r = await sendSummaryVideo(p, { ...cfg, telegram: { ...cfg.telegram, chat_id: '7' } }, { data: DATA, tg, now: NOW, replyTo: 42, log: () => {}, build: async () => ({ file: '/tmp/x/summary.mp4', seconds: 57 }) });
+  const r = await sendSummaryVideo(p, { ...cfg, telegram: { ...cfg.telegram, chat_id: '7' } }, { data: DATA, tg, now: NOW, replyTo: 42, log: () => {}, direct: noDirector, build: async () => ({ file: '/tmp/x/summary.mp4', seconds: 57 }) });
   assert.equal(r.sent, true);
   assert.equal(sent[0].chat, '7');
   assert.equal(sent[0].opts.replyTo, 42);
@@ -179,7 +181,7 @@ test('sendSummaryVideo: ролик уходит ответом на сводку
 test('sendSummaryVideo: сбой сборки не бросает исключение; строка в чат — один раз в сутки', async () => {
   const p = paths(bareProject()); const msgs = []; const logs = [];
   const tg = { sendVideo: async () => {}, sendMessage: async (_c, t) => { msgs.push(t); } };
-  const opts = { data: DATA, tg, now: NOW, log: (s) => logs.push(s), build: async () => { throw new Error('сборка ролика: не уложилось в 600 с'); } };
+  const opts = { data: DATA, tg, now: NOW, log: (s) => logs.push(s), direct: noDirector, build: async () => { throw new Error('сборка ролика: не уложилось в 600 с'); } };
   const c = { ...cfg, telegram: { ...cfg.telegram, chat_id: '7' } };
   assert.deepEqual(await sendSummaryVideo(p, c, opts), { sent: false, error: 'сборка ролика: не уложилось в 600 с' });
   await sendSummaryVideo(p, c, opts);
@@ -317,4 +319,26 @@ test('0.15.0 renderStills: кадр на сцену, без озвучки, в �
   const files = await renderStills(cfg, { scenes: TWO, dir, weekly: true, run: fakeRun(calls), vp: fakeHome() });
   assert.deepEqual(files.map((f) => path.basename(f)), ['01.png', '02.png']); assert.ok(files.every((f) => fs.existsSync(f)));
   assert.ok(calls.every((c) => c.args[1] === 'still' && c.args[3] === 'Weekly')); assert.equal(calls.length, 2);
+});
+
+test('0.15.0 makeSummaryVideo: сцены режиссёра уходят в сборку; его время вычитается из общего предела', async () => {
+  const p = paths(bareProject()); const built = []; let t = 0;
+  const direct = async () => { t = 6 * 60_000; return { scenes: TWO, source: 'review', reason: '', workDir: '/w' }; };
+  const r = await makeSummaryVideo(p, cfg, { data: DATA, now: NOW, name: 'n', direct, clock: () => t, build: async (_c, o) => { built.push(o); return { file: '/f.mp4', seconds: 9, bytes: 5 }; } });
+  assert.deepEqual(r, { file: '/f.mp4', seconds: 9, bytes: 5, source: 'review', workDir: '/w' });
+  assert.equal(built[0].scenes, TWO); assert.equal(built[0].timeoutMs, 9 * 60_000);
+});
+
+test('0.15.0 makeSummaryVideo: сборка сцен режиссёра упала — вторая сборка из запасных сцен со своими 5 минутами', async () => {
+  const p = paths(bareProject()); const built = []; const logs = [];
+  const direct = async () => ({ scenes: TWO, source: 'director', reason: '', workDir: '/w' });
+  const build = async (_c, o) => { built.push(o); if (built.length === 1) throw new Error('сборка ролика: код 1'); return { file: '/f.mp4', seconds: 9, bytes: 5 }; };
+  const r = await makeSummaryVideo(p, cfg, { data: DATA, now: NOW, name: 'n', direct, build, log: (l) => logs.push(l) });
+  assert.equal(r.source, 'fallback'); assert.equal(built.length, 2); assert.equal(built[1].timeoutMs, 5 * 60_000);
+  assert.deepEqual(built[1].scenes.map((s) => s.title), summaryScenes(DATA, cfg, { now: NOW }).map((s) => s.title)); assert.match(logs.join('\n'), /запасных сцен/);
+});
+
+test('0.15.0 makeSummaryVideo: упала и запасная сборка — исключение уходит наверх, sendSummaryVideo пишет одну строку', async () => {
+  const p = paths(bareProject());
+  await assert.rejects(makeSummaryVideo(p, cfg, { data: DATA, now: NOW, name: 'n', direct: noDirector, build: async () => { throw new Error('нет сборщика'); } }), /нет сборщика/);
 });

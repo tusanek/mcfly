@@ -54,14 +54,14 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   action prepare|exec <id> --ticket <t>           служебные: их запускает бот после нажатия кнопки
   finding add --text <t> [--evidence <t>]        находка для доработки самого mcfly (не проекта); владелец решает в боте, передавать ли
   finding list | finding send <Fн> | finding drop <Fн>   список; передать в общий ящик или убрать (только владелец в терминале)
-  video setup | video build [--weekly] [--send]   ролик-сводка с голосом (video.enabled): установить сборщик и озвучку (около 2 ГБ);
+  video setup | video build [--weekly] [--director off|on|review] [--send]   ролик-сводка с голосом (video.enabled): установить сборщик и озвучку (около 2 ГБ);
                                                   собрать ролик из текущей сводки (--send — отправить в Telegram)
   remind list | remind rm <Rн>                    напоминания владельцу (ставятся в боте: «напомни 19:00 текст»)
 Общие флаги: --project <dir> (по умолчанию текущий каталог или MCFLY_PROJECT_DIR)`;
 
 export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
-    project: { type: 'string' }, mode: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, weekly: { type: 'boolean' }, list: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
+    project: { type: 'string' }, mode: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, weekly: { type: 'boolean' }, director: { type: 'string' }, list: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
     change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
@@ -339,11 +339,13 @@ export async function main(argv) {
       break;
     }
     case 'video': {
-      const { setupVideo, buildVideo, summaryScenes, weeklyScenes, sendSummaryVideo } = await import('./video.js');
+      const { setupVideo, makeSummaryVideo, sendSummaryVideo, SOURCE_RU } = await import('./video.js');
       const { summaryData } = await import('./summary.js');
       if (sub === 'setup') { try { await setupVideo(cfg, { log }); return 0; } catch (e) { console.error(`Установка не удалась: ${e.message}`); return 1; } }
       if (sub === 'build') {
         const weekly = !!values.weekly;
+        const mode = values.director ?? cfg.video.director;
+        if (!['off', 'on', 'review'].includes(mode)) { console.error('--director: off (сцены из кода), on (режиссёр) или review (режиссёр и зритель)'); return 1; }
         const data = weekly ? (await import('./weekly.js')).weeklyData(p, cfg, { now }) : summaryData(p, cfg, { now, since: new Date(now.getTime() - 24 * 3600_000) });
         if (values.send) {
           const token = process.env[cfg.telegram.token_env];
@@ -351,9 +353,12 @@ export async function main(argv) {
           const { createTelegram } = await import('./telegram.js');
           return (await sendSummaryVideo(p, cfg, { data, tg: createTelegram({ token }), now, log, weekly })).sent ? 0 : 1;
         }
-        const scenes = weekly ? weeklyScenes(data, cfg) : summaryScenes(data, cfg, { now });
-        for (const s of scenes) log(`${s.key} «${s.title}»: ${s.speech}`);
-        try { const r = await buildVideo(cfg, { scenes, name: weekly ? 'preview-weekly' : 'preview', now, weekly }); log(`Ролик: ${r.file} (${r.seconds} с)`); return 0; } catch (e) { console.error(`Ролик не собран: ${e.message}`); return 1; }
+        const r0 = await (async () => {
+          try { return await makeSummaryVideo(p, cfg, { data, now, weekly, name: weekly ? 'preview-weekly' : 'preview', mode, log }); } catch (e) { console.error(`Ролик не собран: ${e.message}`); return null; }
+        })();
+        if (!r0) return 1;
+        log(`Ролик: ${r0.file} (${r0.seconds} с, ${(r0.bytes / 1048576).toFixed(1)} МБ) · сцены: ${SOURCE_RU[r0.source]}${r0.workDir ? ` · рабочая папка режиссёра: ${r0.workDir}` : ''}`);
+        return 0;
       }
       break;
     }

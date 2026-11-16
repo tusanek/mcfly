@@ -7,6 +7,7 @@ import { MCFLY_ROOT } from './prompt.js';
 import { loadState, saveState } from './state.js';
 import { speakable, clipSentences, numWords, numGenitive, plural, MONTHS_GEN } from './speech.js';
 import { CHARS_PER_SECOND, SCENE_GAP } from './storyboard.js';
+import { directScenes } from './director.js';
 
 // 0.12.0: сводка коротким роликом с голосом — по желанию проекта (video.enabled). Текст сводки уходит как раньше и первым;
 // ролик собирается после него и приходит отдельным сообщением. Любой сбой сборки — только строка в чат, текст уже у владельца.
@@ -301,21 +302,43 @@ export function pruneVideos(dir, keep = 8) {
   for (const f of files.slice(0, Math.max(0, files.length - keep))) fs.rmSync(path.join(dir, f), { force: true });
 }
 
+export const SOURCE_RU = { director: 'режиссёр', review: 'режиссёр и зритель', fallback: 'собраны кодом' };
+const FALLBACK_BUILD_MS = 5 * 60_000; // своё время запасной сборке: ролик приходит всегда
+
+/**
+ * Ролик сводки целиком (0.15.0): запасные сцены из кода → режиссёр (по режиму video.director) → сборка. Время режиссёра
+ * вычитается из video.timeout_minutes. Ролик по раскадровке режиссёра не собрался — ещё одна сборка из запасных сцен со своим
+ * пределом. Возвращает { file, seconds, bytes, source, workDir }; бросает, только если не собрался и запасной.
+ */
+export async function makeSummaryVideo(p, cfg, { data, now = new Date(), weekly = false, name, mode = cfg.video.director, log = () => {}, build = buildVideo, direct = directScenes, clock = Date.now }) {
+  const base = weekly ? weeklyScenes(data, cfg) : summaryScenes(data, cfg, { now });
+  const started = clock();
+  const d = await direct(p, cfg, { data, baseScenes: base, weekly, now, mode, log });
+  const left = Math.max(60_000, cfg.video.timeout_minutes * 60_000 - (clock() - started));
+  try {
+    return { ...(await build(cfg, { scenes: d.scenes, name, now, weekly, timeoutMs: left })), source: d.source, workDir: d.workDir };
+  } catch (e) {
+    if (d.source === 'fallback') throw e;
+    log(`Ролик по раскадровке режиссёра не собрался: ${String(e?.message || e).replace(/\s+/g, ' ').slice(0, 200)} — собираю из запасных сцен.`);
+    return { ...(await build(cfg, { scenes: base, name, now, weekly, timeoutMs: FALLBACK_BUILD_MS })), source: 'fallback', workDir: d.workDir };
+  }
+}
+
 const mmss = (sec) => `${Math.floor(sec / 60)}:${pad2(sec % 60)}`;
 
 /**
  * Ролик утренней сводки (weekly — недельной, из weeklyData): собрать и отправить ответом на текст сводки. Никогда не бросает исключение — текст уже отправлен.
  * При сбое пишет в чат одну короткую строку, не чаще раза в сутки. Возвращает { sent, file?, error? }.
  */
-export async function sendSummaryVideo(p, cfg, { data, tg, now = new Date(), replyTo = null, log = console.log, build = buildVideo, weekly = false } = {}) {
+export async function sendSummaryVideo(p, cfg, { data, tg, now = new Date(), replyTo = null, log = console.log, build = buildVideo, direct = directScenes, weekly = false } = {}) {
   try {
-    const scenes = weekly ? weeklyScenes(data, cfg) : summaryScenes(data, cfg, { now });
     const name = `${weekly ? 'weekly' : 'summary'}-${localDateKey(now)}-${pad2(now.getHours())}${pad2(now.getMinutes())}`;
-    const { file, seconds } = await build(cfg, { scenes, name, now, weekly });
+    const { file, seconds, source } = await makeSummaryVideo(p, cfg, { data, now, weekly, name, log, build, direct });
+    log(`Сцены ролика: ${SOURCE_RU[source]}.`);
     await tg.sendVideo(cfg.telegram.chat_id, file, { caption: `🎬 ${weekly ? 'Итоги недели к' : 'Сводка за'} ${pad2(now.getDate())}.${pad2(now.getMonth() + 1)} · ${mmss(seconds)}`, replyTo, duration: seconds, width: 1080, height: 1920 });
     pruneVideos(path.dirname(file));
     log(`Ролик сводки отправлен (${mmss(seconds)}, ${file}).`);
-    return { sent: true, file };
+    return { sent: true, file, source };
   } catch (e) {
     const reason = String(e?.message || e).replace(/\s+/g, ' ').slice(0, 300);
     log(`Ролик сводки не собран: ${reason}`);
