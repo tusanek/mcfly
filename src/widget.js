@@ -63,19 +63,20 @@ export function weeklyWidget(data, cfg) {
 
 /**
  * Тот же список расширенным сообщением (Bot API 10.1, sendRichMessage, разметка HTML): заголовок, строка целей и два сворачиваемых
- * раздела; каждый пункт — тоже сворачиваемый: название видно сразу, польза открывается нажатием. Пределы Telegram — 32768 знаков
+ * раздела; внутри — нумерованный список: название жирным, под ним польза (всё раскрыто сразу). Пределы Telegram — 32768 знаков
  * и 500 блоков; лишние (самые старые) пункты отбрасываются с пометкой.
  */
 export function weeklyRichHtml(data, cfg) {
   const all = [...(data.items || [])].reverse();
   const items = all.slice(0, 200);
-  const one = (x) => (x.benefit ? `<details><summary>${esc(x.title)}</summary><p>${esc(truncate(x.benefit, 300))}</p></details>` : `<p>${esc(x.title)}</p>`);
-  const part = (title, list, open) => (list.length ? `<details${open ? ' open' : ''}><summary><b>${title} · ${list.length}</b></summary>${list.map(one).join('')}</details>` : '');
+  // Пункт — строка нумерованного списка: название жирным, польза под ним в той же строке списка — видно, что к чему относится
+  const one = (x) => `<li><b>${esc(x.title)}</b>${x.benefit ? `<br>${esc(truncate(x.benefit, 300))}` : ''}</li>`;
+  const part = (title, list, open) => (list.length ? `<details${open ? ' open' : ''}><summary><b>${title} · ${list.length}</b></summary><ol>${list.map(one).join('')}</ol></details>` : '');
   const g = data.goals;
   return `<h3>📋 ${esc(cfg.project)} · итоги недели ${dm(data.since)}–${dm(data.now)}</h3>`
     + `<p>Завершено изменений: ${all.length}${items.length < all.length ? ` (в списке последние ${items.length})` : ''}.${g ? ` Цели: сделано ${g.done} из ${g.total}${g.delta > 0 ? `, +${g.delta} за неделю` : ''}.` : ''}</p>`
     + part('Новое', items.filter((x) => x.notable), true) + part('Исправления и доработки', items.filter((x) => !x.notable), false)
-    + '<footer>Нажмите на пункт, чтобы увидеть, что он даёт.</footer>';
+    + '<footer>Раздел сворачивается и раскрывается нажатием на его заголовок.</footer>';
 }
 
 /** Тот же список обычным текстом (HTML Telegram) — когда виджет и расширенное сообщение не приняты или выключены. */

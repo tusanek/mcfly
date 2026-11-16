@@ -48,11 +48,11 @@ test('weeklyListHtml: тот же список текстом, по раздел
   assert.equal(weeklyListHtml(data([]), cfg), '');
 });
 
-test('weeklyRichHtml: расширенное сообщение — два сворачиваемых раздела, пункт раскрывается в пользу', () => {
+test('weeklyRichHtml: расширенное сообщение — два сворачиваемых раздела, в каждом нумерованный список с пользой', () => {
   const html = weeklyRichHtml(data([item(1), item(2, false, ''), { title: 'A <b> & c', benefit: 'x < y', notable: true }]), cfg);
   assert.match(html, /^<h3>📋 demo · итоги недели 08\.11–15\.11<\/h3><p>Завершено изменений: 3\. Цели: сделано 2 из 4, \+1 за неделю\.<\/p>/);
-  assert.match(html, /<details open><summary><b>Новое · 2<\/b><\/summary><details><summary>A &lt;b&gt; &amp; c<\/summary><p>x &lt; y<\/p><\/details><details><summary>Возможность номер 1<\/summary>/);
-  assert.match(html, /<details><summary><b>Исправления и доработки · 1<\/b><\/summary><p>Возможность номер 2<\/p><\/details>/);
+  assert.match(html, /<details open><summary><b>Новое · 2<\/b><\/summary><ol><li><b>A &lt;b&gt; &amp; c<\/b><br>x &lt; y<\/li><li><b>Возможность номер 1<\/b><br>Польза пункта 1/);
+  assert.match(html, /<details><summary><b>Исправления и доработки · 1<\/b><\/summary><ol><li><b>Возможность номер 2<\/b><\/li><\/ol><\/details>/);
   const big = weeklyRichHtml(data(Array.from({ length: 260 }, (_, i) => item(i))), cfg);
   assert.match(big, /Завершено изменений: 260 \(в списке последние 200\)/);
   assert.ok(big.length < 32768);
