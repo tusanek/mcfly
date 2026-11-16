@@ -118,8 +118,10 @@ export async function main(argv) {
         }
         const w = weeklyWidget(data, cfg);
         if (!w) { log(htmlToPlain(weeklyListHtml(data, cfg)) || 'За неделю завершённых изменений нет.'); return 0; }
-        const file = path.join(os.tmpdir(), `mcfly-weekly-widget-${cfg.project.replace(/[^\p{L}\p{N}_-]+/gu, '-')}.html`);
-        fs.writeFileSync(file, w.html);
+        // В своей папке владельца, а не в общей временной: там файл с предсказуемым именем могли бы подменить ссылкой
+        const dir = path.join(os.homedir(), '.mcfly', 'widget'); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+        const file = path.join(dir, `weekly-${cfg.project.replace(/[^\p{L}\p{N}_-]+/gu, '-') || 'project'}.html`);
+        fs.writeFileSync(file, w.html, { mode: 0o600 });
         log(`${w.caption}\nВиджет: ${file} (${Buffer.byteLength(w.html)} байт, после сжатия ${packedSize(w.html)} из 4096)`); return 0;
       }
       if (values.weekly) { const { sendWeekly, composeWeekly } = await import('./weekly.js'); if (values.send) await sendWeekly(p, cfg, { now, log }); else log(htmlToPlain(composeWeekly(p, cfg, { now }))); return 0; }
