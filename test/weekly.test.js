@@ -53,7 +53,7 @@ test('weeklyData: итоги семи дней — завершённое, це�
   assert.equal(d.usage.now, 0.4);
   assert.equal(d.usage.peak, 0.72);
   assert.equal(d.usage.quotaStops, 1);
-  assert.equal(d.demos.length, 1);
+  assert.equal(d.features.length, 1);
   const text = htmlToPlain(d.html);
   assert.match(text, /demo · итоги недели 08\.11–15\.11/);
   assert.match(text, /Завершено за неделю \(1\)/);
@@ -107,28 +107,63 @@ test('sendWeekly без Telegram печатает текст и не меняе�
   assert.equal(loadState(p).last_weekly_at, undefined);
 });
 
-test('weeklyScenes: диктору — только русские слова; сцены по разделам, образец экраном чата', () => {
+test('weeklyScenes: каждой новой возможности — своя сцена с примером; цели полосой; заставка без паузы', () => {
   const p = project();
-  const scenes = weeklyScenes(weeklyData(p, cfg, { now: NOW }), cfg);
-  assert.deepEqual(scenes.map((s) => s.title), ['demo', 'Завершено за неделю', 'Как это выглядит', 'Цели', 'Прогоны', 'Ждёт вас', 'Лимит подписки', 'Что дальше']);
+  const data = weeklyData(p, cfg, { now: NOW });
+  assert.deepEqual(data.features.map((f) => [f.title, f.sample.text, f.sample.buttons]), [['Бот здоровается с владельцем', 'Доброе утро!', [['Спасибо']]]]);
+  const scenes = weeklyScenes(data, cfg);
+  assert.deepEqual(scenes.map((s) => s.title), ['demo', 'Бот здоровается с владельцем', 'Цели', 'Требует внимания', 'Лимит подписки', 'Что дальше']);
   for (const s of scenes) assert.doesNotMatch(s.speech, /[0-9A-Za-z<>&]/, s.title);
   const by = Object.fromEntries(scenes.map((s) => [s.title, s]));
-  assert.deepEqual(by.demo.lines, ['Итоги недели', '8 ноября — 15 ноября']);
-  assert.match(by['Завершено за неделю'].speech, /завершила одно изменение\. Бот здоровается/);
-  assert.equal(by['Как это выглядит'].kind, 'chat');
+  assert.deepEqual(by.demo.lines, ['Итоги недели', '8 ноября — 15 ноября', 'Новых возможностей: 1']);
+  assert.equal(by.demo.hold, 0);
+  assert.match(by.demo.speech, /За неделю — одна новая возможность/);
+  assert.equal(by['Бот здоровается с владельцем'].kind, 'chat');
+  assert.deepEqual(by['Бот здоровается с владельцем'].chat, { text: 'Доброе утро!', buttons: [['Спасибо']] });
   assert.match(by['Цели'].speech, /сделано два из трёх пунктов/);
-  assert.match(by['Прогоны'].speech, /семь прогонов\. Не все прошли гладко/);
-  assert.match(by['Ждёт вас'].speech, /один вопрос без ответа\. Всё это — в боте/);
-  assert.match(by['Лимит подписки'].speech, /занят на сорок процентов\. Из за лимита остановлено: один прогон/);
+  assert.deepEqual(by['Цели'].bar, { done: 2, total: 3 });
+  assert.match(by['Требует внимания'].speech, /Не все прогоны за неделю прошли гладко/);
   assert.match(by['Что дальше'].speech, /Хорошей недели/);
 });
 
-test('weeklyScenes: спокойная неделя — без сцен «Ждёт вас», целей и лимита', () => {
+test('weeklyScenes: исправления и невидимые доработки в ролик не идут; что не влезло — списком «И ещё»', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-weekly-')); const p = paths(dir); fs.mkdirSync(p.root, { recursive: true });
-  fs.writeFileSync(p.metrics, JSON.stringify({ type: 'run', id: 'a', slot: '04:00', started_at: at(15), status: 'ok' }) + '\n');
+  const ideas = []; const sample = '## Как это будет выглядеть\n### Экран\n```\nПривет\n```\n';
+  const put = (n, id, title, source, body) => {
+    const d = path.join(p.openspecChanges, 'archive', `2026-11-1${n}-c${n}`); fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'proposal.md'), `## Зачем\nПольза ${id}.\n\n${body}`);
+    fs.writeFileSync(path.join(d, '.openspec.yaml'), `mcfly:\n  idea: ${id}\n`);
+    fs.utimesSync(d, new Date(2026, 10, 10 + n), new Date(2026, 10, 10 + n));
+    ideas.push({ id, title, benefit: `Польза ${id}`, source, size: 'M', status: 'done' });
+  };
+  put(0, 'I1', 'Напоминания', 'owner-backlog', sample);
+  put(1, 'I2', 'Бот не падает от ошибки базы', 'team', sample); // исправление
+  put(2, 'I3', 'Внутренняя перестройка хранения', 'team', ''); // снаружи не видно
+  put(3, 'I4', 'Работа без связи', 'owner-backlog', ''); // из бэклога владельца — без образца, текстом
+  put(4, 'I5', 'Подсказка в меню', 'team', sample);
+  fs.writeFileSync(p.ideas, JSON.stringify({ ideas }));
+  const data = weeklyData(p, cfg, { now: NOW });
+  assert.equal(data.closed.length, 5);
+  assert.deepEqual(data.features.map((f) => f.title), ['Напоминания', 'Работа без связи', 'Подсказка в меню']);
+  const tight = weeklyScenes(data, { ...cfg, video: { ...cfg.video, weekly_max_seconds: 30 } });
+  assert.deepEqual(tight.map((s) => s.title), ['demo', 'Напоминания', 'Работа без связи', 'И ещё', 'Что дальше']);
+  assert.equal(tight[2].kind, 'text');
+  assert.deepEqual(tight[3].lines, ['• Подсказка в меню']);
+  assert.match(tight[3].speech, /И ещё одна новая возможность — на экране/);
+  assert.deepEqual(weeklyScenes(data, cfg).map((s) => s.title), ['demo', 'Напоминания', 'Работа без связи', 'Подсказка в меню', 'Что дальше']);
+});
+
+test('weeklyScenes: неделя без новых возможностей — одна сцена; прогоны, лимит и «ждёт вас» молчат, пока всё спокойно', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-weekly-')); const p = paths(dir); fs.mkdirSync(p.root, { recursive: true });
+  fs.writeFileSync(p.metrics, JSON.stringify({ type: 'run', id: 'a', slot: '04:00', started_at: at(15), status: 'ok', usage: { seven_day: 0.4 } }) + '\n');
+  fs.writeFileSync(p.questions, 'questions:\n  - { id: Q1, category: spec, text: "Какой цвет?", status: open, deadline_at: "2026-11-20T00:00:00Z" }\n');
   const scenes = weeklyScenes(weeklyData(p, cfg, { now: NOW }), cfg);
-  assert.deepEqual(scenes.map((s) => s.title), ['demo', 'Завершено за неделю', 'Прогоны', 'Что дальше']);
-  assert.match(scenes[2].speech, /Единственный прогон за неделю прошёл успешно/);
+  assert.deepEqual(scenes.map((s) => s.title), ['demo', 'За неделю', 'Что дальше']);
+  assert.match(scenes[1].speech, /Завершённых изменений за неделю нет/);
+  fs.appendFileSync(p.metrics, JSON.stringify({ type: 'run', id: 'b', started_at: at(15, 12), status: 'quota', usage: { seven_day: 0.93 } }) + '\n');
+  const hot = weeklyScenes(weeklyData(p, cfg, { now: NOW }), cfg);
+  assert.deepEqual(hot.map((s) => s.title), ['demo', 'За неделю', 'Требует внимания', 'Лимит подписки', 'Что дальше']);
+  assert.match(hot[3].speech, /занят на девяносто три процента\. Из за лимита остановлено: один прогон/);
 });
 
 test('sendSummaryVideo weekly: своё имя файла, подпись и вид ролика', async () => {
@@ -157,4 +192,5 @@ test('настройки: weekly_day от 0 до 7, weekly_at — время', (
   assert.equal(parseConfig('project: demo').schedule.weekly_day, 7);
   assert.throws(() => parseConfig('project: demo\nschedule: { weekly_day: 8 }'), /weekly_day/);
   assert.throws(() => parseConfig('project: demo\nschedule: { weekly_at: "7pm" }'), /weekly_at/);
+  assert.throws(() => parseConfig('project: demo\nvideo: { weekly_max_seconds: 10 }'), /weekly_max_seconds/);
 });

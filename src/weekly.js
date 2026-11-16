@@ -2,7 +2,7 @@ import path from 'node:path';
 import { readText, pad2, truncate, fmtDuration, fmtShort } from './util.js';
 import { readMetrics, aggregate } from './metrics.js';
 import { loadQuestions, openQuestions } from './questions.js';
-import { listChanges, pendingApprovals, approvedWithWork, archivedSince, proposalSamples } from './approvals.js';
+import { listChanges, pendingApprovals, approvedWithWork, archivedSince, proposalSamples, proposalExcerpt } from './approvals.js';
 import { loadIdeas } from './ideas.js';
 import { expectedSlots, slotKey } from './window.js';
 import { loadState, saveState } from './state.js';
@@ -17,6 +17,27 @@ import { sendSummaryVideo } from './video.js';
 
 const WEEK_MS = 7 * 24 * 3600_000;
 const SHOW_CLOSED = 10; // завершённых изменений поимённо — последние; остальные числом
+// Исправление или защита, а не новая возможность: по названию. В ролик такое не идёт — владельцу показываем то, чем можно пользоваться.
+const FIX_LIKE = /(?<![\p{L}\p{N}])(не пада|не лома|не теря|не да[её]т|не зависа|ошибк|исправ|почин|сбо[йея]|запрет|ужесточ|защит|баг|уязвим|рефактор|тест[ыоа]|чистк|журнал|логи)/iu;
+const SIZE_RANK = { L: 3, M: 2, S: 1 };
+/**
+ * Заметные новые возможности из завершённых изменений — для ролика: не исправление по названию и либо есть образец «как это
+ * выглядит» (сообщение или кнопки), либо пункт из бэклога владельца. Исправления и невидимые технические доработки сюда не входят.
+ * [{ title, benefit, sample: { text, buttons } | null, weight }] в порядке завершения; weight — что показывать первым, если все не влезут.
+ */
+export function notableFeatures(p, archived, ideas) {
+  const out = [];
+  for (const c of archived) {
+    const idea = c.mcfly?.idea ? ideas.find((x) => String(x.id) === String(c.mcfly.idea)) : null;
+    const title = idea ? String(idea.title || '') : changeTitle(p, c).replace(/^«|»$/g, '');
+    const sample = proposalSamples(c).find((x) => x.text) || proposalSamples(c).find((x) => x.buttons.length) || null;
+    const own = idea?.source === 'owner-backlog';
+    if (!title || FIX_LIKE.test(title) || !(sample || own)) continue;
+    out.push({ title, benefit: String(idea?.benefit || proposalExcerpt(c, 200) || ''), sample: sample ? { text: sample.text, buttons: sample.buttons } : null, weight: (own ? 10 : 0) + (SIZE_RANK[idea?.size] || 1) + (sample ? 1 : 0) });
+  }
+  return out;
+}
+
 const dm = (d) => `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}`;
 const pct = (x) => Math.round(Number(x) * 100);
 
@@ -24,7 +45,7 @@ const pct = (x) => Math.round(Number(x) * 100);
  * Данные недельной сводки и её текст (html). since — начало периода, по умолчанию неделя назад.
  * closed — названия завершённых изменений; goals — { done, total, delta, milestone } или null (delta — прирост с прошлой недельной
  * сводки, null — сравнить не с чем); runs — { total, stats: { статус: сколько }, workMs }; waiting — { questions, pending, proposed };
- * usage — { now, at, peak, quotaStops } или null; demos — образцы «как это выглядит» завершённых изменений (для ролика).
+ * usage — { now, at, peak, quotaStops } или null; features — заметные новые возможности с образцом (для ролика, см. notableFeatures).
  */
 export function weeklyData(p, cfg, { now = new Date(), since = new Date(now.getTime() - WEEK_MS) } = {}) {
   const records = readMetrics(p);
@@ -59,7 +80,7 @@ export function weeklyData(p, cfg, { now = new Date(), since = new Date(now.getT
   const week = measured.filter((r) => new Date(r.started_at) > since).map((r) => Number(r.usage.seven_day));
   const usage = last ? { now: Number(last.usage.seven_day), at: new Date(last.ended_at || last.started_at), peak: week.length ? Math.max(...week) : null, quotaStops: stats.quota || 0 } : null;
 
-  const demos = archived.flatMap((c) => proposalSamples(c).filter((x) => x.text || x.buttons.length).map((x) => ({ change: changeTitle(p, c), ...x })));
+  const features = notableFeatures(p, archived, loadIdeas(p).ideas);
 
   const L = [`📅 <b>${escHtml(cfg.project)}</b> · итоги недели ${dm(since)}–${dm(now)}`, ''];
   L.push(`<b>🏁 Завершено за неделю${closed.length ? ` (${closed.length})` : ''}</b>`);
@@ -89,7 +110,7 @@ export function weeklyData(p, cfg, { now = new Date(), since = new Date(now.getT
     L.push(`Недельный лимит занят на ${pct(usage.now)} % <i>(замер ${fmtShort(usage.at)})</i>${usage.peak != null && usage.peak > usage.now ? `, за неделю доходил до ${pct(usage.peak)} %` : ''}`);
     if (usage.quotaStops) L.push(`Прогонов, остановленных из-за лимита: ${usage.quotaStops}`);
   }
-  return { html: L.join('\n'), since, now, closed, tasksDone, work, goals, runs: { total, stats, workMs }, waiting: { questions, pending, proposed }, usage, demos };
+  return { html: L.join('\n'), since, now, closed, tasksDone, work, goals, runs: { total, stats, workMs }, waiting: { questions, pending, proposed }, usage, features };
 }
 
 export function composeWeekly(p, cfg, opts = {}) { return weeklyData(p, cfg, opts).html; }
