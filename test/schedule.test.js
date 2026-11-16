@@ -8,7 +8,7 @@ const cfg = { ...baseCfg, telegram: { ...baseCfg.telegram, chat_id: '42' } };
 
 test('planJobs: прогоны по слотам и сводка', () => {
   const jobs = planJobs(cfg, { projectDir: '/p', node: '/usr/bin/node', mcflyBin: '/m/bin/mcfly', logsDir: '/p/mcfly/logs', pathEnv: '/usr/bin', home: '/Users/u' });
-  assert.deepEqual(jobs.map((j) => [j.label, j.hour, j.minute]), [['com.mcfly.demo.run-0000', 0, 0], ['com.mcfly.demo.run-0400', 4, 0], ['com.mcfly.demo.summary', 8, 0], ['com.mcfly.demo.answers', undefined, undefined]]);
+  assert.deepEqual(jobs.map((j) => [j.label, j.hour, j.minute]), [['com.mcfly.demo.run-0000', 0, 0], ['com.mcfly.demo.run-0400', 4, 0], ['com.mcfly.demo.summary', 8, 0], ['com.mcfly.demo.weekly', 19, 0], ['com.mcfly.demo.answers', undefined, undefined]]);
   assert.match(jobs[0].plist, /<string>run<\/string>\s*<string>--mode<\/string>\s*<string>night<\/string>/);
   assert.match(jobs[2].plist, /<string>summary<\/string>\s*<string>--send<\/string>/);
   assert.match(jobs[0].plist, /<key>Hour<\/key><integer>0<\/integer>/);
@@ -105,7 +105,7 @@ function setup(opts = {}) {
   const o = { projectDir, mcflyBin: '/m/bin/mcfly', logsDir: path.join(projectDir, 'mcfly', 'logs'), agentsDir, uid: 501, launchctl, ...clock, log: (s) => lines.push(s) };
   return { o, launchctl, lines, agentsDir };
 }
-const LABELS = ['com.mcfly.demo.run-0000', 'com.mcfly.demo.run-0400', 'com.mcfly.demo.summary', 'com.mcfly.demo.answers'];
+const LABELS = ['com.mcfly.demo.run-0000', 'com.mcfly.demo.run-0400', 'com.mcfly.demo.summary', 'com.mcfly.demo.weekly', 'com.mcfly.demo.answers'];
 const putPlists = (dir, labels) => { for (const l of labels) fs.writeFileSync(path.join(dir, `${l}.plist`), '<plist/>'); };
 
 test('0.8.1: install на работающем answers ждёт выгрузки и поднимает его снова (07.11 answers пропал до повторного install)', () => {
@@ -124,13 +124,13 @@ test('0.8.1: незагруженное задание (plist есть, launchd 
   putPlists(agentsDir, LABELS);
   assert.deepEqual(install(cfg, o).failed, []);
   assert.equal(launchctl.calls.some((c) => c.startsWith('bootout')), false);
-  assert.equal(launchctl.state.size, 4);
+  assert.equal(launchctl.state.size, 5);
 });
 
 test('0.8.1: сбой bootstrap повторяется с паузой', () => {
   const { o, launchctl, lines } = setup({ bootstrapFailures: 2 });
   assert.deepEqual(install(cfg, o).failed, []);
-  assert.equal(launchctl.state.size, 4);
+  assert.equal(launchctl.state.size, 5);
   assert.equal(launchctl.calls.filter((c) => c.startsWith('bootstrap') && c.endsWith('run-0000.plist')).length, 3);
   assert.ok(lines.every((l) => l.startsWith('✓')), lines.join('\n'));
 });
@@ -169,7 +169,7 @@ test('0.8.1: dry-run не вызывает launchctl', () => {
 });
 
 test('0.8.1: status называет задания плана, которые не загружены, и лишние', () => {
-  const { o, lines } = setup({ loaded: ['com.mcfly.demo.run-0000', 'com.mcfly.demo.run-0400', 'com.mcfly.demo.summary', 'com.mcfly.demo.run-0600'] });
+  const { o, lines } = setup({ loaded: ['com.mcfly.demo.run-0000', 'com.mcfly.demo.run-0400', 'com.mcfly.demo.summary', 'com.mcfly.demo.weekly', 'com.mcfly.demo.run-0600'] });
   const missing = status(cfg, o);
   assert.equal(missing, 1);
   assert.match(lines.find((l) => l.includes('.answers')), /^✗ com\.mcfly\.demo\.answers .*НЕ загружено.*mcfly schedule install/);

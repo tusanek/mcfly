@@ -22,7 +22,7 @@ export const STATUS_RU = { ok: 'прошёл успешно', missed: 'проп�
 /** Доля лимита подписки, с которой бот предупреждает владельца (до неё о лимите молчит). */
 export const QUOTA_WARN = 0.8;
 
-const STATUS_COUNT_RU = { ok: 'успешных', quota: 'остановлено по лимиту подписки', network: 'без связи', timeout: 'не уложилось во время', error: 'сорвалось', missed: 'пропущено', locked: 'не запускалось' };
+export const STATUS_COUNT_RU = { ok: 'успешных', quota: 'остановлено по лимиту подписки', network: 'без связи', timeout: 'не уложилось во время', error: 'сорвалось', missed: 'пропущено', locked: 'не запускалось' };
 /** «прогонов 3 (остановлено по лимиту подписки 2, успешных 1)» — частые статусы первыми. */
 export function runsByStatus(agg) {
   const parts = Object.keys(STATUS_COUNT_RU).filter((s) => agg[s]).sort((a, b) => agg[b] - agg[a]).map((s) => `${STATUS_COUNT_RU[s]} ${agg[s]}`);

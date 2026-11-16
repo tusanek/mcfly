@@ -27,7 +27,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   init [--name <проект>] [--with-tracker]        создать mcfly/ в проекте, настроить .claude и OpenSpec
   doctor [--probe]                                проверить окружение (--probe: реальный пробный запуск claude -p)
   run [--mode night|day] [--dry-run]              запустить прогон команды (night проверяет окно слота)
-  summary [--send]                                собрать (и отправить в Telegram) утреннюю сводку
+  summary [--weekly] [--send]                     собрать (и отправить в Telegram) утреннюю сводку; --weekly — недельную (итоги семи дней)
   answers [--once]                                забирать ответы из Telegram сразу по приходу ~answers_every_minutes мин (задание launchd); --once — один раз
   context                                         контекст состояния для агентов
   status                                          состояние проекта
@@ -52,14 +52,14 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   action prepare|exec <id> --ticket <t>           служебные: их запускает бот после нажатия кнопки
   finding add --text <t> [--evidence <t>]        находка для доработки самого mcfly (не проекта); владелец решает в боте, передавать ли
   finding list | finding send <Fн> | finding drop <Fн>   список; передать в общий ящик или убрать (только владелец в терминале)
-  video setup | video build [--send]              ролик-сводка с голосом (video.enabled): установить сборщик и озвучку (около 2 ГБ);
+  video setup | video build [--weekly] [--send]   ролик-сводка с голосом (video.enabled): установить сборщик и озвучку (около 2 ГБ);
                                                   собрать ролик из текущей сводки (--send — отправить в Telegram)
   remind list | remind rm <Rн>                    напоминания владельцу (ставятся в боте: «напомни 19:00 текст»)
 Общие флаги: --project <dir> (по умолчанию текущий каталог или MCFLY_PROJECT_DIR)`;
 
 export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
-    project: { type: 'string' }, mode: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
+    project: { type: 'string' }, mode: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, weekly: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
     change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
@@ -103,7 +103,9 @@ export async function main(argv) {
   const runIdEnv = process.env.MCFLY_RUN_ID || '';
   switch (cmd) {
     case 'run': { const r = await run({ projectDir, mode: values.mode || 'day', dryRun: !!values['dry-run'], now, log }); return ['ok', 'dry-run', 'missed'].includes(r.status) ? 0 : 1; }
-    case 'summary': { if (values.send) await sendSummary(p, cfg, { now, log }); else { const since = new Date(now.getTime() - 24 * 3600_000); log(htmlToPlain(composeSummary(p, cfg, { now, since }))); log(`\n${techTail(p, cfg, { since })}`); } return 0; }
+    case 'summary': {
+      if (values.weekly) { const { sendWeekly, composeWeekly } = await import('./weekly.js'); if (values.send) await sendWeekly(p, cfg, { now, log }); else log(htmlToPlain(composeWeekly(p, cfg, { now }))); return 0; }
+      if (values.send) await sendSummary(p, cfg, { now, log }); else { const since = new Date(now.getTime() - 24 * 3600_000); log(htmlToPlain(composeSummary(p, cfg, { now, since }))); log(`\n${techTail(p, cfg, { since })}`); } return 0; }
     case 'answers': {
       // Задание launchd (answers --project …) — длинный опрос почти до следующего запуска: ответ на «запусти» и кнопки за секунды.
       // Чтения одного offset исключает блокировка опроса (pull.js); прогон до 0.5.4 читает без неё — пока он идёт, не читаем.
@@ -317,20 +319,21 @@ export async function main(argv) {
       break;
     }
     case 'video': {
-      const { setupVideo, buildVideo, summaryScenes, sendSummaryVideo } = await import('./video.js');
+      const { setupVideo, buildVideo, summaryScenes, weeklyScenes, sendSummaryVideo } = await import('./video.js');
       const { summaryData } = await import('./summary.js');
       if (sub === 'setup') { try { await setupVideo(cfg, { log }); return 0; } catch (e) { console.error(`Установка не удалась: ${e.message}`); return 1; } }
       if (sub === 'build') {
-        const data = summaryData(p, cfg, { now, since: new Date(now.getTime() - 24 * 3600_000) });
+        const weekly = !!values.weekly;
+        const data = weekly ? (await import('./weekly.js')).weeklyData(p, cfg, { now }) : summaryData(p, cfg, { now, since: new Date(now.getTime() - 24 * 3600_000) });
         if (values.send) {
           const token = process.env[cfg.telegram.token_env];
           if (!token || !cfg.telegram.chat_id) { console.error('Telegram не настроен: нет токена или chat_id.'); return 1; }
           const { createTelegram } = await import('./telegram.js');
-          return (await sendSummaryVideo(p, cfg, { data, tg: createTelegram({ token }), now, log })).sent ? 0 : 1;
+          return (await sendSummaryVideo(p, cfg, { data, tg: createTelegram({ token }), now, log, weekly })).sent ? 0 : 1;
         }
-        const scenes = summaryScenes(data, cfg, { now });
+        const scenes = weekly ? weeklyScenes(data, cfg) : summaryScenes(data, cfg, { now });
         for (const s of scenes) log(`${s.key} «${s.title}»: ${s.speech}`);
-        try { const r = await buildVideo(cfg, { scenes, name: 'preview', now }); log(`Ролик: ${r.file} (${r.seconds} с)`); return 0; } catch (e) { console.error(`Ролик не собран: ${e.message}`); return 1; }
+        try { const r = await buildVideo(cfg, { scenes, name: weekly ? 'preview-weekly' : 'preview', now, ...(weekly ? { kind: 'Итоги недели' } : {}) }); log(`Ролик: ${r.file} (${r.seconds} с)`); return 0; } catch (e) { console.error(`Ролик не собран: ${e.message}`); return 1; }
       }
       break;
     }
