@@ -11,10 +11,11 @@ import { vpnStatus } from './vpn.js';
 import { isTrusted, hasActions } from './actions.js';
 import { mainBranchIssue } from './init.js';
 import { labelFor, runLaunchctl } from './schedule.js';
+import { readPower, powerChecks } from './power.js';
 
 function ver(bin, args = ['--version']) { const r = spawnSync(bin, args, { encoding: 'utf8' }); return r.status === 0 ? String(r.stdout || r.stderr).trim().split('\n')[0] : null; }
 
-export function doctor({ projectDir, probe = false, log = console.log, launchctl = runLaunchctl }) {
+export function doctor({ projectDir, probe = false, log = console.log, launchctl = runLaunchctl, power = process.platform === 'darwin' ? readPower : null }) {
   const p = paths(projectDir); loadEnv(projectDir);
   const checks = [];
   const add = (ok, label, hint = '') => checks.push({ ok: !!ok, label, hint });
@@ -41,6 +42,8 @@ export function doctor({ projectDir, probe = false, log = console.log, launchctl
   const openspec = ver('openspec'); add(openspec, `openspec ${openspec || ''}`, 'npm install -g @fission-ai/openspec@latest');
   add(ver('git'), 'git');
   add(process.platform !== 'darwin' || exists('/usr/bin/caffeinate'), 'caffeinate (macOS)');
+  // 0.11.3: спящий Mac launchd не будит — прогоны по расписанию и опрос бота молча пропускаются
+  if (power) for (const c of powerChecks(power())) add(c.ok, c.label, c.hint);
   add(exists(path.join(MCFLY_ROOT, '.claude-plugin', 'plugin.json')), `плагин mcfly (${MCFLY_ROOT})`);
   if (cfg && hasActions(cfg)) {
     add(isTrusted(p, cfg), `действия в боте (${Object.keys(cfg.actions).join(', ')}) подтверждены владельцем`, 'проверьте команды раздела actions и выполните в терминале: mcfly action trust');
