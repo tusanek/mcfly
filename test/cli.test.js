@@ -221,3 +221,10 @@ test('0.7.12: из worktree сессии команды работают с ос
   // в основном дереве — без подсказки
   const r = cli(['metric', 'add', '--key', 'from_main'], dir); assert.equal(r.status, 0); assert.doesNotMatch(r.stderr, /worktree сессии/);
 });
+
+test('0.15.0 video build: неизвестное значение --director — ошибка и код 1, ничего не собирается', () => {
+  const dir = tmpDir();
+  cli(['init', '--name', 'demo'], dir);
+  const r = cli(['video', 'build', '--director', 'always'], dir);
+  assert.equal(r.status, 1); assert.match(r.stderr, /--director: off/);
+});
