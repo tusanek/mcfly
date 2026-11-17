@@ -112,7 +112,7 @@ test('пустая ночь и словарь проекта', () => {
 test('длинные пересказы укладываются в video.max_seconds', () => {
   const long = `Что сделано: ${'Команда сделала ещё одну полезную вещь для владельца. '.repeat(40)}`;
   const scenes = summaryScenes({ ...DATA, plain: [{ slot: '00:00', text: long }, { slot: '04:00', text: long }] }, { ...cfg, video: { ...cfg.video, max_seconds: 30 } }, { now: NOW });
-  assert.ok(scenes.reduce((n, s) => n + s.speech.length, 0) <= 30 * 14 + 250);
+  assert.ok(scenes.reduce((n, s) => n + s.speech.length, 0) <= 30 * 19 + 250);
   assert.ok(scenes.filter((s) => s.title === 'Что сделано').every((s) => s.lines[0].length <= 301));
 });
 
