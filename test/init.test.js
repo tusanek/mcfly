@@ -18,6 +18,8 @@ test('init создаёт файлы, идемпотентен и не пере�
   assert.match(claude, /Свои правила/); assert.equal(claude.split('<!-- mcfly:start -->').length, 2);
   const settings = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'));
   assert.ok(settings.permissions.deny.includes('Bash(sudo *)'));
+  // 0.15.6: команды, которые процесс разрешает ролям, не зависят от автоматической проверки разрешений
+  for (const rule of ['Bash(mcfly finding add *)', 'Bash(mcfly ideas add *)', 'Bash(mcfly metric add *)', 'Bash(mcfly question add *)']) assert.ok(settings.permissions.allow.includes(rule), rule);
   // секреты продукта в корневом .env агентам недоступны так же, как mcfly/.env
   for (const rule of ['Read(./.env)', 'Edit(./.env)', 'Write(./.env)']) assert.ok(settings.permissions.deny.includes(rule), rule);
   assert.match(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8'), /mcfly\/\.env/);

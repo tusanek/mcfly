@@ -1,6 +1,12 @@
 {
   "enableAllProjectMcpServers": true,
   "permissions": {
+    "allow": [
+      "Bash(mcfly finding add *)",
+      "Bash(mcfly ideas add *)",
+      "Bash(mcfly metric add *)",
+      "Bash(mcfly question add *)"
+    ],
     "deny": [
       "Bash(git push --force*)",
       "Bash(git push -f*)",
