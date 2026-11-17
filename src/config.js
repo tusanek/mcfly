@@ -82,12 +82,13 @@ export function validate(cfg) {
   const video = cfg.video || {};
   if (typeof video.enabled !== 'boolean') errors.push('video.enabled: true или false');
   if (!['aidar', 'baya', 'kseniya', 'eugene', 'xenia'].includes(video.voice)) errors.push('video.voice: один из голосов aidar, baya, kseniya, eugene, xenia');
-  if (!(video.voice_speed >= 0.9 && video.voice_speed <= 1.3)) errors.push('video.voice_speed: скорость голоса от 0.9 до 1.3');
+  if (!(typeof video.voice_speed === 'number' && video.voice_speed >= 0.9 && video.voice_speed <= 1.3)) errors.push('video.voice_speed: скорость голоса от 0.9 до 1.3');
   if (!(video.max_seconds >= 20 && video.max_seconds <= 180)) errors.push('video.max_seconds: от 20 до 180');
   if (!(video.weekly_max_seconds >= 30 && video.weekly_max_seconds <= 300)) errors.push('video.weekly_max_seconds: от 30 до 300');
   if (!(video.timeout_minutes > 0 && video.timeout_minutes <= 60)) errors.push('video.timeout_minutes: больше 0 и не больше 60');
   if (!['off', 'on', 'review'].includes(video.director)) errors.push('video.director: off (сцены ролика собирает код), on (сценарий пишет режиссёр) или review (режиссёр и зритель)');
-  if (!(video.director_minutes >= 1 && video.director_minutes <= 30)) errors.push('video.director_minutes: от 1 до 30');
+  if (!(typeof video.director_minutes === 'number' && video.director_minutes >= 1 && video.director_minutes <= 30)) errors.push('video.director_minutes: число от 1 до 30');
+  else if (video.director !== 'off' && !(video.director_minutes < video.timeout_minutes)) errors.push('video.director_minutes: меньше video.timeout_minutes — иначе на сборку ролика не останется времени');
   if (!video.pronounce || typeof video.pronounce !== 'object' || Array.isArray(video.pronounce) || Object.values(video.pronounce).some((v) => typeof v !== 'string')) errors.push('video.pronounce: словарь «слово: как прочитать»');
   if (!cfg.links || typeof cfg.links !== 'object' || Array.isArray(cfg.links)) errors.push('links: словарь «подпись: адрес»');
   else for (const [k, v] of Object.entries(cfg.links)) if (!/^https?:\/\/[^\s"<>]+$/.test(String(v))) errors.push(`links.${k}: адрес http:// или https:// без пробелов, кавычек и <>`);

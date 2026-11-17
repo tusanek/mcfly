@@ -351,7 +351,7 @@ export async function main(argv) {
           const token = process.env[cfg.telegram.token_env];
           if (!token || !cfg.telegram.chat_id) { console.error('Telegram не настроен: нет токена или chat_id.'); return 1; }
           const { createTelegram } = await import('./telegram.js');
-          return (await sendSummaryVideo(p, cfg, { data, tg: createTelegram({ token }), now, log, weekly })).sent ? 0 : 1;
+          return (await sendSummaryVideo(p, cfg, { data, tg: createTelegram({ token }), now, log, weekly, mode })).sent ? 0 : 1;
         }
         const r0 = await (async () => {
           try { return await makeSummaryVideo(p, cfg, { data, now, weekly, name: weekly ? 'preview-weekly' : 'preview', mode, log }); } catch (e) { console.error(`Ролик не собран: ${e.message}`); return null; }

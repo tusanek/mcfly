@@ -5,7 +5,8 @@ import { MCFLY_ROOT } from './prompt.js';
 import { lastUsage } from './chain.js';
 import { videoPaths, projectSlug, renderStills } from './video.js';
 import { checkStoryboard, toScenes, parseRemarks, applyRemarks, sceneList } from './storyboard.js';
-import { ensureDir, writeJson, pad2 } from './util.js';
+import { ensureDir, writeJson, pad2, readText } from './util.js';
+import { parseDotenv } from './env.js';
 
 // 0.15.0: сценарий ролика-сводки пишет роль-режиссёр, зритель один раз смотрит кадры и сверяет факты. Запускается из задания
 // сводки, после отправки текста. Оба работают в своей папке вне проекта. Любой отказ — сцены из кода (запасной вариант):
@@ -15,11 +16,18 @@ const DIRECTOR = 'mcfly:director';
 const VIEWER = 'mcfly:user';
 const QUOTA_STOP = 0.9; // недельный лимит подписки занят на столько и больше — режиссёра не запускаем
 const KEEP_WORK = 8;
+const TOOLS = { [DIRECTOR]: 'Read,Write,Glob', [VIEWER]: 'Read,Glob' }; // зрителю — только смотреть
 
 /** Один запуск роли без диалога в папке cwd. Возвращает { ok, text, reason }, не бросает. */
-export async function runAgent(cfg, { agent, prompt, cwd, timeoutMs, run = runProcess }) {
-  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--plugin-dir', MCFLY_ROOT, '--agent', agent, prompt];
-  const r = await run({ bin: cfg.run.claude_bin, args, cwd, env: cleanEnv(process.env), timeoutMs });
+export async function runAgent(cfg, { agent, prompt, cwd, timeoutMs, run = runProcess, tools = 'Read,Glob', hide = [] }) {
+  // Роль читает данные сводки, а в них текст из проекта и сообщений владельца — возможна подстановка указаний. Поэтому:
+  // инструменты только из списка tools (без командной строки и сети), подключённые серверы не грузятся, а токен бота и
+  // секреты проекта из окружения убраны. acceptEdits — чтобы режиссёр писал storyboard.json без вопроса: в -p спросить некого,
+  // запись вне рабочей папки при этом отклоняется. Задание — последним аргументом и не сразу после списка инструментов.
+  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--strict-mcp-config', '--tools', tools, '--plugin-dir', MCFLY_ROOT, '--agent', agent, prompt];
+  const env = cleanEnv(process.env);
+  for (const k of [cfg.telegram?.token_env, ...hide]) if (k) delete env[k];
+  const r = await run({ bin: cfg.run.claude_bin, args, cwd, env, timeoutMs });
   const parsed = parseResult(r);
   return { ok: parsed.status === 'ok', text: parsed.resultText, reason: parsed.status === 'ok' ? '' : `${parsed.status}: ${parsed.errorText.split('\n')[0].slice(0, 200)}` };
 }
@@ -57,11 +65,12 @@ export async function directScenes(p, cfg, { data, baseScenes, weekly = false, n
     const usage = lastUsage(p);
     if (usage && usage.seven_day >= QUOTA_STOP) return fallback('недельный лимит подписки занят на 90 % и больше');
     workDir = prepareWork(cfg, { data, baseScenes, now, vp });
+    const hide = Object.keys(parseDotenv(readText(p.env, '')));
     const deadline = clock() + cfg.video.director_minutes * 60_000;
     const call = async (role, prompt) => {
       const left = deadline - clock();
       if (left <= 0) throw new Error('вышло время, отведённое режиссёру');
-      const r = await agent(cfg, { agent: role, prompt, cwd: workDir, timeoutMs: left });
+      const r = await agent(cfg, { agent: role, prompt, cwd: workDir, timeoutMs: left, tools: TOOLS[role], hide });
       if (!r.ok) throw new Error(r.reason || 'сбой запуска');
       return r;
     };
@@ -89,7 +98,10 @@ export async function directScenes(p, cfg, { data, baseScenes, weekly = false, n
       await stills(cfg, { scenes: toScenes(first, cfg), dir: path.join(workDir, 'stills'), weekly, now, vp, timeoutMs: Math.max(1, deadline - clock()) });
       const seen = await call(VIEWER, 'Посмотри ролик-сводку (раздел «Если тебя зовут смотреть ролик-сводку» твоей инструкции): storyboard.json, кадры stills/NN.png, данные data.json. Ответ — только массив JSON с замечаниями.');
       remarks = parseRemarks(seen.text);
-      if (!remarks.length) return done(first, 'director');
+      if (!remarks.length) {
+        if (!/^\s*(\[\s*\])?\s*$/.test(seen.text)) { fs.writeFileSync(path.join(workDir, 'viewer.txt'), seen.text); log('Режиссёр ролика: ответ зрителя не разобран (сохранён в viewer.txt) — остаётся раскадровка без правки.'); }
+        return done(first, 'director');
+      }
       writeJson(path.join(workDir, 'remarks.json'), remarks);
       await call(DIRECTOR, 'Зритель посмотрел ролик и оставил замечания в remarks.json (scene — номер сцены, kind: fact — утверждение не подтверждается данными). Исправь по существу и запиши storyboard.json заново, целиком.');
       let after = read(); let bad = check(after);

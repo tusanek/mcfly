@@ -194,3 +194,29 @@ test('runAgent: роль, папка плагина и режим правок �
   const none = await runAgent(cfg, { agent: 'mcfly:user', prompt: 'п', cwd: '/tmp/x', timeoutMs: 1, run: async () => ({ exitCode: -1, stdout: '', stderr: 'Error: spawn claude ENOENT', timedOut: false }) });
   assert.equal(none.ok, false); assert.match(none.reason, /ENOENT/);
 });
+
+// --- по итогам проверки ветки ---
+test('runAgent: роли не видят токен бота и секреты проекта; набор инструментов ограничен, подключённые серверы не грузятся', async () => {
+  process.env.TOK_DIRECTOR_TEST = 'secret'; process.env.PROJECT_SECRET_TEST = 'secret2';
+  const seen = []; const run = async (o) => { seen.push(o); return { exitCode: 0, stdout: `${JSON.stringify({ type: 'result', is_error: false, result: 'ок' })}\n`, stderr: '', timedOut: false }; };
+  const c = { ...cfg, telegram: { ...cfg.telegram, token_env: 'TOK_DIRECTOR_TEST' } };
+  await runAgent(c, { agent: 'mcfly:director', prompt: 'задание', cwd: '/tmp/x', timeoutMs: 1000, run, tools: 'Read,Write,Glob', hide: ['PROJECT_SECRET_TEST'] });
+  delete process.env.TOK_DIRECTOR_TEST; delete process.env.PROJECT_SECRET_TEST;
+  assert.ok(!('TOK_DIRECTOR_TEST' in seen[0].env) && !('PROJECT_SECRET_TEST' in seen[0].env)); assert.ok(seen[0].env.PATH);
+  const a = seen[0].args; assert.equal(a[a.indexOf('--tools') + 1], 'Read,Write,Glob'); assert.ok(a.includes('--strict-mcp-config'));
+  assert.equal(a.at(-1), 'задание'); assert.equal(a.at(-3), '--agent'); // задание — последним и не сразу после списка инструментов
+});
+
+test('directScenes: режиссёру — чтение и запись, зрителю — только чтение; секреты из mcfly/.env скрыты', async () => {
+  const s = setup(); fs.writeFileSync(s.p.env, 'MY_DEPLOY_KEY=abc\n# комментарий\nOTHER=1\n');
+  const { agent, calls } = scripted([writes(GOOD), says('[]')]);
+  await direct(s, 'review', agent);
+  assert.deepEqual(calls.map((c) => c.tools), ['Read,Write,Glob', 'Read,Glob']);
+  assert.ok(calls.every((c) => c.hide.includes('MY_DEPLOY_KEY') && c.hide.includes('OTHER')));
+});
+
+test('directScenes: ответ зрителя не разобрался — строка в журнале и ответ сохранён для разбора', async () => {
+  const s = setup(); const lines = [];
+  const r = await direct(s, 'review', scripted([writes(GOOD), says('Кадры [01.png] хорошие, но [{"scene": 1, оборвано')]).agent, { log: (l) => lines.push(l) });
+  assert.equal(r.source, 'director'); assert.match(lines.join('\n'), /ответ зрителя не разобран/); assert.match(fs.readFileSync(path.join(r.workDir, 'viewer.txt'), 'utf8'), /оборвано/);
+});

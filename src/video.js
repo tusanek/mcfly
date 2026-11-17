@@ -330,10 +330,10 @@ const mmss = (sec) => `${Math.floor(sec / 60)}:${pad2(sec % 60)}`;
  * Ролик утренней сводки (weekly — недельной, из weeklyData): собрать и отправить ответом на текст сводки. Никогда не бросает исключение — текст уже отправлен.
  * При сбое пишет в чат одну короткую строку, не чаще раза в сутки. Возвращает { sent, file?, error? }.
  */
-export async function sendSummaryVideo(p, cfg, { data, tg, now = new Date(), replyTo = null, log = console.log, build = buildVideo, direct = directScenes, weekly = false } = {}) {
+export async function sendSummaryVideo(p, cfg, { data, tg, now = new Date(), replyTo = null, log = console.log, build = buildVideo, direct = directScenes, weekly = false, mode = cfg.video.director } = {}) {
   try {
     const name = `${weekly ? 'weekly' : 'summary'}-${localDateKey(now)}-${pad2(now.getHours())}${pad2(now.getMinutes())}`;
-    const { file, seconds, source } = await makeSummaryVideo(p, cfg, { data, now, weekly, name, log, build, direct });
+    const { file, seconds, source } = await makeSummaryVideo(p, cfg, { data, now, weekly, name, mode, log, build, direct });
     log(`Сцены ролика: ${SOURCE_RU[source]}.`);
     await tg.sendVideo(cfg.telegram.chat_id, file, { caption: `🎬 ${weekly ? 'Итоги недели к' : 'Сводка за'} ${pad2(now.getDate())}.${pad2(now.getMonth() + 1)} · ${mmss(seconds)}`, replyTo, duration: seconds, width: 1080, height: 1920 });
     pruneVideos(path.dirname(file));

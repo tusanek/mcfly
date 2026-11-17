@@ -67,11 +67,11 @@ export function checkStoryboard(raw, data, cfg, { weekly = false } = {}) {
     if (s.style != null && !SCENE_STYLES.includes(s.style)) errors.push(`${at}: style — один из ${SCENE_STYLES.join(', ')}`);
     if (s.icon != null && !SCENE_ICONS.includes(s.icon)) errors.push(`${at}: icon — один из ${SCENE_ICONS.join(', ')}`);
     for (const f of TEXT_FIELDS) if (s[f] != null && !(str(s[f]) && s[f].length <= 24)) errors.push(`${at}: ${f} — строка до 24 знаков`);
-    if (s.kind === 'number' && !(isObj(s.number) && Number.isFinite(Number(s.number.value)) && str(s.number.label))) errors.push(`${at}: «number» требует number: { value: число, label: подпись, unit?: знак }`);
+    if (s.kind === 'number' && !(isObj(s.number) && Number.isInteger(s.number.value) && s.number.value >= 0 && str(s.number.label))) errors.push(`${at}: «number» требует number: { value: целое число от нуля, label: подпись, unit?: знак }`);
     if (s.kind === 'compare' && !(isObj(s.compare) && str(s.compare.before) && str(s.compare.after) && (s.compare.before + s.compare.after).length <= 300)) errors.push(`${at}: «compare» требует compare: { before, after }, вместе до 300 знаков`);
     if (s.bar != null && !(isObj(s.bar) && Number(s.bar.total) > 0 && Number(s.bar.done) >= 0)) errors.push(`${at}: bar: { done, total }, total больше нуля`);
     if (s.kind === 'chat') {
-      if (!isObj(s.chat) || !str(s.chat.text) || !Array.isArray(s.chat.buttons) || !s.chat.buttons.every((r) => Array.isArray(r) && r.every(str))) errors.push(`${at}: «chat» требует chat: { text, buttons: [[подписи]] }`);
+      if (!isObj(s.chat) || !str(s.chat.text) || !s.chat.text.trim() || !Array.isArray(s.chat.buttons) || !s.chat.buttons.every((r) => Array.isArray(r) && r.every(str))) errors.push(`${at}: «chat» требует chat: { text: непустой текст из образца, buttons: [[подписи]] }`);
       else {
         if (s.chat.text.length > 520 || s.chat.text.split('\n').length > 14) errors.push(`${at}: сообщение в чате — до 520 знаков и 14 строк`);
         const alien = s.chat.text.split('\n').map(norm).filter((l) => l && !sample.lines.has(l));
@@ -113,7 +113,9 @@ export function parseRemarks(text) {
     .map((r) => ({ scene: r.scene, kind: r.kind === 'fact' ? 'fact' : 'view', problem: String(r.problem ?? '').slice(0, 400), fix: String(r.fix ?? '').slice(0, 400) })).slice(0, 6);
 }
 
-const same = (a, b) => a.title === b.title && a.speech === b.speech && JSON.stringify(a.lines) === JSON.stringify(b.lines);
+/** Сцена осталась дословно: по всему, что видит и слышит зритель, — заголовок, строки, речь, «было — стало», цифра, чат. */
+const seen = (s) => JSON.stringify([s.title, s.lines, s.speech, s.compare ?? null, s.number ?? null, s.chat ?? null, s.bar ?? null]);
+const same = (a, b) => seen(a) === seen(b);
 
 /**
  * Раскадровка после круга правок. Сцена с замечанием 'fact' должна измениться или исчезнуть: оставшаяся дословно вырезается.

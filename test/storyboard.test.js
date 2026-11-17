@@ -107,3 +107,16 @@ test('applyRemarks: замечания только view или номер вн�
   assert.equal(applyRemarks(GOOD, null, [{ scene: 2, kind: 'view', problem: 'п', fix: 'ф' }]).length, 4);
   assert.equal(applyRemarks(GOOD, null, [{ scene: 40, kind: 'fact', problem: 'п', fix: 'ф' }]).length, 4);
 });
+
+// --- по итогам проверки ветки ---
+test('applyRemarks: исправленное «было — стало» или цифра — сцена изменилась и остаётся', () => {
+  const before = [GOOD[0], { kind: 'compare', title: 'Повторы', lines: [], compare: { before: 'Вписывали каждый день', after: 'Появляются сами' }, speech: 'Повторяющиеся дела теперь появляются сами.' }, GOOD[2], GOOD[3]];
+  const after = structuredClone(before); after[1].compare.before = 'Вписывали вручную'; after[2].number.value = 3;
+  const remarks = [{ scene: 2, kind: 'fact', problem: 'п', fix: 'ф' }, { scene: 3, kind: 'fact', problem: 'п', fix: 'ф' }];
+  assert.equal(applyRemarks(before, after, remarks).length, 4);
+  assert.equal(applyRemarks(before, structuredClone(before), remarks).length, 2); // ничего не исправлено — обе вырезаны
+});
+test('пустое сообщение в чате и нецелая или пустая цифра — нарушения', () => {
+  bad((s) => { s[1].chat = { text: '  ', buttons: [] }; return s; }, /chat/);
+  for (const value of [null, '', 2.5, -1]) bad((s) => { s[2].number.value = value; return s; }, /number/);
+});

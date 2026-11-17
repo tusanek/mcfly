@@ -342,3 +342,18 @@ test('0.15.0 makeSummaryVideo: упала и запасная сборка — �
   const p = paths(bareProject());
   await assert.rejects(makeSummaryVideo(p, cfg, { data: DATA, now: NOW, name: 'n', direct: noDirector, build: async () => { throw new Error('нет сборщика'); } }), /нет сборщика/);
 });
+
+test('0.15.0 настройки: скорость и минуты — числа; режиссёру отведено меньше, чем на всё', () => {
+  assert.throws(() => parseConfig('project: demo\nvideo:\n  voice_speed: "1.1"'), /video\.voice_speed/);
+  assert.throws(() => parseConfig('project: demo\nvideo:\n  director_minutes: 20\n  timeout_minutes: 5'), /video\.director_minutes/);
+  assert.throws(() => parseConfig('project: demo\nvideo:\n  director_minutes: "8"'), /video\.director_minutes/);
+});
+
+test('0.15.0 sendSummaryVideo: режим режиссёра (mode) доходит до сборки ролика', async () => {
+  const p = paths(bareProject()); const modes = [];
+  const tg = { sendVideo: async () => {}, sendMessage: async () => {} };
+  const direct = async (_p, _c, o) => { modes.push(o.mode); return { scenes: o.baseScenes, source: 'fallback', reason: '', workDir: null }; };
+  await sendSummaryVideo(p, { ...cfg, telegram: { ...cfg.telegram, chat_id: '7' } }, { data: DATA, tg, now: NOW, log: () => {}, mode: 'off', direct, build: async () => ({ file: '/tmp/x/s.mp4', seconds: 5 }) });
+  await sendSummaryVideo(p, { ...cfg, telegram: { ...cfg.telegram, chat_id: '7' } }, { data: DATA, tg, now: NOW, log: () => {}, direct, build: async () => ({ file: '/tmp/x/s.mp4', seconds: 5 }) });
+  assert.deepEqual(modes, ['off', 'review']);
+});
