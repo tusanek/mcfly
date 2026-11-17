@@ -166,8 +166,8 @@ test('0.7.0: mcfly ideas set — в прогоне команды запреще
   const rej = cli(['ideas', 'set', 'I1', 'rejected', '--note', 'не нужно'], dir);
   assert.equal(rej.status, 0, rej.stderr); assert.match(cli(['ideas', 'list'], dir).stdout, /I1 \[отклонено\].*— причина: не нужно/);
   assert.equal(cli(['ideas', 'set', 'I1', 'proposed'], dir).status, 0);
-  const bad = cli(['ideas', 'set', 'I1', 'done'], dir);
-  assert.equal(bad.status, 1); assert.match(bad.stderr, /proposed \| taken \| rejected/);
+  const bad = cli(['ideas', 'set', 'I1', 'planned'], dir); // «спланировано» ставит только запрос одобрения плана
+  assert.equal(bad.status, 1); assert.match(bad.stderr, /proposed \| taken \| rejected \| done/);
 });
 
 test('0.7.6: approval pause/resume — только человек, дата в будущем, только одобренное; коммит метаданных', () => {

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { loadIdeas, saveIdeas, addIdea, findIdea, transitionIdea, IDEA_STATUS_RU } from './ideas.js';
+import { loadIdeas, saveIdeas, addIdea, findIdea, transitionIdea, closeIdeaByChange, IDEA_STATUS_RU } from './ideas.js';
 import YAML from 'yaml';
 import { paths, loadState, saveState } from './state.js';
 import { loadConfig, autoDefault, isCategory } from './config.js';
@@ -37,7 +37,8 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   ideas list [--status <статус>]                  список предложений (0.7.0)
   ideas add --title <t> --benefit <t> --source <owner-backlog|owner-note|team|research> --size <S|M|L>
             [--how <t>] [--ref <t>] [--needs-owner <t>] [--new-arguments <t>]   добавить предложение
-  ideas set <Iн> proposed|taken|rejected [--note <t>]   решение владельца в сессии (в прогоне запрещено)
+  ideas set <Iн> proposed|taken|rejected|done [--note <t>]   решение владельца в сессии (в прогоне запрещено)
+  ideas done <Iн> --change <имя>                  закрыть взятый пункт по изменению из архива (можно в прогоне)
   question list | question expire
   approval request <изменение> [--category <c>] [--priority <n>]
   approval set <изменение> approved|rejected [--note <t>] [--priority <n>]   (меньше = раньше; по умолчанию 100)
@@ -165,12 +166,19 @@ export async function main(argv) {
       if (sub === 'set') {
         // Решение по предложениям — владельца в сессии: в прогоне команды (MCFLY_RUN_ID задаёт runner) запрещено.
         if (runIdEnv) { console.error('Решение по предложениям принимает владелец в сессии: в прогоне команды ideas set запрещён'); return 1; }
-        const to = rest[1]; if (!['proposed', 'taken', 'rejected'].includes(to)) { console.error('Статус: proposed | taken | rejected'); return 1; }
+        const to = rest[1]; if (!['proposed', 'taken', 'rejected', 'done'].includes(to)) { console.error('Статус: proposed | taken | rejected | done'); return 1; }
         const r = transitionIdea(data, rest[0], to, { actor: 'session', note: values.note || '', now });
         if (!r.idea || r.error) { console.error(`${rest[0] || '(номер не указан)'}: ${r.error}`); return 1; }
         saveIdeas(p, data); log(`${r.idea.id}: ${IDEA_STATUS_RU[to]}`); return 0;
       }
-      console.error('mcfly ideas list | add | set'); return 1;
+      if (sub === 'done') {
+        // 0.15.5: закрыть взятый пункт по изменению из архива — можно и команде в прогоне: доказательство — само изменение
+        if (!values.change) { console.error('Нужно завершённое изменение: mcfly ideas done <Iн> --change <имя>'); return 1; }
+        const r = closeIdeaByChange(data, rest[0], values.change, p.openspecChanges, now);
+        if (!r.idea || r.error) { console.error(`${rest[0] || '(номер не указан)'}: ${r.error}`); return 1; }
+        saveIdeas(p, data); log(`${r.idea.id}: сделано (${r.idea.change})`); return 0;
+      }
+      console.error('mcfly ideas list | add | set | done'); return 1;
     }
     case 'question': {
       const data = loadQuestions(p);
@@ -196,15 +204,19 @@ export async function main(argv) {
         if (hasProduct(p) && !/^##\s+Как это будет выглядеть\s*$/im.test(c.proposal || '')) {
           console.error(`В плане ${c.name} нет раздела «## Как это будет выглядеть». Если изменение меняет то, что человек видит или нажимает (сообщения и кнопки бота — тоже), лид вызывает mcfly:designer, и тот добавляет образцы; если нет — добавьте в proposal.md этот раздел с одной строкой «Снаружи ничего не меняется». Потом запросите одобрение снова.`); return 1;
         }
-        let idea = null;
+        let idea = null; let ideas = [];
         if (values.idea) {
-          // План по пункту списка (0.7.0): только по взятому владельцем пункту; пункт становится спланированным.
+          // План по пунктам списка (0.7.0): только по взятым владельцем пунктам; пункты становятся спланированными.
+          // 0.15.5: пунктов может быть несколько (через запятую) — иначе второй пункт общего плана навсегда оставался «взято».
           const idata = loadIdeas(p); if (idata.error) { console.error(idata.error); return 1; }
-          const it = findIdea(idata, values.idea);
-          if (!it || it.status !== 'taken') { console.error(`${String(values.idea).toUpperCase()} не взят владельцем (статус: ${it ? IDEA_STATUS_RU[it.status] || it.status : 'нет такого'})`); return 1; }
-          transitionIdea(idata, it.id, 'planned', { actor: 'team', change: c.name, now }); saveIdeas(p, idata); idea = it.id;
+          const ids = [...new Set(String(values.idea).split(',').map((x) => x.trim().toUpperCase()).filter(Boolean))];
+          const found = ids.map((id) => [id, findIdea(idata, id)]);
+          const bad = found.find(([, it]) => !it || it.status !== 'taken');
+          if (!ids.length || bad) { console.error(`${bad ? bad[0] : '(номер не указан)'} не взят владельцем (статус: ${bad?.[1] ? IDEA_STATUS_RU[bad[1].status] || bad[1].status : 'нет такого'})`); return 1; }
+          for (const [, it] of found) transitionIdea(idata, it.id, 'planned', { actor: 'team', change: c.name, now });
+          saveIdeas(p, idata); ideas = found.map(([, it]) => it.id); idea = ideas[0];
         }
-        requestApproval(c, { category, priority: values.priority, now, idea }); appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_proposed', value: 1, change: c.name }); log(`Одобрение запрошено: ${c.name}. Человек увидит его в утренней сводке.`); return 0; }
+        requestApproval(c, { category, priority: values.priority, now, idea, ideas }); appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_proposed', value: 1, change: c.name }); log(`Одобрение запрошено: ${c.name}. Человек увидит его в утренней сводке.`); return 0; }
       // Решение человека сразу в истории; во время прогона HEAD под агентами не двигаем — метаданные закоммитит прогон.
       const commitMeta = (message) => {
         if (exists(p.lock)) { log('Не закоммичено: идёт прогон, метаданные одобрения закоммитит он.'); return 0; }

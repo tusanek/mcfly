@@ -14,7 +14,8 @@ export const IDEA_STATUS_RU = { proposed: 'в списке', taken: 'взято'
 const ALLOWED = {
   bot: { proposed: ['taken', 'discuss'], taken: ['discuss'], planned: ['discuss'] },
   team: { taken: ['planned'], planned: ['done'] },
-  session: Object.fromEntries(Object.keys(IDEA_STATUS_RU).map((s) => [s, ['proposed', 'taken', 'rejected']])),
+  // владелец в сессии может и отметить пункт сделанным (0.15.5): работа бывает сделана без привязки к изменению
+  session: Object.fromEntries(Object.keys(IDEA_STATUS_RU).map((s) => [s, ['proposed', 'taken', 'rejected', 'done']])),
 };
 const IDEAS_FILE = 'mcfly/ideas.yaml';
 
@@ -102,4 +103,22 @@ export function ideasBrief(p, cfg) {
   const data = loadIdeas(p); if (data.error) return null;
   const proposed = data.ideas.filter((x) => x.status === 'proposed');
   return { taken: data.ideas.filter((x) => x.status === 'taken').map((x) => x.id), proposed: proposed.length, owner: proposed.filter((x) => OWNER.has(x.source)).length };
+}
+
+/**
+ * Закрыть пункт по завершённому изменению (0.15.5): взятый или спланированный пункт становится сделанным, если названное
+ * изменение лежит в архиве (папка `<имя>` или `<дата>-<имя>`). Так команда закрывает пункт, сделанный в рамках чужого плана,
+ * не трогая решений владельца: без изменения в архиве — отказ. Возвращает { idea, error }.
+ */
+export function closeIdeaByChange(data, id, change, changesDir, now = new Date()) {
+  const idea = findIdea(data, id);
+  if (!idea) return { idea: null, error: 'такого предложения нет' };
+  if (idea.status === 'done') return { idea, error: 'уже сделано' };
+  if (!['taken', 'planned'].includes(idea.status)) return { idea, error: `пункт не взят владельцем (статус: ${IDEA_STATUS_RU[idea.status] || idea.status})` };
+  const name = String(change || '');
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) return { idea, error: 'нужно имя изменения (латиница, цифры, дефис)' };
+  let archived = []; try { archived = fs.readdirSync(path.join(changesDir, 'archive'), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name); } catch { /* архива нет */ }
+  if (!archived.some((d) => d === name || d.replace(/^\d{4}-\d{2}-\d{2}-/, '') === name)) return { idea, error: `изменения ${name} нет в архиве: закрыть пункт можно только по завершённому изменению` };
+  Object.assign(idea, { status: 'done', change: name, decided_at: now.toISOString() });
+  return { idea, error: null };
 }
