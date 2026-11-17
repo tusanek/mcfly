@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { paths } from './state.js';
-import { loadConfig, autoDefault } from './config.js';
+import { loadConfig, autoDefault, maxChanges } from './config.js';
 import { loadEnv } from './env.js';
 import { matchSlot, parseSlot } from './window.js';
 import { buildClaudeArgs, runProcess, parseResult, cleanEnv, summarizeEvent, maskSecrets, permissionDenial, apiRetryWatch, rateLimitInfo } from './claude.js';
@@ -13,7 +13,7 @@ import { buildLeadPrompt, MCFLY_ROOT } from './prompt.js';
 import { appendMetric, runStats, readMetrics } from './metrics.js';
 import { activeDayHandoff, latestShift, renderAutoHandoff, writeShift, shiftFileName } from './shift-files.js';
 import { loadQuestions, saveQuestions, expireQuestions, openQuestions } from './questions.js';
-import { listChanges, expireApprovals, approvedWithWork, pendingApprovals, proposalExcerpt, approvalDeadline, isAutoApprovable, isPaused } from './approvals.js';
+import { listChanges, expireApprovals, approvedWithWork, pendingApprovals, proposalExcerpt, approvalDeadline, isAutoApprovable, isPaused, archivedSince } from './approvals.js';
 import { pullAnswers, errorLine, spawnDayRun } from './pull.js';
 import { createTelegram } from './telegram.js';
 import { ensureVpn } from './vpn.js';
@@ -273,11 +273,16 @@ export function finishMessage(cfg, record, p) {
   const decide = decisionLines(cfg, p, changes);
   const label = (c) => changeTitle(p, c, undefined, { short: true });
   const next = `Дальше: ${record.chain && record.chain.startsWith('следующий') ? `${record.chain}` : nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => progressWords(p.projectDir, c), undefined, ideasBrief(p, cfg), label)}${record.chain && !record.chain.startsWith('следующий') ? ` (${record.chain})` : ''}`;
+  // 0.16.0: планы, одобренные в этом прогоне быстрым путём, — владелец видит их в итоге, а не узнаёт задним числом
+  const since = new Date(record.started_at || 0);
+  const fast = [...archivedSince(p.openspecChanges, since), ...changes].filter((c) => c.mcfly.by === 'fast' && new Date(c.mcfly.decided_at || 0) >= since)
+    .map((c) => `${truncate(changeTitle(p, c), 100)}${c.tasksOpen > 0 ? ' — в работе' : ' — сделано'}`);
   // Решения — главное: если не влезает, урезается пересказ, а не вопросы.
   const assemble = (plainMax) => {
     const lines = [finishText(cfg, record)];
     const plain = plainWords(sec, plainMax);
     if (plain) lines.push('', plain);
+    if (fast.length) lines.push('', `⚡ Без второго одобрения (после «Берём», снаружи ничего не меняется): ${fast.join('; ')}`);
     if (record.goals_checked?.length) lines.push('', `🎯 Отмечено в целях: ${record.goals_checked.map((t) => truncate(t, 120)).join('; ')}`);
     if (need.length) lines.push('', 'Нужно от вас:', ...bullets(need, NEED_MAX));
     if (decide.length) lines.push('', 'Решить:', ...decide);
@@ -318,7 +323,7 @@ export function afterLastSlot(now, slots) {
 }
 
 /** Прогон команды. mode: night (с проверкой окна слота) | day. */
-export async function run({ projectDir, mode = 'day', dryRun = false, now = new Date(), log = console.log, sleep = realSleep, notify = null, beforeAttempt = null, apiWatch = {}, startRun = spawnDayRun, chained = process.env.MCFLY_CHAINED === '1' }) {
+export async function run({ projectDir, mode = 'day', dryRun = false, now = new Date(), log = console.log, sleep = realSleep, notify = null, beforeAttempt = null, apiWatch = {}, startRun = spawnDayRun, chained = process.env.MCFLY_CHAINED === '1', changes = null }) {
   const p = paths(projectDir);
   loadEnv(projectDir);
   const cfg = loadConfig(p.config);
@@ -358,7 +363,9 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const lastSlot = mode === 'night' && slot === [...cfg.schedule.slots].sort().at(-1); // последний по времени, а не по порядку в конфигурации
     const nightFile = lastSlot ? `mcfly/shifts/${shiftFileName('night', now)}` : '';
     const nightHandoff = lastSlot ? `Это последний прогон ночи: репортёр также готовит текст ${nightFile}, а ты записываешь его в этот файл — передачу «ночь → день» по формату скилла mcfly-process (раздел «Передача смены»), со ссылками на прогоны ночи.` : '';
-    const prompt = buildLeadPrompt({ cfg, p, runId: id, mode, deadline, context: buildContext(p, cfg, { handoff: true }), nightHandoff });
+    // 0.16.0: сколько изменений берёт этот прогон — число из запуска (--changes, кнопка в боте), ночной или дневной предел
+    const limit = maxChanges(cfg, mode, changes);
+    const prompt = buildLeadPrompt({ cfg, p, runId: id, mode, deadline, context: buildContext(p, cfg, { handoff: true, limit }), nightHandoff, limit });
     const args = buildClaudeArgs({ prompt, cfg, pluginDir: MCFLY_ROOT });
     if (dryRun) {
       // Сухой прогон не оставляет следов в mcfly/runs: промпт кладём в logs (вне git).
@@ -380,7 +387,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const stdoutLines = lineSplitter((line) => { watch?.line(line); const rl = rateLimitInfo(line); if (rl) usage = rl; if (permissionDenial(line)) denials += 1; const s = summarizeEvent(line); if (s) event(s); });
     const stderrLines = lineSplitter((line) => event(`⚠ ${maskSecrets(line).trim().slice(0, 300)}`));
     const started = new Date();
-    log(`Прогон ${id} (${mode}${slot ? ', слот ' + slot : ''}) запущен, лимит ${cfg.run.max_minutes} мин.`);
+    log(`Прогон ${id} (${mode}${slot ? ', слот ' + slot : ''}) запущен, лимит ${cfg.run.max_minutes} мин, изменений не больше ${limit}.`);
     // Нет доступа к API (упал VPN или сеть) — claude падает за секунды, работы не сделано: ждём и повторяем в пределах лимита прогона.
     const runDeadline = started.getTime() + cfg.run.max_minutes * 60_000;
     const retryMs = cfg.run.network_retry_minutes * 60_000;
@@ -421,7 +428,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const unfinished = unfinishedWork(projectDir);
     const record = {
       id, mode, slot, started_at: started.toISOString(), ended_at: new Date().toISOString(), status: parsed.status, attempts, duration_ms: Date.now() - started.getTime(), exit_code: result.exitCode,
-      cost_usd: costUsd, turns, usage, ...(chained ? { chained: true } : {}), permission_denials: denials, subagents: parsed.subagents, session_id: parsed.sessionId, validate_ok: validate.ok, dirty_files: dirty, error: parsed.errorText,
+      cost_usd: costUsd, turns, usage, max_changes: limit, ...(chained ? { chained: true } : {}), permission_denials: denials, subagents: parsed.subagents, session_id: parsed.sessionId, validate_ok: validate.ok, dirty_files: dirty, error: parsed.errorText,
       note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', ...new Set(vpnNotes), denials ? `отказов разрешений: ${denials}` : '', fallback ? 'репортёр не написал отчёт, записана авто-сводка' : '', validateNote(validate),
         dirty ? `незакоммиченных файлов: ${dirty}` : '', unfinished.length ? `незакоммиченная работа в worktree: ${unfinished.map(describeWorktree).join(', ')}` : ''].filter(Boolean).join('; '),
     };
@@ -446,9 +453,12 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
       try { await (notify || telegramNotifier(cfg))(m.text, m.keyboard, { html: true }); } catch { enqueueNotice(p, { ...m, html: true }); }
     }
     log(`Прогон ${id} завершён: ${record.status} (${fmtLocal(new Date())}).`);
-    outcome = { status: record.status, id, chained: chain.chain };
+    outcome = { status: record.status, id, chained: chain.chain, limit };
   } finally { releaseLock(p); }
   // Следующий прогон цепочки — после снятия лока, отдельным процессом.
-  if (outcome.chained) { log('Цепочка: запускаю следующий прогон.'); startRun(projectDir, { chained: true }); }
+  if (outcome.chained) {
+    log('Цепочка: запускаю следующий прогон.'); // прогон цепочки дневной: число изменений передаём, только если оно отличается от дневного предела
+    startRun(projectDir, { chained: true, ...(outcome.limit !== cfg.limits.max_changes_per_run ? { changes: outcome.limit } : {}) });
+  }
   return outcome;
 }

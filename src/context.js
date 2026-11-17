@@ -6,7 +6,7 @@ import { branchProgress, teamWorktrees } from './git.js';
 import { autoDefault } from './config.js';
 import { activeDayHandoff, validateHandoff } from './shift-files.js';
 import { listActions } from './action-config.js';
-import { loadIdeas } from './ideas.js';
+import { loadIdeas, takenInOrder } from './ideas.js';
 import { loadFindings, newFindings } from './findings.js';
 
 export function isMcflyProject(p) { return exists(p.config); }
@@ -18,7 +18,7 @@ export const productText = (p) => ownerDoc(path.join(p.root, 'product.md'));
 /** Есть описание продукта — включаются шаги удобства: образцы до одобрения и проход «пользователя». */
 export const hasProduct = (p) => productText(p).length > 0;
 
-export function buildContext(p, cfg, { progressLines = 15, handoff = false, now = new Date() } = {}) {
+export function buildContext(p, cfg, { progressLines = 15, handoff = false, now = new Date(), limit = cfg.limits.max_changes_per_run } = {}) {
   const L = [];
   const H_LIMIT = 6000;
   const h = handoff ? activeDayHandoff(p) : null;
@@ -28,7 +28,7 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false, now 
     L.push(h.text.length > H_LIMIT ? `${h.text.slice(0, H_LIMIT)}\n…передача обрезана, полный текст — в файле` : h.text.trim(), '');
   } else L.push('## Передача смены: нет — работай по приоритетам одобрений', '');
   L.push(`Проект: ${cfg.project}. Каталог: ${p.projectDir}.`);
-  L.push(`Лимиты: прогон ${cfg.run.max_minutes} мин, не больше ${cfg.limits.max_changes_per_run} изменений за прогон, не больше ${cfg.limits.max_tasks_per_change} задач на изменение.`);
+  L.push(`Лимиты: прогон ${cfg.run.max_minutes} мин, не больше ${limit} изменений за прогон, не больше ${cfg.limits.max_tasks_per_change} задач на изменение.`);
   // 0.10.0: для кого делаем и что нельзя нарушать — раньше агенты этого не знали и удобство не проверял никто
   const cap = (t, n) => (t.length > n ? `${t.slice(0, n)}\n…обрезано, полный текст — в файле` : t);
   const product = productText(p);
@@ -76,9 +76,12 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false, now 
     else {
       const proposed = by(['proposed']); const own = proposed.filter((x) => x.source === 'owner-backlog' || x.source === 'owner-note').length;
       // 0.10.0: жалобы владельца «неудобно: …» — раньше остальных взятых
-      const taken = [...by(['taken']).filter((x) => x.ux), ...by(['taken']).filter((x) => !x.ux)];
-      const ux = taken.filter((x) => x.ux).map((x) => x.id);
-      L.push(`Взятые владельцем — спланируй по порядку: ${named(taken)}${ux.length ? ` (${ux.join(', ')} — жалобы «неудобно», планируй и делай их первыми)` : ''}`);
+      // 0.16.0: поднятые владельцем «⬆ Вперёд» — раньше всех; размер нужен для быстрого пути (ideas.fast_sizes)
+      const taken = takenInOrder(d);
+      const ux = taken.filter((x) => x.ux).map((x) => x.id); const first = taken.filter((x) => x.first_at).map((x) => x.id);
+      const sized = cfg.ideas.fast_sizes?.length ? (list) => (list.length ? list.map((x) => `${x.id} [${x.size}] «${short(x.title)}»`).join(', ') : 'нет') : named;
+      const marks = [first.length ? `${first.join(', ')} — владелец поднял «вперёд», планируй и делай их раньше всех` : '', ux.length ? `${ux.join(', ')} — жалобы «неудобно», планируй и делай их первыми` : ''].filter(Boolean);
+      L.push(`Взятые владельцем — спланируй по порядку: ${sized(taken)}${marks.length ? ` (${marks.join('; ')})` : ''}`);
       L.push(`Спланированы: ${by(['planned']).map((x) => `${x.id} → ${x.change}`).join(', ') || 'нет'}`);
       L.push(`В списке: ${proposed.length} (ваших ${own}, команды ${proposed.length - own})`);
       L.push(`Не трогать, решение в сессии: ${named(by(['discuss', 'rejected']))}`);

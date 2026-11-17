@@ -676,7 +676,7 @@ test('0.9.0: в сводке нет техники', () => {
   assert.match(html, /🔧 «Страница проверки делится на две части» — сделано 1 из 2 шагов\n⏳ «Повторять запросы к трекеру при сбое связи» — ждёт одобрения/);
   assert.match(html, /2\. Посмотреть новую страницу/);
   // служебного имени нет и на кнопке: подпись та же, что в тексте
-  assert.deepEqual(summaryKeyboard(p, cfg), [[{ text: '✅ Одобрить план', callback_data: 'ap:tracker-retry' }, { text: '❌ Отклонить', callback_data: 'rj:tracker-retry' }]]);
+  assert.deepEqual(summaryKeyboard(p, cfg), [[{ text: '✅ Одобрить план', callback_data: 'ap:tracker-retry' }, { text: '❌ Отклонить', callback_data: 'rj:tracker-retry' }], [{ text: '📋 Очередь (2)', callback_data: 'qu:1' }]]);
   // техника не теряется: она в хвосте для терминала
   const t = tail(p);
   assert.match(t, /^— Технические подробности \(только в терминале\) —\n/);

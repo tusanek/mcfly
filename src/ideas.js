@@ -87,6 +87,24 @@ export function visibleIdeas(data, show) {
     discuss: data.ideas.filter((x) => x.status === 'discuss').length,
   };
 }
+/**
+ * Взятые пункты в порядке планирования (0.16.0): сначала поднятые владельцем «⬆ Вперёд» (позже поднятый — раньше),
+ * затем жалобы «неудобно», затем остальные по порядку в списке.
+ */
+export function takenInOrder(data) {
+  const taken = data.ideas.filter((x) => x.status === 'taken');
+  const first = taken.filter((x) => x.first_at).sort((a, b) => String(b.first_at).localeCompare(String(a.first_at)));
+  const rest = taken.filter((x) => !x.first_at);
+  return [...first, ...rest.filter((x) => x.ux), ...rest.filter((x) => !x.ux)];
+}
+/** «⬆ Вперёд» по взятому пункту (0.16.0): { idea, error }; спланированный пункт поднимают через его изменение (idea.change). */
+export function markFirst(data, id, now = new Date()) {
+  const idea = findIdea(data, id);
+  if (!idea) return { idea: null, error: 'такого предложения нет' };
+  if (idea.status !== 'taken') return { idea, error: `поднять можно взятый пункт (сейчас: ${IDEA_STATUS_RU[idea.status] || idea.status})` };
+  idea.first_at = now.toISOString();
+  return { idea, error: null };
+}
 /** Спланированные пункты, чьё изменение ушло из openspec/changes (заархивировано), — сделаны. */
 export function syncDoneIdeas(data, changesDir, now = new Date()) {
   const done = [];

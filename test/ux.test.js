@@ -90,7 +90,7 @@ test('0.10.0: кнопка «Как будет выглядеть» под пл�
   addChange(dir, 'evening-talk', { proposal: PROPOSAL }); addChange(dir, 'plain-fix');
   for (const c of listChanges(p.openspecChanges)) requestApproval(c);
   const rows = summaryKeyboard(p, cfg).map((r) => r.map((b) => b.callback_data));
-  assert.deepEqual(rows, [['ap:evening-talk', 'rj:evening-talk'], ['sh:evening-talk'], ['ap:plain-fix', 'rj:plain-fix']]);
+  assert.deepEqual(rows, [['ap:evening-talk', 'rj:evening-talk'], ['sh:evening-talk'], ['ap:plain-fix', 'rj:plain-fix'], ['qu:1']]);
   const show = summaryKeyboard(p, cfg).flat().find((b) => b.callback_data === 'sh:evening-talk');
   assert.equal(show.text, '👀 Как будет выглядеть: план 1', 'та же подпись, что на кнопке одобрения');
   assert.equal(callbackText('sh:evening-talk'), 'образец evening-talk');

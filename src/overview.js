@@ -3,13 +3,13 @@ import fs from 'node:fs';
 import { readText, writeText, fmtShort, fmtDay, fmtDuration, truncate, pad2, commandText } from './util.js';
 import { readMetrics, aggregate } from './metrics.js';
 import { loadQuestions, openQuestions } from './questions.js';
-import { listChanges, pendingApprovals, approvedWithWork, approvalDeadline, isAutoApprovable, isPaused, pausedUntil, proposalSamples } from './approvals.js';
+import { listChanges, pendingApprovals, approvedWithWork, approvalDeadline, isAutoApprovable, isPaused, pausedUntil, proposalSamples, isFastApproved } from './approvals.js';
 import { autoDefault } from './config.js';
 import { parseSlot } from './window.js';
 import { currentRun } from './runner.js';
 import { hasActions, listActions, getAction } from './action-config.js';
 import { currentAction, offerKeyboard, isTrusted } from './actions.js';
-import { loadIdeas, visibleIdeas, ideasBrief } from './ideas.js';
+import { loadIdeas, visibleIdeas, ideasBrief, takenInOrder } from './ideas.js';
 import { findingsView, pendingFindings } from './findings.js';
 import { escHtml, inline, splitHtml, reportSections, plainWords, plainHtml, reportNeeds, progressWords, nextRunText, runsByStatus, STATUS_RU, QUOTA_WARN, summaryKeyboard, changeTitle, planLabels } from './summary.js';
 
@@ -25,6 +25,7 @@ const VIEW_WORDS = {
   help: ['/help', '/start', 'помощь', 'справка'],
   ideas: ['/ideas', 'предложения', 'идеи'],
   findings: ['/findings', 'находки', 'находки для mcfly'],
+  queue: ['/queue', 'очередь', 'очередь работ'],
 };
 export { commandText };
 /** Имя обзора (status, goals, stats, last, help) или null: сообщение целиком должно быть командой, «статус по X» — заметка. */
@@ -109,7 +110,7 @@ const changeLine = (p, cfg, c, now = new Date(), labels = new Map()) => {
   if (st === 'pending') return `⏳ <b>${label && label !== 'план' ? `${label.replace('план', 'План')}: ` : ''}${title}</b> — ждёт одобрения${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`;
   if (st === 'rejected') return `⛔ ${title} — отклонено`;
   if (st === 'approved' && isPaused(c, now)) return `⏸ <b>${title}</b> — отложено до ${escHtml(fmtDay(pausedUntil(c)))}, ${steps}`;
-  if (st === 'approved') return `${c.tasksOpen > 0 ? '🔧' : '🏁'} <b>${title}</b> — одобрено, ${steps}`;
+  if (st === 'approved') return `${c.tasksOpen > 0 ? '🔧' : '🏁'} <b>${title}</b> — ${isFastApproved(c) ? 'одобрено сразу после «Берём»' : 'одобрено'}, ${steps}`;
   return `⚪ ${title} — одобрение не запрошено, ${steps}`;
 };
 const toParts = (html) => splitHtml(html, MAX);
@@ -262,7 +263,7 @@ function actionsHelp(cfg) {
 export function helpView(p, cfg) {
   const start = cfg.run.telegram_start === false
     ? '▶️ «запусти» — записать просьбу о прогоне (запуск из Telegram выключен в настройках проекта)'
-    : '▶️ «запусти» — прогон сейчас; если работы нет, а изменение ждёт одобрения, бот предложит одобрить его кнопкой\n«запусти всё равно» — прогон без одобрения, например чтобы команда прочла заметку';
+    : '▶️ «запусти» — прогон сейчас; «запусти 3» — взять за прогон не больше трёх изменений; если работы нет, а изменение ждёт одобрения, бот предложит одобрить его кнопкой\n«запусти всё равно» — прогон без одобрения, например чтобы команда прочла заметку';
   return toParts([
     `❓ <b>Что умеет бот mcfly · ${escHtml(cfg.project)}</b>`,
     '',
@@ -272,11 +273,13 @@ export function helpView(p, cfg) {
     '📊 «статистика» или /stats — прогоны, задачи, изменения и вопросы к вам за 7 дней и всего',
     '📰 «последний прогон» или /last — пересказ простыми словами: что сделано, зачем, что дальше и что нужно от вас',
     ...(cfg.ideas?.enabled ? ['💡 «предложения» или /ideas — что команда может сделать дальше: ваш бэклог и идеи команды'] : []),
+    '📋 «очередь» — что команда делает и планирует и в каком порядке; кнопка «⬆ Вперёд» ставит задачу первой',
     '❓ «помощь» или /help — это сообщение',
     '',
     '<b>Управлять</b>',
     start,
     '✅ «одобряю имя-изменения» — разрешить команде делать изменение, например «одобряю site-design»',
+    '⬆ «вперёд I7» или «вперёд имя-изменения» — поставить взятый пункт или изменение первым в очереди',
     '⛔ «отклоняю имя-изменения причина» — отказать, например «отклоняю site-design не сейчас»',
     '💬 «Q12: ответ» — ответ на вопрос команды; «Q12: по умолчанию» — согласиться с ответом по умолчанию',
     '↩️ Ответ свайпом на сообщение с одним вопросом — ответ на этот вопрос, «Q12:» писать не нужно',
@@ -324,7 +327,7 @@ export function ideasView(p, cfg, { page = 1 } = {}) {
   if (v.active.length) {
     const approval = Object.fromEntries(listChanges(p.openspecChanges).map((c) => [c.name, c.mcfly.approval]));
     L.push('', ...v.active.map((x) => (x.status === 'taken'
-      ? `${x.ux ? '😖' : '⏳'} ${escHtml(x.id)} — ${x.ux ? 'неудобно, команда займётся первым делом' : 'ждёт прогона'}: ${escHtml(x.title)}`
+      ? `${x.first_at ? '⬆' : x.ux ? '😖' : '⏳'} ${escHtml(x.id)} — ${x.first_at ? 'поднят вперёд, прогон начнёт с него' : x.ux ? 'неудобно, команда займётся первым делом' : 'ждёт прогона'}: ${escHtml(x.title)}`
       : approval[x.change] === 'approved'
         ? `🔧 ${escHtml(x.id)} — план одобрен, команда делает: ${escHtml(x.title)}`
         : `📝 ${escHtml(x.id)} — план готов, ждёт вашего решения в «Статусе»: ${escHtml(x.title)}`)));
@@ -342,6 +345,39 @@ export function ideasKeyboard(p, cfg, { page = 1 } = {}) {
   const v = ideasPage(data, cfg, page);
   const rows = v.shown.map((x) => [{ text: `✅ Берём ${x.id}`, callback_data: `ib:${x.id}` }, { text: '⏸ Не сейчас', callback_data: `ix:${x.id}` }]);
   if (v.more) rows.push([{ text: 'Ещё ▸', callback_data: `il:${Math.max(1, page) + 1}` }]);
+  return rows;
+}
+
+/** Очередь (0.16.0): изменения в порядке работы (одобренные и ждущие одобрения, без отложенных) и взятые пункты в порядке планирования. */
+export function queueItems(p, cfg, now = new Date()) {
+  const all = listChanges(p.openspecChanges);
+  const changes = all.filter((c) => approvedWithWork(all, now).includes(c) || c.mcfly.approval === 'pending');
+  const data = cfg.ideas?.enabled ? loadIdeas(p) : { ideas: [] };
+  return { changes, taken: data.error ? [] : takenInOrder(data) };
+}
+/** 📋 Очередь (0.16.0): что команда делает и планирует и в каком порядке; кнопки «⬆ Вперёд» — в queueKeyboard. */
+export function queueView(p, cfg, { now = new Date() } = {}) {
+  const q = queueItems(p, cfg, now);
+  const L = [`📋 <b>Очередь · ${escHtml(cfg.project)}</b>`];
+  if (!q.changes.length && !q.taken.length) return toParts([...L, '', 'Очередь пуста: возьмите пункт в «💡 Предложениях» или напишите «идея: …»'].join('\n'));
+  let n = 0;
+  if (q.changes.length) {
+    L.push('', '<b>Команда делает по порядку</b>');
+    for (const c of q.changes) L.push(`${++n}. ${c.mcfly.approval === 'pending' ? '⏳' : '🔧'} ${changeTitle(p, c, escHtml)} — ${c.mcfly.approval === 'pending' ? 'ждёт вашего одобрения' : progressWords(p.projectDir, c)}`);
+  }
+  if (q.taken.length) {
+    L.push('', '<b>Затем планирует взятые пункты</b>');
+    for (const x of q.taken) L.push(`${++n}. ${x.first_at ? '⬆' : x.ux ? '😖' : '💡'} ${escHtml(x.id)}${SIZE_RU[x.size] ? ` · ${SIZE_RU[x.size]}` : ''} — ${escHtml(truncate(oneLine(x.title), 120))}`);
+  }
+  if (n > 1) L.push('', '<i>Кнопка «⬆ Вперёд» ниже ставит задачу первой. Текстом: «вперёд I7».</i>');
+  return toParts(L.join('\n'));
+}
+/** Кнопки под «Очередью»: «⬆ Вперёд» для каждого изменения и взятого пункта, кроме уже первого в своей части. */
+export function queueKeyboard(p, cfg, { now = new Date() } = {}) {
+  const q = queueItems(p, cfg, now); const rows = [];
+  const fits = (d) => Buffer.byteLength(d) <= 64; // предел callback_data в Telegram
+  for (const c of q.changes.slice(1)) if (fits(`up:${c.name}`)) rows.push([{ text: `⬆ Вперёд: ${truncate(changeTitle(p, c, undefined, { short: true }), 40)}`, callback_data: `up:${c.name}` }]);
+  for (const x of q.taken.slice(1)) rows.push([{ text: `⬆ Вперёд: ${x.id}`, callback_data: `up:${x.id}` }]);
   return rows;
 }
 
@@ -368,7 +404,7 @@ export async function sendSamples(tg, chatId, p, cfg, name) {
   return samples.length;
 }
 
-const VIEWS = { status: statusView, goals: goalsView, stats: statsView, last: lastView, help: helpView, ideas: ideasView, findings: (p, cfg) => toParts(findingsView(p, cfg).text) };
+const VIEWS = { status: statusView, goals: goalsView, stats: statsView, last: lastView, help: helpView, ideas: ideasView, queue: queueView, findings: (p, cfg) => toParts(findingsView(p, cfg).text) };
 /** Куски HTML ответа на команду обзора view. */
 export function renderView(view, p, cfg, opts = {}) { return VIEWS[view](p, cfg, opts); }
 
@@ -385,6 +421,10 @@ export async function sendView(tg, chatId, view, p, cfg, opts = {}) {
   if (view === 'ideas') {
     const rows = ideasKeyboard(p, cfg, { page: opts.page || 1 });
     if (rows.length) await tg.sendMessage(chatId, 'Выберите:', { html: true, keyboard: rows });
+  }
+  if (view === 'queue') {
+    const rows = queueKeyboard(p, cfg, { now: opts.now });
+    if (rows.length) await tg.sendMessage(chatId, 'Поставить первой:', { html: true, keyboard: rows });
   }
   if (view === 'status') {
     const rows = summaryKeyboard(p, cfg);
