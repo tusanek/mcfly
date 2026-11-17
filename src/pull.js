@@ -15,12 +15,13 @@ import { enqueueNotice, flushNotices } from './notices.js';
 import { autoApproveAndStart } from './chain.js';
 import { ACTION_TYPES, handleActionMessage, spawnAction, ownerId } from './actions.js';
 import { ideasBrief } from './ideas.js';
+import { MAX_RUN_CHANGES } from './config.js';
 import { deliverDueReminders, remindersView } from './reminders.js';
 
 /** Дневной прогон отдельным процессом: опрос ответов не ждёт его конца. */
-export function spawnDayRun(projectDir, { chained = false } = {}) {
+export function spawnDayRun(projectDir, { chained = false, changes = null } = {}) {
   const env = { ...process.env }; if (chained) env.MCFLY_CHAINED = '1'; else delete env.MCFLY_CHAINED;
-  spawn(process.execPath, [path.join(MCFLY_ROOT, 'bin', 'mcfly'), 'run', '--mode', 'day', '--project', projectDir], { cwd: projectDir, detached: true, stdio: 'ignore', env }).unref();
+  spawn(process.execPath, [path.join(MCFLY_ROOT, 'bin', 'mcfly'), 'run', '--mode', 'day', '--project', projectDir, ...(changes ? ['--changes', String(changes)] : [])], { cwd: projectDir, detached: true, stdio: 'ignore', env }).unref();
 }
 
 const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -65,6 +66,14 @@ export function releasePullLock(p, token) { if (ownsPullLock(p, token)) { try { 
 
 const FORCE_RE = /вс[её]\s+равно|\bforce\b/i;
 
+/**
+ * Кнопки «сколько изменений взять» (0.16.0, limits.run_choices): rn:N — «запусти N»; прошлый выбор помечен точкой;
+ * force — «запусти всё равно N» (rn:N!). Пустой список — вопроса нет.
+ */
+export function runChoiceRow(cfg, last = null, { force = false } = {}) {
+  return (cfg.limits?.run_choices || []).map((n) => ({ text: `▶️ ${n}${n === last ? ' •' : ''}`, callback_data: `rn:${n}${force ? '!' : ''}` }));
+}
+
 /** Сетевая ошибка одной строкой, без стека: «fetch failed (ECONNRESET)». */
 export function errorLine(e) {
   const code = e?.cause?.code || e?.cause?.name || '';
@@ -87,7 +96,7 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
   for (let waited = 0; !lock && waited < lockWaitMs; waited += 250) { await sleep(250); lock = acquirePullLock(p); }
   if (!lock) { if (!quietEmpty) log('Ответы из Telegram сейчас забирает другой процесс (mcfly/logs/.pull.lock).'); return { applied: 0, messages: [], busy: true }; }
   let messages, acks;
-  let wantKeyboard = false; let started = false;
+  let wantKeyboard = false; let started = false; let choiceRow = null; let lastChoice = null;
   try {
     const state = loadState(p);
     const updates = await tg.getUpdates(state.telegram_offset || 0, timeoutSec);
@@ -96,8 +105,9 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
     const extracted = extractMessages(updates, cfg.telegram.chat_id);
     messages = extracted.messages;
     const { nextOffset } = extracted;
+    lastChoice = state.run_changes || null;
     // «запусти» из Telegram: прогон, если сейчас ничего не идёт (run.telegram_start: false — только запись, как раньше).
-    const onRun = cfg.run.telegram_start === false ? null : (text = '') => {
+    const onRun = cfg.run.telegram_start === false ? null : (text = '', count = null) => {
       const cur = currentRun(p);
       if (cur) return `⏳ Идёт прогон ${cur.id || ''} с ${pad2(cur.since.getHours())}:${pad2(cur.since.getMinutes())} — итог придёт сообщением`;
       // прогон стартовал в этом задании меньше минуты назад и ещё не взял лок
@@ -110,8 +120,12 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
         wantKeyboard = true;
         return `⏸ Прогон не запущен: работы нет, ждёт одобрения ${pend.map((c) => c.name).join(', ')}. Одобрите кнопкой ниже — запустить можно сразу; «запусти всё равно» — запуск без одобрения.`;
       }
-      session.runStartedAt = Date.now(); startRun(projectDir); started = true;
-      return '▶️ Запускаю прогон — итог придёт сообщением';
+      // 0.16.0: число не названо, а в настройках есть варианты — спросить кнопками; выбор запоминается и помечается в следующий раз
+      if (!count && cfg.limits.run_choices.length) { choiceRow = runChoiceRow(cfg, lastChoice, { force: FORCE_RE.test(text) }); return 'Сколько изменений взять за этот прогон?'; }
+      const n = count ? Math.min(count, MAX_RUN_CHANGES) : null;
+      session.runStartedAt = Date.now(); if (n) startRun(projectDir, { changes: n }); else startRun(projectDir); started = true;
+      if (n) { state.run_changes = n; lastChoice = n; saveState(p, state); }
+      return `▶️ Запускаю прогон${n ? ` — изменений не больше ${n}` : ''} — итог придёт сообщением`;
     };
     // Сбой применения (не сеть) не должен оставлять offset на месте: иначе цикл применял бы ту же пачку каждые 12 с
     // (дубли в answers.md, повторные одобрения и «запусти»). Пачка пропускается, человек получает предупреждение.
@@ -123,8 +137,10 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
   for (const m of messages.filter((x) => x.callbackId)) { try { await tg.answerCallbackQuery(m.callbackId, 'Принято'); } catch {} }
   // Кнопки под ответом: после одобрения — «Запустить», если прогон не идёт и не запущен этим же сообщением; после отказа в запуске — одобрения.
   const approved = acks.some((a) => a.startsWith('✅ одобрено'));
-  const keyboard = wantKeyboard ? summaryKeyboard(p, cfg)
-    : approved && !started && !currentRun(p) && cfg.run.telegram_start !== false ? [[{ text: '▶️ Запустить прогон', callback_data: 'rn:day' }]] : [];
+  // 0.16.0: с вариантами числа изменений «Запустить» после одобрения — сразу ряд «▶️ 1 / 3 / 5», без лишнего вопроса
+  const afterApprove = () => { const row = runChoiceRow(cfg, lastChoice); return row.length ? [row] : [[{ text: '▶️ Запустить прогон', callback_data: 'rn:day' }]]; };
+  const keyboard = wantKeyboard ? summaryKeyboard(p, cfg) : choiceRow && !started ? [choiceRow]
+    : approved && !started && !currentRun(p) && cfg.run.telegram_start !== false ? afterApprove() : [];
   if (acks.length) {
     // Сообщения уже применены: не дошёл ответ — в очередь, а не «недоступен» с потерей подтверждения.
     try { await tg.sendMessage(cfg.telegram.chat_id, acks.join('\n'), { keyboard }); }

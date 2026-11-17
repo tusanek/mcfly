@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { listChanges, approvedWithWork, expireApprovals } from './approvals.js';
 import { readMetrics } from './metrics.js';
 import { appendText, fmtLocal } from './util.js';
+import { ideasBrief } from './ideas.js';
 
 const pct = (x) => `${Math.round((x || 0) * 100)} %`;
 
@@ -32,14 +33,16 @@ export function quotaAllows(cfg, usage) {
 }
 
 /**
- * Цепочка прогонов: после прогона запускать следующий, если осталась одобренная работа, лимиты позволяют,
+ * Цепочка прогонов: после прогона запускать следующий, если осталась одобренная работа (или взятые пункты при быстром пути), лимиты позволяют,
  * прогон продвинул работу (иначе следующий упрётся в то же) и цепочка за сутки не длиннее run.chain_max_runs.
  * Возвращает { chain, reason } — причина пишется в итог прогона.
  */
 export function chainDecision({ cfg, p, record, projectDir, started, now = new Date() }) {
   if (!(cfg.run.chain_max_weekly > 0)) return { chain: false, reason: '' };
   if (record.status !== 'ok') return { chain: false, reason: 'этот прогон не прошёл успешно' };
-  if (!approvedWithWork(listChanges(p.openspecChanges)).length) return { chain: false, reason: '' };
+  // 0.16.0: при быстром пути (ideas.fast_sizes) взятые пункты — тоже работа: следующий прогон спланирует и сделает их
+  const taken = cfg.ideas?.fast_sizes?.length ? ideasBrief(p, cfg)?.taken.length : 0;
+  if (!approvedWithWork(listChanges(p.openspecChanges)).length && !taken) return { chain: false, reason: '' };
   const q = quotaAllows(cfg, record.usage);
   if (!q.ok) return { chain: false, reason: q.reason };
   if (teamCommitsSince(projectDir, started) === 0) return { chain: false, reason: 'прогон не продвинул работу — нужен взгляд человека' };

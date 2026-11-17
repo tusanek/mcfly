@@ -62,6 +62,57 @@ export function expireApprovals(changes, cfg, now = new Date()) {
   }
   return auto;
 }
+/** Наименьший приоритет среди изменений в очереди (ждут одобрения или одобрены), кроме except; null — очередь пуста. */
+function topPriority(changes, except = null) {
+  const queue = changes.filter((c) => c.name !== except?.name && ['pending', 'approved'].includes(c.mcfly.approval));
+  return queue.length ? Math.min(...queue.map(priorityOf)) : null;
+}
+/** Приоритет «раньше всех в очереди» (0.16.0): на единицу меньше наименьшего; очередь пуста — null (приоритет не нужен). */
+export function firstPriority(changes, except = null) { const top = topPriority(changes, except); return top == null ? null : top - 1; }
+/**
+ * «⬆ Вперёд» (0.16.0): изменение, которое ждёт одобрения или одобрено, становится первым в очереди — решение владельца.
+ * Возвращает { change, error }; уже первое — без изменений.
+ */
+export function moveFirst(changes, name) {
+  const c = changes.find((x) => x.name === name);
+  if (!c) return { change: null, error: 'такого изменения нет' };
+  if (!['pending', 'approved'].includes(c.mcfly.approval)) return { change: c, error: 'поднять можно изменение, которое ждёт одобрения или одобрено' };
+  const top = topPriority(changes, c);
+  if (top == null || priorityOf(c) < top) return { change: c, error: null };
+  writeMeta(c, { ...c.mcfly, priority: top - 1 });
+  return { change: c, error: null };
+}
+const SAMPLES_HEAD = /^##\s+Как это будет выглядеть\s*$/im;
+/**
+ * Быстрый путь (0.16.0): почему план по взятым пунктам НЕ одобряется сразу; пустая строка — одобряется.
+ * Условия проверяет код, а не команда: все пункты — размера из ideas.fast_sizes; категория с ответом по умолчанию (не prod);
+ * в proposal есть раздел «Как это будет выглядеть» без образцов («Снаружи ничего не меняется»); задач не больше
+ * limits.max_tasks_per_change; план не возвращали на одобрение (mcfly.held).
+ */
+export function fastTrackBlock(change, ideaItems, cfg, category = change.mcfly.category || 'spec') {
+  const sizes = cfg.ideas?.fast_sizes || [];
+  if (!sizes.length) return 'быстрый путь выключен (ideas.fast_sizes)';
+  if (!ideaItems.length) return 'план не по взятому пункту';
+  const big = ideaItems.find((x) => !sizes.includes(x.size));
+  if (big) return `пункт ${big.id} размера ${big.size} — такие владелец одобряет сам`;
+  if (!autoDefault(cfg, category)) return `категория ${category} — только решение владельца`;
+  if (change.mcfly.held) return 'план уже возвращали на одобрение';
+  if (!SAMPLES_HEAD.test(change.proposal || '')) return 'в плане нет раздела «Как это будет выглядеть»';
+  if (proposalSamples(change).length) return 'изменение меняет то, что человек видит или нажимает';
+  const tasks = change.tasksDone + change.tasksOpen;
+  if (!tasks) return 'в плане нет задач';
+  if (tasks > cfg.limits.max_tasks_per_change) return `задач ${tasks} — больше limits.max_tasks_per_change`;
+  return '';
+}
+/** Одобрено быстрым путём (by: fast) — без второго нажатия владельца. */
+export const isFastApproved = (change) => change.mcfly.approval === 'approved' && change.mcfly.by === 'fast';
+/**
+ * Вернуть быстро одобренный план на одобрение владельца (0.16.0, `mcfly approval hold`): страховка — можно и команде
+ * в прогоне, потому что только ужесточает. Повторно быстрым путём такой план не одобрится (mcfly.held).
+ */
+export function holdApproval(change, note = '', now = new Date()) {
+  return writeMeta(change, { ...change.mcfly, approval: 'pending', held: true, requested_at: now.toISOString(), decided_at: '', by: '', note });
+}
 export const pendingApprovals = (changes) => changes.filter((c) => c.mcfly.approval === 'pending');
 /** Дата ГГГГ-ММ-ДД, с которой отложенное изменение снова в работе (0.7.6); null — не отложено или дата кривая. */
 export function pausedUntil(change) {

@@ -20,13 +20,14 @@ export const DEFAULT_CONFIG = {
     },
   },
   telegram: { chat_id: '', token_env: 'MCFLY_TELEGRAM_TOKEN', owner_id: '' }, // owner_id — кто может запускать действия (0.6.0); пусто — личный чат chat_id
-  limits: { max_changes_per_run: 2, max_tasks_per_change: 10 },
+  // 0.16.0: max_changes_night — предел ночного прогона (0 — как max_changes_per_run); run_choices — кнопки «сколько берём» на «запусти» (пусто — без вопроса)
+  limits: { max_changes_per_run: 2, max_changes_night: 0, max_tasks_per_change: 10, run_choices: [] },
   // Ссылки в «статус» (0.6.1): { <подпись>: <адрес http(s)> }, например сайт продукта
   links: {},
   // Действия владельца из Telegram (0.6.0): { <id>: { title, run, describe?, prepare?, offer?, followups?, timeout_minutes?, confirm?, during_run?, vpn? } }
   actions: {},
   // Список предложений (0.7.0): enabled false — прежнее поведение (команда без одобренной работы планирует сама)
-  ideas: { enabled: true, backlog: '', per_run: 2, per_idle_run: 4, show: 7, research: true, plan_ahead: 1 },
+  ideas: { enabled: true, backlog: '', per_run: 2, per_idle_run: 4, show: 7, research: true, plan_ahead: 1, fast_sizes: [] }, // fast_sizes (0.16.0): размеры взятых пунктов, чей план без видимых изменений одобряется сразу
   // Навыки Claude Code для задач с интерфейсом (0.10.0), например ['impeccable']: их вызывают дизайнер и разработчик
   design: { skills: [] },
   // Находки для доработки самого mcfly (0.11.0): агенты и сессии регистрируют, владелец одобряет в боте, одобренное — в общий ящик inbox
@@ -34,6 +35,15 @@ export const DEFAULT_CONFIG = {
   // Сводка коротким роликом с голосом (0.12.0): после текста сводки, отдельным сообщением; pronounce — { слово: как прочитать }
   video: { enabled: false, voice: 'eugene', voice_speed: 1.1, max_seconds: 60, weekly_max_seconds: 120, timeout_minutes: 15, director: 'review', director_minutes: 8, viewer_model: 'claude-haiku-5-5', pronounce: {} },
 };
+
+/** Потолок числа изменений за один прогон, заданного при запуске (флаг --changes, кнопка в боте). */
+export const MAX_RUN_CHANGES = 20;
+/** Сколько изменений берёт прогон (0.16.0): число, заданное при запуске → ночью limits.max_changes_night → limits.max_changes_per_run. */
+export function maxChanges(cfg, mode = 'day', override = null) {
+  const n = Number(override);
+  if (Number.isInteger(n) && n >= 1) return Math.min(n, MAX_RUN_CHANGES);
+  return mode === 'night' && cfg.limits.max_changes_night > 0 ? cfg.limits.max_changes_night : cfg.limits.max_changes_per_run;
+}
 
 function merge(base, over) {
   if (over === undefined || over === null) return base;
@@ -75,6 +85,11 @@ export function validate(cfg) {
   for (const k of ['per_run', 'per_idle_run']) if (!(Number.isInteger(ideas[k]) && ideas[k] >= 0)) errors.push(`ideas.${k}: целое число от 0`);
   if (!(Number.isInteger(ideas.show) && ideas.show >= 1)) errors.push('ideas.show: целое число от 1');
   if (!(Number.isInteger(ideas.plan_ahead) && ideas.plan_ahead >= 1)) errors.push('ideas.plan_ahead: целое число от 1 — сколько планов держать на одобрении');
+  if (!(Array.isArray(ideas.fast_sizes) && ideas.fast_sizes.every((x) => ['S', 'M', 'L'].includes(x)))) errors.push('ideas.fast_sizes: список размеров S, M, L — планы по таким взятым пунктам без видимых изменений одобряются сразу; [] — выключено');
+  const limits = cfg.limits || {};
+  for (const k of ['max_changes_per_run', 'max_tasks_per_change']) if (!(Number.isInteger(limits[k]) && limits[k] >= 1)) errors.push(`limits.${k}: целое число от 1`);
+  if (!(Number.isInteger(limits.max_changes_night) && limits.max_changes_night >= 0)) errors.push('limits.max_changes_night: целое число от 0 (0 — как max_changes_per_run)');
+  if (!(Array.isArray(limits.run_choices) && limits.run_choices.length <= 4 && limits.run_choices.every((x) => Number.isInteger(x) && x >= 1 && x <= MAX_RUN_CHANGES))) errors.push(`limits.run_choices: до четырёх целых чисел от 1 до ${MAX_RUN_CHANGES}, например [1, 3, 5]; [] — бот не спрашивает, сколько брать`);
   const skills = cfg.design?.skills;
   if (!Array.isArray(skills) || skills.some((x) => typeof x !== 'string' || !/^[\w:.-]+$/.test(x))) errors.push('design.skills: список названий навыков, например [impeccable]');
   if (typeof cfg.findings?.enabled !== 'boolean') errors.push('findings.enabled: true или false');

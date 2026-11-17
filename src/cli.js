@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { loadIdeas, saveIdeas, addIdea, findIdea, transitionIdea, closeIdeaByChange, IDEA_STATUS_RU } from './ideas.js';
+import { loadIdeas, saveIdeas, addIdea, findIdea, transitionIdea, closeIdeaByChange, markFirst, IDEA_STATUS_RU } from './ideas.js';
 import YAML from 'yaml';
 import { paths, loadState, saveState } from './state.js';
-import { loadConfig, autoDefault, isCategory } from './config.js';
+import { loadConfig, autoDefault, isCategory, MAX_RUN_CHANGES } from './config.js';
 import { loadEnv } from './env.js';
 import { run, currentRun } from './runner.js';
 import { composeSummary, sendSummary, htmlToPlain, techTail } from './summary.js';
@@ -13,21 +13,21 @@ import { pullAnswers, pollAnswers } from './pull.js';
 import { buildContext, isMcflyProject, hasProduct } from './context.js';
 import { loadQuestions, saveQuestions, addQuestion, expireQuestions, openQuestions } from './questions.js';
 import { branchProgress, commitPaths } from './git.js';
-import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause } from './approvals.js';
+import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, priorityOf } from './approvals.js';
 import { appendMetric, readMetrics, aggregate, formatEvents } from './metrics.js';
 import { createTelegram, extractMessages } from './telegram.js';
 import * as schedule from './schedule.js';
 import { init } from './init.js';
 import { doctor } from './doctor.js';
 import { MCFLY_ROOT } from './prompt.js';
-import { exists, fmtShort, readText, writeText, pad2 } from './util.js';
+import { exists, fmtShort, fmtLocal, readText, writeText, appendText, pad2 } from './util.js';
 
 const HELP = `mcfly — комплект ИИ-команды разработки на Claude Code
 
 Команды:
   init [--name <проект>] [--with-tracker]        создать mcfly/ в проекте, настроить .claude и OpenSpec
   doctor [--probe]                                проверить окружение (--probe: реальный пробный запуск claude -p)
-  run [--mode night|day] [--dry-run]              запустить прогон команды (night проверяет окно слота)
+  run [--mode night|day] [--changes <n>] [--dry-run]   запустить прогон команды (night проверяет окно слота; --changes — сколько изменений взять)
   summary [--weekly [--list]] [--send]            собрать (и отправить в Telegram) утреннюю сводку; --weekly — недельную (итоги семи дней);
                                                   --weekly --list — только полный список недели (виджет Telegram)
   answers [--once]                                забирать ответы из Telegram сразу по приходу ~answers_every_minutes мин (задание launchd); --once — один раз
@@ -39,11 +39,14 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
             [--how <t>] [--ref <t>] [--needs-owner <t>] [--new-arguments <t>]   добавить предложение
   ideas set <Iн> proposed|taken|rejected|done [--note <t>]   решение владельца в сессии (в прогоне запрещено)
   ideas done <Iн> --change <имя>                  закрыть взятый пункт по изменению из архива (можно в прогоне)
+  ideas first <Iн>                                взятый пункт — первым в очереди на план (в прогоне запрещено)
   question list | question expire
   approval request <изменение> [--category <c>] [--priority <n>]
   approval set <изменение> approved|rejected [--note <t>] [--priority <n>]   (меньше = раньше; по умолчанию 100)
   approval pause <изменение> --until <ГГГГ-ММ-ДД> [--note <t>] | approval resume <изменение>
                                                   отложить одобренное изменение до даты (команда не берёт) / вернуть в работу
+  approval first <изменение>                      изменение — первым в очереди (в прогоне запрещено)
+  approval hold <изменение> [--note <t>]          вернуть на одобрение владельца план, одобренный быстрым путём (можно в прогоне)
   approval list
   shift start <изменение> | shift merge           дневная работа в ветке shift/<изменение>-… и её слияние в change/<изменение>
   shift write [--file <путь>] | shift auto [--kind day|night]   записать передачу смены / показать авто-передачу
@@ -62,7 +65,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
 
 export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
-    project: { type: 'string' }, mode: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, weekly: { type: 'boolean' }, director: { type: 'string' }, list: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
+    project: { type: 'string' }, mode: { type: 'string' }, changes: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, weekly: { type: 'boolean' }, director: { type: 'string' }, list: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
     change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
@@ -105,7 +108,13 @@ export async function main(argv) {
   const now = new Date();
   const runIdEnv = process.env.MCFLY_RUN_ID || '';
   switch (cmd) {
-    case 'run': { const r = await run({ projectDir, mode: values.mode || 'day', dryRun: !!values['dry-run'], now, log }); return ['ok', 'dry-run', 'missed'].includes(r.status) ? 0 : 1; }
+    case 'run': {
+      let changes = null;
+      if (values.changes != null) {
+        changes = Number(values.changes);
+        if (!(Number.isInteger(changes) && changes >= 1 && changes <= MAX_RUN_CHANGES)) { console.error(`--changes: целое число от 1 до ${MAX_RUN_CHANGES}`); return 1; }
+      }
+      const r = await run({ projectDir, mode: values.mode || 'day', dryRun: !!values['dry-run'], now, log, changes }); return ['ok', 'dry-run', 'missed'].includes(r.status) ? 0 : 1; }
     case 'summary': {
       if (values.weekly && values.list) {
         // Только полный список недели: без --send — файл виджета для просмотра в браузере и его размер, с --send — отправить
@@ -178,7 +187,14 @@ export async function main(argv) {
         if (!r.idea || r.error) { console.error(`${rest[0] || '(номер не указан)'}: ${r.error}`); return 1; }
         saveIdeas(p, data); log(`${r.idea.id}: сделано (${r.idea.change})`); return 0;
       }
-      console.error('mcfly ideas list | add | set | done'); return 1;
+      if (sub === 'first') {
+        // 0.16.0: порядок очереди — решение владельца, в прогоне команды запрещено
+        if (runIdEnv) { console.error('Порядок очереди задаёт владелец: в прогоне команды ideas first запрещён'); return 1; }
+        const r = markFirst(data, rest[0], now);
+        if (!r.idea || r.error) { console.error(`${rest[0] || '(номер не указан)'}: ${r.error}`); return 1; }
+        saveIdeas(p, data); log(`${r.idea.id}: первым в очереди на план`); return 0;
+      }
+      console.error('mcfly ideas list | add | set | done | first'); return 1;
     }
     case 'question': {
       const data = loadQuestions(p);
@@ -204,7 +220,7 @@ export async function main(argv) {
         if (hasProduct(p) && !/^##\s+Как это будет выглядеть\s*$/im.test(c.proposal || '')) {
           console.error(`В плане ${c.name} нет раздела «## Как это будет выглядеть». Если изменение меняет то, что человек видит или нажимает (сообщения и кнопки бота — тоже), лид вызывает mcfly:designer, и тот добавляет образцы; если нет — добавьте в proposal.md этот раздел с одной строкой «Снаружи ничего не меняется». Потом запросите одобрение снова.`); return 1;
         }
-        let idea = null; let ideas = [];
+        let idea = null; let ideas = []; let items = [];
         if (values.idea) {
           // План по пунктам списка (0.7.0): только по взятым владельцем пунктам; пункты становятся спланированными.
           // 0.15.5: пунктов может быть несколько (через запятую) — иначе второй пункт общего плана навсегда оставался «взято».
@@ -214,9 +230,20 @@ export async function main(argv) {
           const bad = found.find(([, it]) => !it || it.status !== 'taken');
           if (!ids.length || bad) { console.error(`${bad ? bad[0] : '(номер не указан)'} не взят владельцем (статус: ${bad?.[1] ? IDEA_STATUS_RU[bad[1].status] || bad[1].status : 'нет такого'})`); return 1; }
           for (const [, it] of found) transitionIdea(idata, it.id, 'planned', { actor: 'team', change: c.name, now });
-          saveIdeas(p, idata); ideas = found.map(([, it]) => it.id); idea = ideas[0];
+          saveIdeas(p, idata); items = found.map(([, it]) => it); ideas = items.map((it) => it.id); idea = ideas[0];
         }
-        requestApproval(c, { category, priority: values.priority, now, idea, ideas }); appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_proposed', value: 1, change: c.name }); log(`Одобрение запрошено: ${c.name}. Человек увидит его в утренней сводке.`); return 0; }
+        // 0.16.0: пункт, который владелец поднял «вперёд», — его план первым в очереди, если приоритет не задан явно
+        const priority = values.priority ?? (items.some((it) => it.first_at) ? firstPriority(changes, c) : undefined);
+        requestApproval(c, { category, priority, now, idea, ideas }); appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_proposed', value: 1, change: c.name });
+        // 0.16.0, быстрый путь: небольшой взятый пункт без видимых изменений одобряется сразу — по признакам плана, а не по слову команды
+        const block = items.length ? fastTrackBlock(c, items, cfg, category) : 'план не по взятому пункту';
+        if (!block) {
+          setApproval(c, 'approved', 'fast', `быстрый путь: ${ideas.join(', ')} — ${[...new Set(items.map((it) => it.size))].join('/')}, снаружи ничего не меняется`, now);
+          appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_fast', value: 1, change: c.name });
+          appendText(p.answers, `\n## ${fmtLocal(now)} — ${c.name} одобрено сразу после «Берём» (быстрый путь, ${ideas.join(', ')})\n`);
+          log(`Одобрено сразу: ${c.name} (быстрый путь — пункт небольшой, снаружи ничего не меняется). Реализуйте его в этом же прогоне, если лимит изменений не исчерпан.`); return 0;
+        }
+        log(`Одобрение запрошено: ${c.name}. Человек увидит его в утренней сводке.${items.length && cfg.ideas.fast_sizes.length ? ` Ждёт кнопки владельца: ${block}.` : ''}`); return 0; }
       // Решение человека сразу в истории; во время прогона HEAD под агентами не двигаем — метаданные закоммитит прогон.
       const commitMeta = (message) => {
         if (exists(p.lock)) { log('Не закоммичено: идёт прогон, метаданные одобрения закоммитит он.'); return 0; }
@@ -228,6 +255,19 @@ export async function main(argv) {
         if (runIdEnv) { console.error('Одобрение ставит только человек: в прогоне команды approval set запрещён, используйте mcfly approval request.'); return 1; }
         const st = rest[1]; if (!['approved', 'rejected'].includes(st)) { console.error('Статус: approved | rejected'); return 1; } setApproval(c, st, 'human-cli', values.note || '', now, { priority: values.priority }); log(`${c.name}: ${st}${values.priority ? ', приоритет ' + values.priority : ''}`);
         return commitMeta(`chore(${c.name}): одобрение человека — ${st}`); }
+      if (sub === 'first') {
+        // 0.16.0: порядок очереди — решение человека
+        if (runIdEnv) { console.error('Порядок очереди задаёт владелец: в прогоне команды approval first запрещён.'); return 1; }
+        const r = moveFirst(changes, c.name); if (r.error) { console.error(`${c.name}: ${r.error}`); return 1; }
+        log(`${c.name}: первым в очереди (приоритет ${priorityOf(c)})`); return commitMeta(`chore(${c.name}): первым в очереди`);
+      }
+      if (sub === 'hold') {
+        // 0.16.0: страховка быстрого пути — команда может только ужесточить: вернуть план на одобрение владельца
+        if (!isFastApproved(c)) { console.error(`${c.name}: вернуть на одобрение можно только план, одобренный быстрым путём`); return 1; }
+        holdApproval(c, values.note || '', now);
+        appendText(p.answers, `\n## ${fmtLocal(now)} — ${c.name} возвращено на одобрение владельца\n${values.note || '(без причины)'}\n`);
+        log(`${c.name}: ждёт одобрения владельца. Не реализуйте и не сливайте его до одобрения.`); return commitMeta(`chore(${c.name}): возвращено на одобрение`);
+      }
       if (sub === 'pause' || sub === 'resume') {
         // 0.7.6: отложить одобренное изменение до даты — тоже решение человека; агенты пишут о стоп-условии в отчёте.
         if (runIdEnv) { console.error(`Откладывает только человек: в прогоне команды approval ${sub} запрещён — напишите о стоп-условии в отчёте.`); return 1; }

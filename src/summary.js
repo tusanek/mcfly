@@ -423,6 +423,9 @@ export function summaryKeyboard(p, cfg) {
     if (fitsData(`sh:${c.name}`) && proposalSamples(c).length) rows.push([{ text: `👀 Как будет выглядеть: ${c.mcfly.idea || labels.get(c.name)}`, callback_data: `sh:${c.name}` }]);
   }
   if (!pend.length && !approvedWithWork(changes).length && ideasBrief(p, cfg)?.proposed > 0) rows.push([{ text: '💡 Предложения', callback_data: 'il:1' }]);
+  // 0.16.0: в очереди больше одной задачи — кнопка экрана «Очередь», где её можно переставить («⬆ Вперёд»)
+  const queued = approvedWithWork(changes).length + pend.length + (ideasBrief(p, cfg)?.taken.length || 0);
+  if (queued > 1) rows.push([{ text: `📋 Очередь (${queued})`, callback_data: 'qu:1' }]);
   // 0.11.0: находки для доработки самого mcfly ждут «Передать» / «Не надо»
   const found = pendingFindings(p, cfg);
   if (found) rows.push([{ text: `📮 Находки для mcfly (${found})`, callback_data: 'fl:1' }]);

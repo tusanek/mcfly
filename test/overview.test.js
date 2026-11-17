@@ -304,7 +304,7 @@ test('0.6.3: «статус» присылает кнопки одобрения
   assert.match(sent[0].text, /📍 <b>Статус/);
   assert.match(sent[1].text, /Ждут вашего решения/);
   const data = sent[1].reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
-  assert.deepEqual(data.sort(), ['ap:demo-a', 'ap:demo-b', 'qd:Q1', 'rj:demo-a', 'rj:demo-b']);
+  assert.deepEqual(data.sort(), ['ap:demo-a', 'ap:demo-b', 'qd:Q1', 'qu:1', 'rj:demo-a', 'rj:demo-b']);
 
   setApproval(listChanges(p.openspecChanges).find((c) => c.name === 'demo-a'), 'approved', 'test');
   setApproval(listChanges(p.openspecChanges).find((c) => c.name === 'demo-b'), 'rejected', 'test');

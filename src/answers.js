@@ -1,10 +1,10 @@
 import { appendText, fmtLocal } from './util.js';
 import { loadQuestions, saveQuestions, answerQuestion } from './questions.js';
-import { listChanges, setApproval } from './approvals.js';
+import { listChanges, setApproval, moveFirst } from './approvals.js';
 import { viewOf } from './overview.js';
 import { commandText } from './util.js';
 import { parseActionText } from './action-config.js';
-import { loadIdeas, saveIdeas, addIdea, transitionIdea, findIdea } from './ideas.js';
+import { loadIdeas, saveIdeas, addIdea, transitionIdea, findIdea, markFirst } from './ideas.js';
 import path from 'node:path';
 import { loadFindings, saveFindings, addFinding, decideFinding, newFindings } from './findings.js';
 import { parseReminder, addReminder, cancelReminder, snoozeReminder, whenText } from './reminders.js';
@@ -16,6 +16,8 @@ export function parseMessage(text) {
   // Список предложений (0.7.0): «берём I7», «не сейчас I7 причина» — кнопки ib:/ix: под «💡 Предложения».
   if ((m = /^(?:берём|берем|беру)\s+(I\d+)\s*$/i.exec(t))) return { type: 'take', id: m[1].toUpperCase() };
   if ((m = /^не\s+сейчас\s+(I\d+)\s*([\s\S]*)$/i.exec(t))) return { type: 'defer', id: m[1].toUpperCase(), note: m[2].trim() };
+  // «⬆ Вперёд» (0.16.0): «вперёд I7» или «вперёд имя-изменения» — первым в очереди; кнопка up:
+  if ((m = /^впер[её]д\s+([\w.-]+)\s*$/i.exec(t))) return { type: 'first', target: m[1] };
   if ((m = /^(?:approve|ok|одобряю|одобрить|да)\s+([\w.-]+)\s*([\s\S]*)$/i.exec(t))) return { type: 'approve', change: m[1], note: m[2].trim() };
   if ((m = /^(?:reject|отклоняю|отклонить|нет)\s+([\w.-]+)\s*([\s\S]*)$/i.exec(t))) return { type: 'reject', change: m[1], note: m[2].trim() };
   // Образцы (0.10.0): «образец имя» (кнопка sh:) — отвечает pull.js; «образец кнопка» — нажатие ненастоящей кнопки под образцом.
@@ -41,7 +43,11 @@ export function parseMessage(text) {
   // «предложения 2» — страница списка (кнопка «Ещё ▸», il:2)
   if ((m = /^(?:\/ideas|предложения|идеи) (\d+)$/.exec(commandText(t)))) return { type: 'view', view: 'ideas', page: Number(m[1]) };
   // «▶️ Запусти» — кнопка внизу чата, /run — меню команд.
-  if (/^\/?(?:run|запусти|запуск)(?:@\w+)?(?:\s|$)/i.test(t.replace(/^[^\p{L}\p{N}/]+/u, ''))) return { type: 'run', text: t };
+  if (/^\/?(?:run|запусти|запуск)(?:@\w+)?(?:\s|$)/i.test(t.replace(/^[^\p{L}\p{N}/]+/u, ''))) {
+    // 0.16.0: «запусти 3» — сколько изменений взять за прогон (кнопки rn:3)
+    const n = /\s(\d{1,2})\s*$/.exec(t); // число — последним словом: «запусти в 19 часов» числом изменений не считается
+    return { type: 'run', text: t, ...(n && Number(n[1]) >= 1 ? { changes: Number(n[1]) } : {}) };
+  }
   // Идея владельца в список предложений: «идея: текст» или «💡 текст» (после команд обзора — кнопка «💡 Предложения» не идея).
   if ((m = /^(?:идея\s*[:：\-–—]|💡)\s*([\s\S]*)$/iu.exec(t))) return { type: 'idea', text: m[1].trim() };
   return { type: 'note', text: t };
@@ -158,9 +164,33 @@ export function applyMessages(p, messages, { now = new Date(), by = 'human', onR
         acks.push(`${approved ? '✅ одобрено' : '⛔ отклонено'}: ${c.name}`);
         break;
       }
+      case 'first': {
+        // 0.16.0: поднять взятый пункт или изменение в начало очереди — решение владельца, команда его не меняет
+        const isIdea = /^I\d+$/i.test(parsed.target);
+        let name = parsed.target; let label = parsed.target;
+        if (isIdea) {
+          if (idata.error) { acks.push(broken); break; }
+          const it = findIdea(idata, parsed.target);
+          if (!it) { acks.push(`⚠️ ${parsed.target.toUpperCase()}: такого предложения нет`); break; }
+          label = it.id;
+          if (it.status === 'taken') {
+            markFirst(idata, it.id, now); ideasDirty = true;
+            appendText(p.answers, `\n## ${stamp} — вперёд ${it.id}\n${it.title}\n`);
+            acks.push(`⬆ ${it.id} — первым в очереди: ближайший прогон начнёт с него`); break;
+          }
+          if (it.status !== 'planned' || !it.change) { acks.push(`ℹ️ ${it.id}: поднять можно взятый или спланированный пункт`); break; }
+          name = it.change;
+        }
+        const r = moveFirst(changes, name);
+        if (!r.change) { acks.push(`⚠️ ${label}: такого изменения нет`); break; }
+        if (r.error) { acks.push(`ℹ️ ${label}: ${r.error}`); break; }
+        appendText(p.answers, `\n## ${stamp} — вперёд ${r.change.name}\n`);
+        acks.push(`⬆ ${label} — первым в очереди${r.change.mcfly.approval === 'pending' ? ' (план ещё ждёт вашего одобрения)' : ''}`);
+        break;
+      }
       case 'run':
         appendText(p.answers, `\n## ${stamp} — запрос ручного запуска\n${parsed.text}\n`);
-        acks.push(onRun ? onRun(parsed.text) : '▶️ Запрос записан. Запуск с ноутбука: mcfly run --mode day');
+        acks.push(onRun ? onRun(parsed.text, parsed.changes || null) : '▶️ Запрос записан. Запуск с ноутбука: mcfly run --mode day');
         break;
       // Напоминания живут в mcfly/logs/reminders.json, в answers.md не пишутся: команде они не нужны.
       case 'remind': {
