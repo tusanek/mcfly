@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 import { paths } from '../src/state.js';
 import { parseConfig, maxChanges, MAX_RUN_CHANGES } from '../src/config.js';
-import { listChanges, moveFirst, firstPriority, fastTrackBlock, holdApproval, isFastApproved, setApproval, priorityOf } from '../src/approvals.js';
+import { approveFast, recheckFast, fastPlanIntact, planHash, listChanges, moveFirst, firstPriority, fastTrackBlock, holdApproval, isFastApproved, setApproval, priorityOf } from '../src/approvals.js';
 import { loadIdeas, saveIdeas, addIdea, transitionIdea, markFirst, takenInOrder } from '../src/ideas.js';
 import { buildLeadPrompt } from '../src/prompt.js';
 import { buildContext } from '../src/context.js';
@@ -139,7 +139,7 @@ test('без ideas.fast_sizes план по пункту ждёт кнопки, 
 });
 test('итог прогона называет одобренное быстрым путём; цепочка при быстром пути считает взятые пункты работой', () => {
   const dir = gitRepo(bareProject()); const p = paths(dir); const started = new Date(Date.now() - 60_000);
-  addChange(dir, 'quiet', { proposal: QUIET, meta: approved({ by: 'fast', decided_at: new Date().toISOString() }) });
+  addChange(dir, 'quiet', { proposal: QUIET }); approveFast(listChanges(p.openspecChanges)[0]);
   const text = finishMessage(cfg, { id: 'r1', status: 'ok', mode: 'day', started_at: started.toISOString(), ended_at: new Date().toISOString() }, p).text;
   assert.match(text, /⚡ Без второго одобрения[^\n]*в работе/);
   const dir2 = gitRepo(bareProject()); const p2 = paths(dir2); takeIdeas(p2, ['S']);
@@ -192,4 +192,35 @@ test('бот: «вперёд I7», «вперёд имя», кнопка up:, э
   assert.match(fs.readFileSync(p.answers, 'utf8'), /— вперёд I2\n/);
   assert.deepEqual(queueKeyboard(p, cfg).map((r) => r[0].callback_data), ['up:early', 'up:I1']);
   assert.match(queueView(bareProject() && paths(bareProject()), cfg).join('\n'), /Очередь пуста/);
+});
+
+test('0.16.1: быстрое одобрение привязано к тексту плана — изменился, возвращается владельцу; отметки задач не в счёт', () => {
+  const dir = bareProject(); const p = paths(dir);
+  const cdir = addChange(dir, 'quiet', { proposal: QUIET }); addChange(dir, 'other', { meta: approved() });
+  const get = () => listChanges(p.openspecChanges).find((c) => c.name === 'quiet');
+  approveFast(get(), 'быстрый путь');
+  assert.equal(get().mcfly.fast_hash, planHash(get())); assert.equal(fastPlanIntact(get()), true);
+  fs.writeFileSync(path.join(cdir, 'tasks.md'), '- [x] первая\n- [x] нулевая\n');
+  assert.deepEqual(recheckFast(listChanges(p.openspecChanges)), [], 'задачи отмечены сделанными — план тот же');
+  fs.appendFileSync(path.join(cdir, 'proposal.md'), '### Новая кнопка\n```\nПривет\n[Ок]\n```\n');
+  assert.deepEqual(recheckFast(listChanges(p.openspecChanges)).map((c) => c.name), ['quiet']);
+  assert.equal(get().mcfly.approval, 'pending'); assert.equal(get().mcfly.held, true);
+  assert.equal(listChanges(p.openspecChanges).find((c) => c.name === 'other').mcfly.approval, 'approved', 'обычные одобрения не трогаются');
+  // быстрое одобрение без отпечатка (запись руками) — тоже на одобрение владельца
+  setApproval(get(), 'approved', 'fast'); assert.equal(recheckFast(listChanges(p.openspecChanges)).length, 1);
+});
+test('0.16.1: approval request сохраняет отпечаток; добавленная после одобрения задача возвращает план в начале прогона', async () => {
+  const dir = gitRepo(bareProject()); const p = paths(dir);
+  fs.writeFileSync(p.config, 'project: demo\nideas:\n  fast_sizes: [S]\n');
+  takeIdeas(p, ['S']); const cdir = addChange(dir, 'quiet', { proposal: QUIET });
+  assert.match(cli(['approval', 'request', 'quiet', '--idea', 'I1'], dir, { MCFLY_RUN_ID: 'r' }).stdout, /Одобрено сразу/);
+  assert.ok(listChanges(p.openspecChanges)[0].mcfly.fast_hash);
+  fs.appendFileSync(path.join(cdir, 'tasks.md'), '- [ ] новая кнопка в боте\n');
+  const { run } = await import('../src/runner.js'); const { fakeClaude } = await import('./helpers.js');
+  fakeClaude(dir, { lines: [{ type: 'result', subtype: 'success', is_error: false, num_turns: 1, total_cost_usd: 0, session_id: 's', result: 'готово' }] });
+  const notes = [];
+  await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async () => {}, notify: async (t) => { notes.push(t); }, startRun: () => {} });
+  assert.equal(listChanges(p.openspecChanges)[0].mcfly.approval, 'pending');
+  assert.match(fs.readFileSync(p.answers, 'utf8'), /quiet возвращено на одобрение владельца\nплан изменился после быстрого одобрения/);
+  assert.match(fs.readFileSync(path.join(p.runs, fs.readdirSync(p.runs)[0], 'prompt.md'), 'utf8'), /Ожидают одобрения \(1\)/);
 });
