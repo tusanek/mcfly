@@ -156,11 +156,13 @@ const Big = ({ scene, frame, fps, finale, ac }) => {
         </div>
       ) : scene.lines.length ? (() => {
         const l = spring({ frame: frame - after, fps, config: SOFT });
+        const wide = scene.lines.join(' ').length > 34;
         return (
-          <div style={{ display: 'inline-flex', alignSelf: 'flex-start', alignItems: 'center', gap: 22, marginTop: 72, padding: '20px 36px', borderRadius: 50, background: 'rgba(255,255,255,0.06)', border: `2px solid ${C.line}`, color: C.dim, fontSize: 46, fontWeight: 500, opacity: l, transform: `translateY(${(1 - l) * 30}px)` }}>
+          // Короткие строки — одной плашкой через точку; длинные — столбиком, иначе они жмутся рядом и выглядят сбоем вёрстки
+          <div style={{ display: 'inline-flex', flexDirection: wide ? 'column' : 'row', alignSelf: 'flex-start', alignItems: wide ? 'flex-start' : 'center', gap: wide ? 10 : 22, marginTop: 72, padding: wide ? '26px 36px' : '20px 36px', borderRadius: wide ? 36 : 50, background: 'rgba(255,255,255,0.06)', border: `2px solid ${C.line}`, color: C.dim, fontSize: 46, fontWeight: 500, lineHeight: 1.25, opacity: l, transform: `translateY(${(1 - l) * 30}px)` }}>
             {scene.lines.map((line, i) => (
               <React.Fragment key={i}>
-                {i ? <span style={{ width: 12, height: 12, borderRadius: 6, background: ac[0] }} /> : null}
+                {i && !wide ? <span style={{ width: 12, height: 12, borderRadius: 6, background: ac[0] }} /> : null}
                 <span style={{ color: i ? C.text : C.dim }}>{line}</span>
               </React.Fragment>
             ))}
