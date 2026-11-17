@@ -357,3 +357,18 @@ test('0.15.0 sendSummaryVideo: режим режиссёра (mode) доходи
   await sendSummaryVideo(p, { ...cfg, telegram: { ...cfg.telegram, chat_id: '7' } }, { data: DATA, tg, now: NOW, log: () => {}, direct, build: async () => ({ file: '/tmp/x/s.mp4', seconds: 5 }) });
   assert.deepEqual(modes, ['off', 'review']);
 });
+
+test('0.15.2 summaryData: done — всё завершённое за период по убыванию заметности; образцы идущих изменений помечены ahead', async () => {
+  const { addChange } = await import('./helpers.js');
+  const dir = bareProject(); const p = paths(dir);
+  const sample = '## Как это будет выглядеть\n\n1. Ты пишешь «повторы»\n\n```\nТвои повторы:\n1. Зарядка\n```\n';
+  for (const [name, text] of [['fix-crash', '## Простыми словами\nБот не падает на пустом сообщении.\n'], ['add-repeats', `## Простыми словами\nСписок повторов одним сообщением.\n\n${sample}`]]) {
+    addChange(dir, name, { proposal: text, tasks: '- [x] a\n' });
+    fs.mkdirSync(path.join(p.openspecChanges, 'archive'), { recursive: true });
+    fs.renameSync(path.join(p.openspecChanges, name), path.join(p.openspecChanges, 'archive', `2026-11-16-${name}`));
+  }
+  const d = summaryData(p, cfg, { now: new Date(Date.now() + 60_000), since: new Date(Date.now() - 3600_000) });
+  assert.equal(d.done.length, 2); assert.equal(d.done[0].visible, true); assert.ok(d.done[0].sample); assert.equal(d.done[1].visible, false);
+  assert.ok(d.done.every((x) => x.title && !('weight' in x) && !('notable' in x)));
+  assert.ok(d.demos.every((x) => !x.ahead)); // завершённые — без пометки
+});

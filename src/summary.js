@@ -16,6 +16,7 @@ import { listActions } from './action-config.js';
 import { currentRun } from './runner.js';
 import { pendingFindings } from './findings.js';
 import { sendSummaryVideo } from './video.js';
+import { closedItems } from './weekly.js';
 
 // 0.9.0: статусы для владельца — словами, без жаргона («квота», «API»)
 export const STATUS_RU = { ok: 'прошёл успешно', missed: 'пропущен: Mac спал или был выключен', error: 'сорвался из-за сбоя', timeout: 'остановлен: не уложился в отведённое время', quota: 'остановлен: кончился лимит подписки', network: 'не состоялся: не было связи с Claude (проверьте VPN и интернет)', locked: 'не запускался: шёл другой прогон' };
@@ -261,7 +262,7 @@ export function composeSummary(p, cfg, opts = {}) { return summaryData(p, cfg, o
 /**
  * Сводка и её части (0.12.0): html — текст для Telegram; остальное — те же данные по кускам, из них собирается ролик-сводка:
  * need — все пункты «Нужно от вас» (HTML), todo — только дела из отчётов и передачи смены, без одобрений и решений по спискам,
- * work — что команда делает дальше: [{ title, progress }], demos — образцы «как это выглядит» завершённых за период и идущих изменений, planning — взяты ли пункты, по которым ещё нет плана, plain — пересказы прогонов, runStats — { статус: сколько }, changes — строки изменений, next — следующий прогон.
+ * work — что команда делает дальше: [{ title, progress }], demos — образцы «как это выглядит» завершённых за период и идущих изменений (у идущих — ahead: true), done — всё завершённое за период по убыванию заметности для пользователя: [{ title, benefit, sample, visible }], planning — взяты ли пункты, по которым ещё нет плана, plain — пересказы прогонов, runStats — { статус: сколько }, changes — строки изменений, next — следующий прогон.
  */
 export function summaryData(p, cfg, { now = new Date(), since = null } = {}) {
   const records = readMetrics(p);
@@ -363,10 +364,17 @@ export function summaryData(p, cfg, { now = new Date(), since = null } = {}) {
   if (day && (!since || shiftTime(day) > since) && /\(источник: авто\)/.test(readText(day.path, '').split('\n')[0])) L.push('⚠️ смену не сдали — ночь шла по авто-передаче');
 
   // 0.9.0: отчёты «Сделано» и метрики в Telegram не идут — они в techTail (терминал) и в файлах проекта.
-  const demos = [...archivedSince(p.openspecChanges, since), ...work].flatMap((c) => proposalSamples(c).filter((x) => x.text || x.buttons.length).map((x) => ({ change: changeTitle(p, c), ...x })));
+  const archived = archivedSince(p.openspecChanges, since);
+  const samplesOf = (c, extra = {}) => proposalSamples(c).filter((x) => x.text || x.buttons.length).map((x) => ({ change: changeTitle(p, c), ...x, ...extra }));
+  // ahead — образец изменения, которое ещё в работе: в ролике это «впереди», а не «сделано»
+  const demos = [...archived.flatMap((c) => samplesOf(c)), ...work.flatMap((c) => samplesOf(c, { ahead: true }))];
+  // 0.15.2: всё завершённое за период — для ролика, по убыванию заметности для пользователя: сначала видимые возможности
+  // (visible), внутри — заказанные владельцем и крупные. Что не влезло в ролик, остаётся в тексте сводки.
+  const finished = closedItems(p, archived, ideaList).sort((a, b) => (Number(b.notable) - Number(a.notable)) || (b.weight - a.weight))
+    .map(({ notable, weight: _w, ...x }) => ({ ...x, visible: notable }));
   const statusCount = {};
   for (const st of [...runs.map((r) => r.status), ...expected.map(() => 'missed')]) statusCount[st] = (statusCount[st] || 0) + 1;
-  return { html: L.join('\n'), need: [...need, ...fromText], todo: fromText, work: work.map((c) => ({ title: changeTitle(p, c), progress: progress(c) })), planning: !!ideasBrief(p, cfg)?.taken?.length, demos, plain: plainRuns.map(({ r, text }) => ({ slot: r.slot || hhmm(new Date(r.started_at)), text })), runStats: statusCount, running: live.length > 0, changes: ch, next };
+  return { html: L.join('\n'), need: [...need, ...fromText], todo: fromText, work: work.map((c) => ({ title: changeTitle(p, c), progress: progress(c) })), planning: !!ideasBrief(p, cfg)?.taken?.length, demos, done: finished, plain: plainRuns.map(({ r, text }) => ({ slot: r.slot || hhmm(new Date(r.started_at)), text })), runStats: statusCount, running: live.length > 0, changes: ch, next };
 }
 
 /**

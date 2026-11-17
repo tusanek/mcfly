@@ -33,7 +33,7 @@ export async function runAgent(cfg, { agent, prompt, cwd, timeoutMs, run = runPr
 }
 
 /** Есть ли о чём рассказывать: в пустую ночь режиссёр не нужен. */
-const worthDirecting = (data, weekly) => (weekly ? (data?.features || []).length > 0 : (data?.plain || []).length > 0 || (data?.demos || []).length > 0);
+const worthDirecting = (data, weekly) => (weekly ? (data?.features || []).length > 0 : (data?.plain || []).length > 0 || (data?.demos || []).length > 0 || (data?.done || []).length > 0);
 
 /** Рабочая папка запуска: данные без разметки сообщений, запасные сцены, памятка. Старые папки — кроме последних восьми — удаляются. */
 function prepareWork(cfg, { data, baseScenes, now, vp }) {
@@ -42,6 +42,9 @@ function prepareWork(cfg, { data, baseScenes, now, vp }) {
   let dir = path.join(root, stamp); for (let n = 2; fs.existsSync(dir); n += 1) dir = path.join(root, `${stamp}-${n}`);
   ensureDir(dir);
   const { html: _h, keyboard: _k, ...rest } = data;
+  // Утренние данные: у завершённых изменений образец уже лежит в done, поэтому отдельным списком идут только образцы того,
+  // что ещё в работе, — иначе данные раздуваются вдвое, а режиссёр путает сделанное с будущим
+  if (Array.isArray(rest.done) && Array.isArray(rest.demos)) rest.demos = rest.demos.filter((d) => d.ahead);
   writeJson(path.join(dir, 'data.json'), rest);
   writeJson(path.join(dir, 'base.json'), baseScenes.map(({ key: _key, hold: _hold, ...s }) => s));
   fs.copyFileSync(path.join(MCFLY_ROOT, 'prompts', 'video-guide.md'), path.join(dir, 'GUIDE.md'));
