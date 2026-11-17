@@ -5,11 +5,12 @@ import { speakable } from './speech.js';
 
 export const SCENE_KINDS = ['text', 'chat', 'hook', 'number', 'compare', 'steps', 'finale'];
 export const SCENE_ENTER = ['up', 'left', 'scale', 'fade'];
-export const CHARS_PER_SECOND = 14; // темп диктора при скорости 1
+export const CHARS_PER_SECOND = 19; // темп диктора при скорости 1 — по замерам готовых роликов (0.15.3; раньше считали 14 и недобирали длину)
 export const SCENE_GAP = 0.4; // секунд между сценами: хвост после речи и задержка голоса
 const SCREEN_LIMIT = { text: 420, chat: 120, hook: 160, finale: 200, number: 160, compare: 120, steps: 420 };
 const SCREEN_PER_SPEECH = 1.5; // знаков на экране на знак речи: больше — не успеть прочитать, пока говорит диктор
-const CHAT_SPEECH_MIN = 56; // речь к экрану чата — около четырёх секунд
+const CHAT_SPEECH_MIN = 76; // речь к экрану чата — около четырёх секунд
+const FILL = 0.75; // есть что показать — ролик не короче этой доли отведённой длины
 // Оформление (необязательно): что из этого рисует шаблон — см. video/src/Daily.jsx и Weekly.jsx
 export const SCENE_ACCENTS = ['amber', 'mint', 'sky', 'coral', 'violet'];
 export const SCENE_STYLES = ['note', 'bubbles', 'checks'];
@@ -92,6 +93,10 @@ export function checkStoryboard(raw, data, cfg, { weekly = false } = {}) {
   const limit = weekly ? cfg.video.weekly_max_seconds : cfg.video.max_seconds;
   const seconds = Math.round(chars / (CHARS_PER_SECOND * speed) + scenes.length * SCENE_GAP);
   if (seconds > limit * 1.1) errors.push(`текста диктора на ~${seconds} с, лимит ролика ${limit} с — сократите`);
+  // Заметного больше, чем показано, а ролик короткий — время пропадает зря: добавить следующие по приоритету пункты
+  const shown = scenes.filter((s) => isObj(s) && s.kind !== 'hook' && s.kind !== 'finale').length;
+  const have = weekly ? (data?.features || []).length : (data?.done || []).filter((d) => d?.visible).length;
+  if (!errors.length && seconds < limit * FILL && have > shown) errors.push(`ролик на ~${seconds} с при отведённых ${limit} с, а заметных пунктов в данных ${have}: добавьте следующие по приоритету, пока ролик не займёт хотя бы ${Math.round(limit * FILL)} с`);
   return errors;
 }
 

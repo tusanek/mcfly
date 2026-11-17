@@ -66,17 +66,17 @@ test('в данных нет образцов — любая сцена чата
   assert.match(checkStoryboard(GOOD, { ...DATA, demos: [] }, cfg).join('\n'), /не из образцов/);
 });
 test('длина: речи больше лимита ролика', () => {
-  bad((s) => { s[0].speech = 'Очень длинная речь диктора. '.repeat(40); return s; }, /лимит ролика/);
+  bad((s) => { s[0].speech = 'Очень длинная речь диктора. '.repeat(60); return s; }, /лимит ролика/);
 });
 test('темп: экрана больше полутора длин речи', () => {
   bad((s) => { s[0].lines = ['Длинная строка на экране, которую не успеть прочитать.']; s[0].speech = 'Коротко сказал.'; return s; }, /мало речи/);
 });
-test('темп: речь к экрану чата короче 56 знаков', () => {
+test('темп: речь к экрану чата короче четырёх секунд (76 знаков)', () => {
   bad((s) => { s[1].speech = 'Вот так выглядит список.'; return s; }, /мало речи/);
 });
 test('недельный ролик: образцы из features[].sample, лимит — weekly_max_seconds', () => {
   assert.deepEqual(checkStoryboard(GOOD, WEEKLY_DATA, cfg, { weekly: true }), []);
-  const long = [...GOOD.slice(0, 3), ...Array.from({ length: 8 }, () => ({ kind: 'text', title: 'Ещё', lines: [], speech: 'Довольно длинная фраза диктора про ещё одну новую возможность продукта, которую сделали за неделю.' })), GOOD[3]];
+  const long = [...GOOD.slice(0, 3), ...Array.from({ length: 12 }, () => ({ kind: 'text', title: 'Ещё', lines: [], speech: 'Довольно длинная фраза диктора про ещё одну новую возможность продукта, которую сделали за неделю.' })), GOOD[3]];
   assert.match(checkStoryboard(long, DATA, cfg).join('\n'), /лимит ролика/); // утром не влезает
   assert.deepEqual(checkStoryboard(long, WEEKLY_DATA, cfg, { weekly: true }), []);
 });
@@ -119,4 +119,18 @@ test('applyRemarks: исправленное «было — стало» или 
 test('пустое сообщение в чате и нецелая или пустая цифра — нарушения', () => {
   bad((s) => { s[1].chat = { text: '  ', buttons: [] }; return s; }, /chat/);
   for (const value of [null, '', 2.5, -1]) bad((s) => { s[2].number.value = value; return s; }, /number/);
+});
+
+test('0.15.3 длина: заметного в данных больше, чем показано, а ролик короче трёх четвертей лимита — нарушение с подсказкой', () => {
+  const many = { ...DATA, done: Array.from({ length: 9 }, (_, i) => ({ title: `Возможность ${i}`, benefit: 'польза', visible: i < 7, sample: null })) };
+  assert.match(checkStoryboard(GOOD, many, cfg).join('\n'), /заметных пунктов в данных 7: добавьте следующие по приоритету/);
+  assert.deepEqual(checkStoryboard(GOOD, { ...DATA, done: many.done.slice(0, 2) }, cfg), []); // показано столько же, сколько есть, — короткий ролик законен
+  assert.deepEqual(checkStoryboard(GOOD, { ...DATA, done: many.done.map((d) => ({ ...d, visible: false })) }, cfg), []); // незаметное добирать не требуем
+  const full = [...GOOD.slice(0, 3), ...Array.from({ length: 9 }, () => ({ kind: 'text', title: 'Ещё', lines: [], speech: 'Довольно длинная фраза диктора про ещё одну новую возможность продукта, которую сделали за сутки.' })), GOOD[3]];
+  assert.deepEqual(checkStoryboard(full, many, cfg), []); // ролик занял отведённое время
+  assert.match(checkStoryboard(GOOD, { features: Array.from({ length: 8 }, () => ({ title: 'x', benefit: 'y', sample: { text: SAMPLE.text, buttons: SAMPLE.buttons } })) }, cfg, { weekly: true }).join('\n'), /добавьте следующие/);
+});
+test('0.15.3 темп диктора по замерам: 1100 знаков речи — около минуты, в лимит 60 с помещается', () => {
+  const minute = [GOOD[0], ...Array.from({ length: 10 }, () => ({ kind: 'text', title: 'Ещё', lines: [], speech: 'x'.repeat(0) + 'Довольно длинная фраза диктора про ещё одну новую возможность продукта, сделанную за сутки.' })), GOOD[3]];
+  assert.deepEqual(checkStoryboard(minute, DATA, cfg), []);
 });
