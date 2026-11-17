@@ -224,3 +224,16 @@ test('0.16.1: approval request сохраняет отпечаток; добав
   assert.match(fs.readFileSync(p.answers, 'utf8'), /quiet возвращено на одобрение владельца\nплан изменился после быстрого одобрения/);
   assert.match(fs.readFileSync(path.join(p.runs, fs.readdirSync(p.runs)[0], 'prompt.md'), 'utf8'), /Ожидают одобрения \(1\)/);
 });
+
+test('0.16.2: approval check — отказ для неодобренного и для изменённого быстрого плана (с возвратом владельцу)', () => {
+  const dir = bareProject(); const p = paths(dir);
+  const cdir = addChange(dir, 'quiet', { proposal: QUIET }); addChange(dir, 'wait', { meta: pending() });
+  approveFast(listChanges(p.openspecChanges).find((c) => c.name === 'quiet'));
+  const inRun = { MCFLY_RUN_ID: 'r' };
+  assert.equal(cli(['approval', 'check', 'quiet'], dir, inRun).status, 0);
+  assert.match(cli(['approval', 'check', 'wait'], dir, inRun).stderr, /не одобрено/);
+  fs.appendFileSync(path.join(cdir, 'tasks.md'), '- [ ] ещё одна\n');
+  const r = cli(['approval', 'check', 'quiet'], dir, inRun);
+  assert.equal(r.status, 1); assert.match(r.stderr, /план изменился после быстрого одобрения/);
+  assert.equal(listChanges(p.openspecChanges).find((c) => c.name === 'quiet').mcfly.approval, 'pending');
+});

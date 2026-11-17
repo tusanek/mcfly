@@ -435,9 +435,14 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
         dirty ? `незакоммиченных файлов: ${dirty}` : '', unfinished.length ? `незакоммиченная работа в worktree: ${unfinished.map(describeWorktree).join(', ')}` : ''].filter(Boolean).join('; '),
     };
     // 0.16.1: план, изменённый в прогоне после быстрого одобрения, — на одобрение владельца (до решения о цепочке и до итога)
-    for (const c of recheckFast(listChanges(p.openspecChanges))) appendText(p.answers, `\n## ${fmtLocal(new Date())} — ${c.name} возвращено на одобрение владельца\nплан изменился после быстрого одобрения\n`);
+    const heldFast = recheckFast(listChanges(p.openspecChanges));
+    for (const c of heldFast) appendText(p.answers, `\n## ${fmtLocal(new Date())} — ${c.name} возвращено на одобрение владельца\nплан изменился после быстрого одобрения\n`);
+    // то же для уже завершённых в этом прогоне: вернуть нечего, но цепочку останавливаем и помечаем в итоге
+    const alteredDone = archivedSince(p.openspecChanges, started).filter((c) => c.mcfly.by === 'fast' && !fastPlanIntact(c)).map((c) => c.name);
     // Цепочка: решение до записи — причина попадает в журнал и итог прогона.
-    const chain = chainDecision({ cfg, p, record, projectDir, started });
+    const altered = [...heldFast.map((c) => c.name), ...alteredDone];
+    if (altered.length) record.fast_altered = altered;
+    const chain = altered.length && cfg.run.chain_max_weekly > 0 ? { chain: false, reason: 'план менялся после быстрого одобрения — нужен ваш взгляд' } : chainDecision({ cfg, p, record, projectDir, started });
     if (chain.reason) record.chain = chain.chain ? 'следующий прогон запущен сразу' : `прогон подряд не запущен: ${chain.reason}`;
     // До записи прогона: отмеченные в целях пункты попадают в запись и в итог.
     const ideaInfo = {}; finishIdeas(p, cfg, ideaInfo);

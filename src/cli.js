@@ -13,7 +13,7 @@ import { pullAnswers, pollAnswers } from './pull.js';
 import { buildContext, isMcflyProject, hasProduct } from './context.js';
 import { loadQuestions, saveQuestions, addQuestion, expireQuestions, openQuestions } from './questions.js';
 import { branchProgress, commitPaths } from './git.js';
-import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, approveFast, priorityOf } from './approvals.js';
+import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, approveFast, fastPlanIntact, priorityOf } from './approvals.js';
 import { appendMetric, readMetrics, aggregate, formatEvents } from './metrics.js';
 import { createTelegram, extractMessages } from './telegram.js';
 import * as schedule from './schedule.js';
@@ -47,6 +47,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
                                                   отложить одобренное изменение до даты (команда не берёт) / вернуть в работу
   approval first <изменение>                      изменение — первым в очереди (в прогоне запрещено)
   approval hold <изменение> [--note <t>]          вернуть на одобрение владельца план, одобренный быстрым путём (можно в прогоне)
+  approval check <изменение>                      одобрено ли изменение и не менялся ли план после быстрого одобрения (перед слиянием)
   approval list
   shift start <изменение> | shift merge           дневная работа в ветке shift/<изменение>-… и её слияние в change/<изменение>
   shift write [--file <путь>] | shift auto [--kind day|night]   записать передачу смены / показать авто-передачу
@@ -260,6 +261,16 @@ export async function main(argv) {
         if (runIdEnv) { console.error('Порядок очереди задаёт владелец: в прогоне команды approval first запрещён.'); return 1; }
         const r = moveFirst(changes, c.name); if (r.error) { console.error(`${c.name}: ${r.error}`); return 1; }
         log(`${c.name}: первым в очереди (приоритет ${priorityOf(c)})`); return commitMeta(`chore(${c.name}): первым в очереди`);
+      }
+      if (sub === 'check') {
+        // 0.16.2: перед реализацией и перед слиянием — одобрено ли изменение и не менялся ли план после быстрого одобрения
+        if (isFastApproved(c) && !fastPlanIntact(c)) {
+          holdApproval(c, 'план изменился после быстрого одобрения', now);
+          appendText(p.answers, `\n## ${fmtLocal(now)} — ${c.name} возвращено на одобрение владельца\nплан изменился после быстрого одобрения\n`);
+          console.error(`${c.name}: план изменился после быстрого одобрения — возвращено на одобрение владельца. Не реализуйте и не сливайте его.`); return 1;
+        }
+        if (c.mcfly.approval !== 'approved') { console.error(`${c.name}: не одобрено (${c.mcfly.approval || 'не запрошено'}) — не реализуйте и не сливайте его.`); return 1; }
+        log(`${c.name}: одобрено, план не менялся.`); return 0;
       }
       if (sub === 'hold') {
         // 0.16.0: страховка быстрого пути — команда может только ужесточить: вернуть план на одобрение владельца
