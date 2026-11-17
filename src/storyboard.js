@@ -24,9 +24,9 @@ const str = (x) => typeof x === 'string';
 /** Список сцен из того, что написал режиссёр: сам список или { scenes }. */
 export const sceneList = (raw) => (Array.isArray(raw) ? raw : isObj(raw) && Array.isArray(raw.scenes) ? raw.scenes : null);
 
-/** Образцы экрана чата в данных сводки: утром — demos, в недельной — features[].sample. */
+/** Образцы экрана чата в данных сводки: утром — demos и done[].sample, в недельной — features[].sample. */
 function samples(data, weekly) {
-  const list = weekly ? (data?.features || []).map((f) => f?.sample).filter(Boolean) : (data?.demos || []);
+  const list = weekly ? (data?.features || []).map((f) => f?.sample).filter(Boolean) : [...(data?.demos || []), ...(data?.done || []).map((d) => d?.sample).filter(Boolean)];
   return {
     lines: new Set(list.flatMap((s) => String(s?.text ?? '').split('\n').map(norm)).filter(Boolean)),
     buttons: new Set(list.flatMap((s) => (Array.isArray(s?.buttons) ? s.buttons.flat() : [])).map(norm)),

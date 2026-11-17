@@ -220,3 +220,18 @@ test('directScenes: ответ зрителя не разобрался — ст
   const r = await direct(s, 'review', scripted([writes(GOOD), says('Кадры [01.png] хорошие, но [{"scene": 1, оборвано')]).agent, { log: (l) => lines.push(l) });
   assert.equal(r.source, 'director'); assert.match(lines.join('\n'), /ответ зрителя не разобран/); assert.match(fs.readFileSync(path.join(r.workDir, 'viewer.txt'), 'utf8'), /оборвано/);
 });
+
+test('0.15.2 данные режиссёру: при списке done отдельно идут только образцы того, что ещё в работе; образец из done годится для сцены чата', async () => {
+  const s = setup(); const { agent } = scripted([writes(GOOD)]);
+  const data = { plain: [], demos: [{ change: 'готовое', title: 'а', text: 'Сделано', buttons: [] }, { change: 'будущее', title: 'б', text: 'Впереди', buttons: [], ahead: true }], done: [{ title: 'Повторы', benefit: 'удобно', visible: true, sample: { text: SAMPLE.text, buttons: SAMPLE.buttons } }] };
+  const r = await directScenes(s.p, s.c, { data, baseScenes: BASE, now: NOW, mode: 'on', vp: s.vp, agent, stills });
+  assert.equal(r.source, 'director'); // чат GOOD взят из done[0].sample
+  const written = JSON.parse(fs.readFileSync(path.join(r.workDir, 'data.json'), 'utf8'));
+  assert.deepEqual(written.demos.map((d) => d.change), ['будущее']); assert.equal(written.done.length, 1);
+});
+
+test('0.15.2 пустые пересказы, но есть завершённое — режиссёр запускается', async () => {
+  const s = setup(); const { agent, calls } = scripted([writes(GOOD)]);
+  await directScenes(s.p, s.c, { data: { plain: [], demos: [], done: [{ title: 'Повторы', benefit: '', visible: true, sample: { text: SAMPLE.text, buttons: SAMPLE.buttons } }] }, baseScenes: BASE, now: NOW, mode: 'on', vp: s.vp, agent, stills });
+  assert.equal(calls.length, 1);
+});
