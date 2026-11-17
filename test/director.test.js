@@ -102,7 +102,7 @@ test('mode review: зритель ответил прозой или пусты�
 
 test('mode review: правка не принята или зритель упал — раскадровка до правки без сцен с выдумкой', async () => {
   const fact = says('[{"scene":3,"kind":"fact","problem":"п","fix":"ф"}]');
-  let s = setup(); let r = await direct(s, 'review', scripted([writes(GOOD), fact, writes(BAD)]).agent);
+  let s = setup(); let r = await direct(s, 'review', scripted([writes(GOOD), fact, writes(BAD), writes(BAD)]).agent);
   assert.equal(r.source, 'director'); assert.deepEqual(r.scenes.map((x) => x.title), [GOOD[0].title, GOOD[1].title, GOOD[3].title]);
   s = setup(); r = await direct(s, 'review', scripted([writes(GOOD), fact, () => ({ ok: false, reason: 'quota: лимит' })]).agent);
   assert.equal(r.source, 'director'); assert.equal(r.scenes.length, 3);
@@ -110,6 +110,17 @@ test('mode review: правка не принята или зритель упа
   assert.equal(r.source, 'director'); assert.equal(r.scenes.length, 4);
   s = setup(); r = await direct(s, 'review', scripted([writes(GOOD)]).agent, { stills: async () => { throw new Error('кадры не собрались'); } });
   assert.equal(r.source, 'director'); assert.equal(r.scenes.length, 4);
+});
+
+test('mode review: правка с нарушениями — одна попытка исправить; принята — идёт в ролик, нет — отвергнутая сохранена для разбора', async () => {
+  const view = says('[{"scene":1,"kind":"view","problem":"п","fix":"ф"}]'); const better = GOOD.map((x, i) => (i === 0 ? { ...x, title: 'Повторы под присмотром' } : x));
+  let s = setup(); let sc = scripted([writes(GOOD), view, writes(BAD), writes(better)]);
+  let r = await direct(s, 'review', sc.agent);
+  assert.equal(r.source, 'review'); assert.equal(sc.calls.length, 4); assert.match(sc.calls[3].prompt, /номера пунктов/); assert.equal(r.scenes[0].title, 'Повторы под присмотром');
+  s = setup(); sc = scripted([writes(GOOD), view, writes(BAD), writes(BAD)]); const lines = [];
+  r = await direct(s, 'review', sc.agent, { log: (l) => lines.push(l) });
+  assert.equal(r.source, 'director'); assert.equal(r.scenes[0].title, GOOD[0].title); assert.match(lines.join('\n'), /не принята проверкой: сцена 1/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(r.workDir, 'storyboard.rejected.json'), 'utf8'))[0].title, 'Пункт I22 готов');
 });
 
 test('mode review: после вырезания выдумок осталось две сцены — запасные', async () => {

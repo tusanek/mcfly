@@ -92,8 +92,14 @@ export async function directScenes(p, cfg, { data, baseScenes, weekly = false, n
       if (!remarks.length) return done(first, 'director');
       writeJson(path.join(workDir, 'remarks.json'), remarks);
       await call(DIRECTOR, 'Зритель посмотрел ролик и оставил замечания в remarks.json (scene — номер сцены, kind: fact — утверждение не подтверждается данными). Исправь по существу и запиши storyboard.json заново, целиком.');
-      const after = read();
-      if (check(after).length === 0) revised = sceneList(after); else trouble = 'правка по замечаниям зрителя не принята проверкой';
+      let after = read(); let bad = check(after);
+      if (bad.length) { // как и первой раскадровке — одна попытка исправить нарушения, иначе работа зрителя пропадает из-за мелочи
+        fs.writeFileSync(path.join(workDir, 'violations.txt'), `${bad.join('\n')}\n`);
+        await call(DIRECTOR, `Исправленная раскадровка не принята проверкой. Нарушения — в violations.txt:\n- ${bad.slice(0, 12).join('\n- ')}\nИсправь и запиши storyboard.json заново, целиком.`);
+        after = read(); bad = check(after);
+      }
+      if (bad.length === 0) revised = sceneList(after);
+      else { trouble = `правка по замечаниям зрителя не принята проверкой: ${bad[0]}`; if (after !== undefined) writeJson(path.join(workDir, 'storyboard.rejected.json'), after); }
     } catch (e) { trouble = `круг зрителя не состоялся: ${String(e?.message || e).slice(0, 200)}`; }
     if (trouble) log(`Режиссёр ролика: ${trouble} — остаётся раскадровка до правки.`);
     const final = applyRemarks(first, revised, remarks);
