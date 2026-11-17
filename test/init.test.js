@@ -51,3 +51,21 @@ test('0.7.0: init создаёт ideas.yaml и раздел ideas в config', ()
   assert.match(conf, /^ideas:\n  enabled: true/m); assert.match(conf, /backlog: ""/);
   assert.equal(parseConfig(conf).ideas.per_run, 2);
 });
+
+test('0.15.7: повторный init без имени берёт проект из настроек, а не из названия папки', () => {
+  const dir = tmpDir();
+  init({ projectDir: dir, name: 'my-project', skipOpenspec: true, log: () => {} });
+  const logs = []; init({ projectDir: dir, skipOpenspec: true, log: (s) => logs.push(s) });
+  assert.match(fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'), /Проект my-project разрабатывает/);
+  assert.match(logs[0], /\(проект my-project\)/);
+});
+test('0.15.7: повторный init не перечисляет неизменённые файлы и не печатает подсказку первой установки', () => {
+  const dir = tmpDir();
+  const first = []; init({ projectDir: dir, name: 'demo', skipOpenspec: true, log: (s) => first.push(s) });
+  assert.ok(first.some((l) => /впишите токен бота/.test(l)), 'первая установка — полная подсказка');
+  fs.writeFileSync(path.join(dir, 'mcfly', '.env'), 'X=1\n');
+  const again = []; const r = init({ projectDir: dir, skipOpenspec: true, log: (s) => again.push(s) });
+  assert.deepEqual(r.created, []);
+  assert.ok(!again.some((l) => /впишите токен бота/.test(l)), again.join('\n'));
+  assert.ok(again.some((l) => /^Дальше: mcfly doctor/.test(l)), again.join('\n'));
+});

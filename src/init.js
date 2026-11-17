@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { MCFLY_ROOT } from './prompt.js';
 import { paths } from './state.js';
 import { ensureDir, exists, readText, writeText, appendText } from './util.js';
+import { loadConfig } from './config.js';
 
 const MARK_START = '<!-- mcfly:start -->', MARK_END = '<!-- mcfly:end -->';
 
@@ -45,7 +46,11 @@ export function mainBranchIssue(projectDir) {
 export function init({ projectDir, name, withTracker = false, skipOpenspec = false, log = console.log }) {
   const p = paths(projectDir);
   const tpl = (f) => readText(path.join(MCFLY_ROOT, 'templates', f));
-  const project = name || path.basename(projectDir);
+  // 0.15.7: повторный init без --name берёт имя из настроек проекта — раньше подставлял название папки в блок CLAUDE.md
+  let configured = '';
+  if (exists(p.config)) { try { configured = String(loadConfig(p.config).project || ''); } catch { configured = ''; } }
+  const project = name || configured || path.basename(projectDir);
+  const firstTime = !exists(p.env); // секреты ещё не вписаны — владельцу нужна полная подсказка
   const created = [];
   const put = (file, content) => { if (exists(file)) return; writeText(file, content); created.push(path.relative(projectDir, file)); };
   ensureDir(p.runs); ensureDir(p.logs); ensureDir(p.shifts);
@@ -61,11 +66,11 @@ export function init({ projectDir, name, withTracker = false, skipOpenspec = fal
   put(path.join(p.root, '.env.example'), tpl('env.example'));
   const settingsPath = path.join(projectDir, '.claude', 'settings.json');
   const existing = exists(settingsPath) ? (JSON.parse(readText(settingsPath, '{}') || '{}')) : {};
-  writeText(settingsPath, JSON.stringify(mergeSettings(existing, JSON.parse(tpl('settings.json'))), null, 2) + '\n');
-  created.push('.claude/settings.json');
+  // 0.15.7: файл попадает в список, только если его содержимое изменилось
+  const update = (file, content) => { if (readText(file, null) === content) return; writeText(file, content); created.push(path.relative(projectDir, file)); };
+  update(settingsPath, JSON.stringify(mergeSettings(existing, JSON.parse(tpl('settings.json'))), null, 2) + '\n');
   const claudeMd = path.join(projectDir, 'CLAUDE.md');
-  writeText(claudeMd, upsertSection(readText(claudeMd, ''), tpl('CLAUDE.snippet.md').replaceAll('{{PROJECT}}', project)));
-  created.push('CLAUDE.md');
+  update(claudeMd, upsertSection(readText(claudeMd, ''), tpl('CLAUDE.snippet.md').replaceAll('{{PROJECT}}', project)));
   if (withTracker) put(path.join(projectDir, '.mcp.json'), tpl('mcp.tracker.json'));
   ensureGitignore(projectDir, GITIGNORE_ENTRIES);
   let openspec = 'пропущено';
@@ -76,11 +81,12 @@ export function init({ projectDir, name, withTracker = false, skipOpenspec = fal
   }
   log(`mcfly инициализирован в ${projectDir} (проект ${project}).`);
   for (const f of created) log(`  + ${f}`);
+  if (!created.length) log('  файлы без изменений');
   log(`OpenSpec: ${openspec}`);
   // 0.11.0: процесс команды ждёт ветку main (ветки изменений создаются от неё) — `git init` мог создать master
   const branch = mainBranchIssue(projectDir);
   if (branch) log(`⚠ ${branch}`);
   // schedule install — сразу после привязки чата: без задания answers бот не отвечает на кнопки и сообщения
-  log('Дальше: cp mcfly/.env.example mcfly/.env (впишите токен бота) → mcfly telegram pair → mcfly schedule install (без него бот не отвечает на кнопки) → mcfly doctor');
+  log(!firstTime ? 'Дальше: mcfly doctor — проверить, что всё на месте' : 'Дальше: cp mcfly/.env.example mcfly/.env (впишите токен бота) → mcfly telegram pair → mcfly schedule install (без него бот не отвечает на кнопки) → mcfly doctor');
   return { created, openspec, branch };
 }
