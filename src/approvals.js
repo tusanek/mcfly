@@ -35,8 +35,8 @@ function writeMeta(change, mcfly) {
   change.meta = meta; change.mcfly = mcfly;
   return change;
 }
-export function requestApproval(change, { category = 'spec', priority, now = new Date(), idea } = {}) {
-  return writeMeta(change, { ...change.mcfly, approval: 'pending', category, ...(priority != null ? { priority: Number(priority) } : {}), ...(idea ? { idea } : {}), requested_at: now.toISOString(), decided_at: '', by: '', note: '' });
+export function requestApproval(change, { category = 'spec', priority, now = new Date(), idea, ideas = [] } = {}) {
+  return writeMeta(change, { ...change.mcfly, approval: 'pending', category, ...(priority != null ? { priority: Number(priority) } : {}), ...(idea ? { idea } : {}), ...(ideas.length > 1 ? { ideas } : {}), requested_at: now.toISOString(), decided_at: '', by: '', note: '' });
 }
 export function setApproval(change, status, by, note = '', now = new Date(), { priority } = {}) {
   return writeMeta(change, { ...change.mcfly, approval: status, ...(priority != null ? { priority: Number(priority) } : {}), decided_at: now.toISOString(), by, note });
