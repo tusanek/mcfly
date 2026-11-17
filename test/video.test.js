@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import path from 'node:path';
-import { projectSlug, summaryScenes, videoPaths, videoProblems, buildVideo, sendSummaryVideo, pruneVideos, runTool } from '../src/video.js';
+import { makeSummaryVideo, projectSlug, summaryScenes, videoPaths, videoProblems, buildVideo, renderStills, sendSummaryVideo, pruneVideos, runTool } from '../src/video.js';
 import { summaryData, sendSummary } from '../src/summary.js';
 import { parseConfig } from '../src/config.js';
 import { createTelegram } from '../src/telegram.js';
@@ -22,6 +22,8 @@ const DATA = {
   runStats: { ok: 2 }, running: false, changes: [], next: 'команда продолжит I22 (сделано 0 из 6 шагов)',
   work: [{ title: 'I22 «Напоминания за 15 минут»', progress: 'сделано 0 из 6 шагов' }], planning: false, demos: [SAMPLE],
 };
+/** Без режиссёра: сцены из кода, настоящий claude в тестах не запускается. */
+const noDirector = async (_p, _c, o) => ({ scenes: o.baseScenes, source: 'fallback', reason: '', workDir: null });
 const all = (scenes) => scenes.map((s) => [s.title, ...s.lines, s.speech].join(' ')).join(' ');
 
 /** Установленное окружение роликов в подставной папке. */
@@ -34,10 +36,17 @@ function fakeHome() {
 }
 /** Подставной запуск: «озвучка» пишет длительности, «сборка» — файл ролика. */
 const fakeRun = (calls = []) => async (bin, args, opts) => {
-  calls.push({ bin, args, opts });
+  const call = { bin, args, opts }; calls.push(call);
   if (opts.label === 'озвучка') fs.writeFileSync(args[4], JSON.stringify(Object.fromEntries(Object.keys(JSON.parse(fs.readFileSync(args[2], 'utf8'))).map((k) => [k, 2]))));
-  else fs.writeFileSync(args[4], 'mp4');
+  else if (args[1] === 'still') fs.writeFileSync(args[4], 'png');
+  else if (opts.label === 'сборка ролика') { call.props = JSON.parse(fs.readFileSync(args.find((a) => a.startsWith('--props=')).slice(8), 'utf8')); fs.writeFileSync(args[4], 'mp4'); }
 };
+/** Свойства, с которыми собран ролик из этих сцен. */
+async function builtProps(scenes, video = {}) {
+  const calls = [];
+  await buildVideo({ ...cfg, video: { ...cfg.video, ...video } }, { scenes, name: 'props-test', now: NOW, run: fakeRun(calls), vp: fakeHome() });
+  return calls.find((c) => c.props).props;
+}
 
 test('summaryScenes: главное — что сделано и как это выглядит; диктору — только русские слова', () => {
   const scenes = summaryScenes(DATA, cfg, { now: NOW });
@@ -81,12 +90,12 @@ test('демонстрация: образец изменения — сцена
   assert.equal(demo.kind, 'chat');
   assert.deepEqual(demo.chat, { text: SAMPLE.text, buttons: [['Убрать 1', 'Вернуть']] });
   assert.deepEqual(demo.lines, ['Ты нажал «Убрать 2»']);
-  assert.equal(demo.speech, 'Вот как это выглядит.');
+  assert.equal(demo.speech, 'Вот пример. Ты нажал «Убрать два».');
   assert.ok(demo.hold >= 3.5);
   // два изменения — по главному образцу от каждого; одно — два его первых образца
   const two = summaryScenes({ ...DATA, demos: [SAMPLE, { ...SAMPLE, title: 'второй' }, { ...SAMPLE, change: 'другое', title: 'из другого' }] }, cfg, { now: NOW }).filter((s) => s.kind === 'chat');
   assert.deepEqual(two.map((s) => s.lines[0]), ['Ты нажал «Убрать 2»', 'из другого']);
-  assert.equal(two[1].speech, 'И ещё один пример.');
+  assert.equal(two[1].speech, 'И ещё пример. Из другого.');
   const one = summaryScenes({ ...DATA, demos: [SAMPLE, { ...SAMPLE, title: 'второй' }, { ...SAMPLE, title: 'третий' }] }, cfg, { now: NOW }).filter((s) => s.kind === 'chat');
   assert.deepEqual(one.map((s) => s.lines[0]), ['Ты нажал «Убрать 2»', 'второй']);
 });
@@ -138,12 +147,13 @@ test('buildVideo: озвучка → длительности → сборка; 
   assert.equal(r.file, path.join(vp.out, 'summary-test.mp4'));
   assert.ok(fs.existsSync(r.file));
   assert.ok(r.seconds >= 10);
-  assert.deepEqual(calls.map((c) => c.opts.label), ['озвучка', 'сборка ролика']);
+  assert.deepEqual(calls.map((c) => c.opts.label), ['озвучка', 'ускорение голоса', 'сборка ролика']);
+  assert.ok(calls[1].args.includes('atempo=1.1'));
   assert.equal(calls[0].args[0], '-I'); // питон без подхвата модулей из текущей папки
   assert.equal(calls[0].args[5], 'eugene');
-  assert.ok(calls[1].args.some((a) => a.startsWith('--props=')));
+  assert.ok(calls[2].args.some((a) => a.startsWith('--props=')));
   assert.ok(!fs.existsSync(path.dirname(calls[0].args[2])), 'временная папка убрана');
-  assert.ok(fs.existsSync(path.join(vp.app, 'src', 'Summary.jsx')), 'шаблон ролика скопирован из комплекта');
+  assert.ok(fs.existsSync(path.join(vp.app, 'src', 'Daily.jsx')), 'шаблон ролика скопирован из комплекта');
 });
 
 test('buildVideo: нет окружения — понятная ошибка, ничего не запускается', async () => {
@@ -161,7 +171,7 @@ test('runTool: по истечении времени процесс убива�
 test('sendSummaryVideo: ролик уходит ответом на сводку с подписью', async () => {
   const p = paths(bareProject()); const sent = [];
   const tg = { sendVideo: async (chat, file, opts) => { sent.push({ chat, file, opts }); }, sendMessage: async () => assert.fail('сообщений о сбое быть не должно') };
-  const r = await sendSummaryVideo(p, { ...cfg, telegram: { ...cfg.telegram, chat_id: '7' } }, { data: DATA, tg, now: NOW, replyTo: 42, log: () => {}, build: async () => ({ file: '/tmp/x/summary.mp4', seconds: 57 }) });
+  const r = await sendSummaryVideo(p, { ...cfg, telegram: { ...cfg.telegram, chat_id: '7' } }, { data: DATA, tg, now: NOW, replyTo: 42, log: () => {}, direct: noDirector, build: async () => ({ file: '/tmp/x/summary.mp4', seconds: 57 }) });
   assert.equal(r.sent, true);
   assert.equal(sent[0].chat, '7');
   assert.equal(sent[0].opts.replyTo, 42);
@@ -171,7 +181,7 @@ test('sendSummaryVideo: ролик уходит ответом на сводку
 test('sendSummaryVideo: сбой сборки не бросает исключение; строка в чат — один раз в сутки', async () => {
   const p = paths(bareProject()); const msgs = []; const logs = [];
   const tg = { sendVideo: async () => {}, sendMessage: async (_c, t) => { msgs.push(t); } };
-  const opts = { data: DATA, tg, now: NOW, log: (s) => logs.push(s), build: async () => { throw new Error('сборка ролика: не уложилось в 600 с'); } };
+  const opts = { data: DATA, tg, now: NOW, log: (s) => logs.push(s), direct: noDirector, build: async () => { throw new Error('сборка ролика: не уложилось в 600 с'); } };
   const c = { ...cfg, telegram: { ...cfg.telegram, chat_id: '7' } };
   assert.deepEqual(await sendSummaryVideo(p, c, opts), { sent: false, error: 'сборка ролика: не уложилось в 600 с' });
   await sendSummaryVideo(p, c, opts);
@@ -248,4 +258,102 @@ test('doctor проверяет окружение ролика только п�
   const empty = videoPaths(cfg, { home: tmpDir('video-empty-') });
   const checks = doctor({ projectDir: dir, log: () => {}, power: null, video: (c) => videoProblems(c, { ...empty, python: '/нет/python', model: '/нет/model.pt' }) });
   assert.ok(checks.some((c) => !c.ok && /ролик-сводка: нет окружения озвучки/.test(c.label) && /mcfly video setup/.test(c.hint)));
+});
+
+test('0.15.0 настройки: voice_speed по умолчанию 1.1; вне 0.9–1.3 — ошибка называет поле', () => {
+  assert.equal(parseConfig('project: demo').video.voice_speed, 1.1);
+  assert.throws(() => parseConfig('project: demo\nvideo:\n  voice_speed: 2'), /video\.voice_speed/);
+});
+
+test('0.15.0 темп: сцена режиссёра (hold 0) длится как речь; сцена из кода — не дольше речи плюс 2 с', async () => {
+  const props = await builtProps([{ key: 's0', kind: 'text', title: 'а', lines: [], speech: 'р', hold: 0 }, { key: 's1', kind: 'chat', title: 'б', lines: [], speech: 'р', hold: 9, chat: { text: 'т', buttons: [] } }, { key: 's2', kind: 'text', title: 'в', lines: [], speech: 'р', hold: 3 }], { voice_speed: 1 });
+  assert.deepEqual(props.scenes.map((s) => s.duration), [2, 4, 3]);
+  assert.ok(props.scenes.every((s) => !('speech' in s) && !('hold' in s)));
+});
+
+test('0.15.0 скорость голоса: при 1.25 речь 2 с занимает 1.6 с; при 1 ускорение не запускается; поля оформления доходят до шаблона', async () => {
+  const props = await builtProps([{ key: 's0', kind: 'hook', title: 'а', lines: [], speech: 'р', hold: 0, accent: '#ffb648', tag: 'Новое' }], { voice_speed: 1.25 });
+  assert.equal(props.scenes[0].voice, 1.6); assert.equal(props.scenes[0].accent, '#ffb648'); assert.equal(props.scenes[0].tag, 'Новое');
+  const calls = [];
+  await buildVideo({ ...cfg, video: { ...cfg.video, voice_speed: 1 } }, { scenes: [{ key: 's0', kind: 'text', title: 'а', lines: [], speech: 'р', hold: 0 }], name: 'x', now: NOW, run: fakeRun(calls), vp: fakeHome() });
+  assert.deepEqual(calls.map((c) => c.opts.label), ['озвучка', 'сборка ролика']);
+});
+
+test('0.15.0 запасные сцены: у образца чата речь о сути, фраз-пустышек нет', () => {
+  const chats = summaryScenes(DATA, cfg, { now: NOW }).filter((s) => s.kind === 'chat');
+  assert.ok(chats.length > 0);
+  for (const s of chats) { assert.doesNotMatch(s.speech, /Вот как это выглядит|И ещё один пример/); assert.ok(s.speech.length >= 20); }
+});
+
+const TWO = [{ key: 's0', kind: 'hook', title: 'а', lines: [], speech: 'Первая сцена ролика.', hold: 0 }, { key: 's1', kind: 'finale', title: 'б', lines: [], speech: 'Вторая сцена.', hold: 0 }];
+
+test('0.15.0 buildVideo: утренний ролик — оформление Daily, недельный — Weekly; возвращает размер файла', async () => {
+  const calls = []; const vp = fakeHome();
+  const r = await buildVideo(cfg, { scenes: TWO, name: 'a', run: fakeRun(calls), vp });
+  const w = await buildVideo(cfg, { scenes: TWO, name: 'b', run: fakeRun(calls), vp, weekly: true });
+  const renders = calls.filter((c) => c.opts.label === 'сборка ролика');
+  assert.deepEqual(renders.map((c) => c.args[3]), ['Daily', 'Weekly']); assert.deepEqual(renders.map((c) => c.props.kind), ['Утренняя сводка', 'Итоги недели']);
+  assert.equal(r.bytes, 3); assert.equal(w.bytes, 3); assert.ok(renders[0].args.includes('--crf=30'));
+});
+
+test('0.15.0 buildVideo: файл больше 45 МБ пересобирается сильнее сжатым', async () => {
+  const calls = []; let n = 0;
+  const run = async (bin, args, opts) => {
+    if (opts.label !== 'сборка ролика') return fakeRun(calls)(bin, args, opts);
+    calls.push({ bin, args, opts }); n += 1;
+    fs.writeFileSync(args[4], Buffer.alloc(n === 1 ? 46 * 1024 * 1024 : 1024));
+  };
+  const r = await buildVideo(cfg, { scenes: TWO, name: 'big', run, vp: fakeHome() });
+  const renders = calls.filter((c) => c.opts.label === 'сборка ролика');
+  assert.equal(renders.length, 2); assert.ok(renders[1].args.includes('--crf=36') && renders[1].args.includes('--scale=0.75')); assert.equal(r.bytes, 1024);
+});
+
+test('0.15.0 buildVideo: свой предел времени (timeoutMs) вместо video.timeout_minutes', async () => {
+  const calls = [];
+  await buildVideo(cfg, { scenes: TWO, name: 't', run: fakeRun(calls), vp: fakeHome(), timeoutMs: 5 * 60_000 });
+  assert.ok(calls.every((c) => c.opts.timeoutMs <= 5 * 60_000 && c.opts.timeoutMs > 4 * 60_000));
+});
+
+test('0.15.0 renderStills: кадр на сцену, без озвучки, в оформлении своего ролика', async () => {
+  const calls = []; const dir = path.join(tmpDir('stills-'), 'stills');
+  const files = await renderStills(cfg, { scenes: TWO, dir, weekly: true, run: fakeRun(calls), vp: fakeHome() });
+  assert.deepEqual(files.map((f) => path.basename(f)), ['01.png', '02.png']); assert.ok(files.every((f) => fs.existsSync(f)));
+  assert.ok(calls.every((c) => c.args[1] === 'still' && c.args[3] === 'Weekly')); assert.equal(calls.length, 2);
+});
+
+test('0.15.0 makeSummaryVideo: сцены режиссёра уходят в сборку; его время вычитается из общего предела', async () => {
+  const p = paths(bareProject()); const built = []; let t = 0;
+  const direct = async () => { t = 6 * 60_000; return { scenes: TWO, source: 'review', reason: '', workDir: '/w' }; };
+  const r = await makeSummaryVideo(p, cfg, { data: DATA, now: NOW, name: 'n', direct, clock: () => t, build: async (_c, o) => { built.push(o); return { file: '/f.mp4', seconds: 9, bytes: 5 }; } });
+  assert.deepEqual(r, { file: '/f.mp4', seconds: 9, bytes: 5, source: 'review', workDir: '/w' });
+  assert.equal(built[0].scenes, TWO); assert.equal(built[0].timeoutMs, 9 * 60_000);
+});
+
+test('0.15.0 makeSummaryVideo: сборка сцен режиссёра упала — вторая сборка из запасных сцен со своими 5 минутами', async () => {
+  const p = paths(bareProject()); const built = []; const logs = [];
+  const direct = async () => ({ scenes: TWO, source: 'director', reason: '', workDir: '/w' });
+  const build = async (_c, o) => { built.push(o); if (built.length === 1) throw new Error('сборка ролика: код 1'); return { file: '/f.mp4', seconds: 9, bytes: 5 }; };
+  const r = await makeSummaryVideo(p, cfg, { data: DATA, now: NOW, name: 'n', direct, build, log: (l) => logs.push(l) });
+  assert.equal(r.source, 'fallback'); assert.equal(built.length, 2); assert.equal(built[1].timeoutMs, 5 * 60_000);
+  assert.deepEqual(built[1].scenes.map((s) => s.title), summaryScenes(DATA, cfg, { now: NOW }).map((s) => s.title)); assert.match(logs.join('\n'), /запасных сцен/);
+});
+
+test('0.15.0 makeSummaryVideo: упала и запасная сборка — исключение уходит наверх, sendSummaryVideo пишет одну строку', async () => {
+  const p = paths(bareProject());
+  await assert.rejects(makeSummaryVideo(p, cfg, { data: DATA, now: NOW, name: 'n', direct: noDirector, build: async () => { throw new Error('нет сборщика'); } }), /нет сборщика/);
+});
+
+test('0.15.0 настройки: скорость и минуты — числа; режиссёру отведено меньше, чем на всё', () => {
+  assert.throws(() => parseConfig('project: demo\nvideo:\n  voice_speed: "1.1"'), /video\.voice_speed/);
+  assert.throws(() => parseConfig('project: demo\nvideo:\n  director_minutes: 20\n  timeout_minutes: 5'), /video\.director_minutes/);
+  assert.throws(() => parseConfig('project: demo\nvideo:\n  director_minutes: "8"'), /video\.director_minutes/);
+});
+
+test('0.15.0 sendSummaryVideo: режим режиссёра (mode) доходит до сборки ролика', async () => {
+  const p = paths(bareProject()); const modes = [];
+  const tg = { sendVideo: async () => {}, sendMessage: async () => {} };
+  const direct = async (_p, _c, o) => { modes.push(o.mode); return { scenes: o.baseScenes, source: 'fallback', reason: '', workDir: null }; };
+  await sendSummaryVideo(p, { ...cfg, telegram: { ...cfg.telegram, chat_id: '7' } }, { data: DATA, tg, now: NOW, log: () => {}, mode: 'off', direct, build: async () => ({ file: '/tmp/x/s.mp4', seconds: 5 }) });
+  await sendSummaryVideo(p, { ...cfg, telegram: { ...cfg.telegram, chat_id: '7' } }, { data: DATA, tg, now: NOW, log: () => {}, direct, build: async () => ({ file: '/tmp/x/s.mp4', seconds: 5 }) });
+  assert.deepEqual(modes, ['off', 'review']);
 });
