@@ -46,10 +46,12 @@ const Chat = ({ chat, project, frame, fps, ac }) => {
   const t = spring({ frame: frame - 6, fps, config: SOFT });
   const typing = interpolate(frame, [10, 14, 26, 30], [0, 1, 1, 0], clamp);
   const m = spring({ frame: frame - 28, fps, config: POP });
-  const size = chat.text.length < 80 ? 54 : chat.text.length < 160 ? 46 : chat.text.length < 320 ? 40 : 35;
+  // Размер текста — по объёму и числу строк: длинное сообщение должно влезть целиком, а не обрезаться снизу
+  const rows = chat.text.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 34)), 0);
+  const size = chat.text.length < 80 && rows <= 3 ? 54 : chat.text.length < 160 && rows <= 6 ? 46 : chat.text.length < 320 && rows <= 10 ? 40 : rows <= 13 ? 35 : 30;
   let n = 0;
   return (
-    <div style={{ background: 'rgba(8,12,22,0.78)', border: `2px solid ${C.line}`, borderRadius: 52, padding: '0 0 40px', overflow: 'hidden', boxShadow: `0 40px 120px rgba(0,0,0,0.45), 0 0 90px ${ac[0]}22`, opacity: t, transform: `translateY(${(1 - t) * 60}px) scale(${0.96 + 0.04 * t})` }}>
+    <div style={{ background: 'rgba(8,12,22,0.78)', border: `2px solid ${C.line}`, borderRadius: 52, padding: '0 0 40px', overflow: 'hidden', flexShrink: 0, boxShadow: `0 40px 120px rgba(0,0,0,0.45), 0 0 90px ${ac[0]}22`, opacity: t, transform: `translateY(${(1 - t) * 60}px) scale(${0.96 + 0.04 * t})` }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 24, padding: '30px 36px', borderBottom: `2px solid ${C.line}`, background: 'rgba(255,255,255,0.03)' }}>
         <div style={{ width: 76, height: 76, borderRadius: 38, background: `linear-gradient(135deg, ${ac[0]}, ${ac[1]})`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
           <span style={{ width: 13, height: 13, borderRadius: 7, background: C.bg }} />
@@ -92,6 +94,7 @@ const Chat = ({ chat, project, frame, fps, ac }) => {
 const Bar = ({ bar, frame, fps, ac }) => {
   const t = spring({ frame: frame - 8, fps, config: SOFT, durationInFrames: 40 });
   const share = Math.max(0, Math.min(1, bar.done / bar.total));
+  if (!(share > 0)) return null; // «0 из N» — пустая полоса похожа на незагруженную картинку; число есть в строках
   return (
     <div style={{ height: 44, borderRadius: 22, background: C.line, marginBottom: 56, overflow: 'hidden' }}>
       <div style={{ width: `${share * t * 100}%`, height: '100%', borderRadius: 22, background: `linear-gradient(90deg, ${ac[1]}, ${ac[0]})` }} />
