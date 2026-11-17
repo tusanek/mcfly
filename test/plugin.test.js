@@ -102,3 +102,16 @@ test('0.7.11: полный набор тестов проекта — тольк
   assert.match(read('agents', 'reviewer.md'), /полный набор не запускай/);
   assert.match(read('agents', 'tester.md'), /один раз за круг/);
 });
+
+test('0.15.6: правки владельца в основном каталоге команда не трогает; sed -i запрещён; отказ на finding add — через лида', () => {
+  const read = (...p) => fs.readFileSync(path.join(MCFLY_ROOT, ...p), 'utf8');
+  const skill = read('skills', 'mcfly-process', 'SKILL.md');
+  assert.match(skill, /Незакоммиченные правки владельца в основном checkout команда не трогает/);
+  assert.match(skill, /не копирует, не откладывает \(`git stash`\), не сбрасывает и не коммитит/);
+  assert.match(skill, /`sed -i`/);
+  assert.match(skill, /передай находку лиду текстом/);
+  assert.match(read('agents', 'devops.md'), /правки владельца[\s\S]*не трогай/);
+  assert.match(read('agents', 'lead.md'), /кроме незакоммиченных правок владельца/);
+  assert.match(read('agents', 'developer.md'), /`sed -i`/);
+  assert.match(read('prompts', 'run.md'), /кроме незакоммиченных правок владельца/);
+});
