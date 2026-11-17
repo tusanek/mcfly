@@ -18,7 +18,7 @@ test('шаблоны роликов знают все значки и стили
 });
 test('роль режиссёра: без формата сцен (он в памятке) и без данных проектов; зритель умеет смотреть ролик', () => {
   const role = read('agents', 'director.md');
-  assert.match(role, /^name: director$/m); assert.match(role, /^tools: Read, Write, Glob$/m); assert.doesNotMatch(role, /"kind"/);
+  assert.match(role, /^name: director$/m); assert.match(role, /^tools: Read, Write, Edit, Glob$/m); assert.doesNotMatch(role, /"kind"/);
   assert.match(read('agents', 'user.md'), /смотреть ролик-сводку/);
 });
 
@@ -186,7 +186,7 @@ test('runAgent: роль, папка плагина и режим правок �
   const seen = [];
   const run = async (o) => { seen.push(o); return { exitCode: 0, stdout: `${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '[]' })}\n`, stderr: '', timedOut: false }; };
   const ok = await runAgent(cfg, { agent: 'mcfly:director', prompt: 'задание', cwd: '/tmp/x', timeoutMs: 1000, run });
-  assert.deepEqual(ok, { ok: true, text: '[]', reason: '' });
+  assert.deepEqual(ok, { ok: true, text: '[]', reason: '', usage: null, sessionId: '' });
   assert.equal(seen[0].cwd, '/tmp/x'); assert.equal(seen[0].timeoutMs, 1000); assert.equal(seen[0].args.at(-1), 'задание');
   assert.ok(seen[0].args.join(' ').includes(`--plugin-dir ${MCFLY_ROOT} --agent mcfly:director`)); assert.ok(seen[0].args.join(' ').includes('--permission-mode acceptEdits'));
   const late = await runAgent(cfg, { agent: 'mcfly:user', prompt: 'п', cwd: '/tmp/x', timeoutMs: 1, run: async () => ({ exitCode: null, stdout: '', stderr: '', timedOut: true }) });
@@ -211,7 +211,7 @@ test('directScenes: режиссёру — чтение и запись, зри�
   const s = setup(); fs.writeFileSync(s.p.env, 'MY_DEPLOY_KEY=abc\n# комментарий\nOTHER=1\n');
   const { agent, calls } = scripted([writes(GOOD), says('[]')]);
   await direct(s, 'review', agent);
-  assert.deepEqual(calls.map((c) => c.tools), ['Read,Write,Glob', 'Read,Glob']);
+  assert.deepEqual(calls.map((c) => c.tools), ['Read,Write,Edit,Glob', 'Read,Glob']);
   assert.ok(calls.every((c) => c.hide.includes('MY_DEPLOY_KEY') && c.hide.includes('OTHER')));
 });
 
@@ -234,4 +234,66 @@ test('0.15.2 пустые пересказы, но есть завершённо
   const s = setup(); const { agent, calls } = scripted([writes(GOOD)]);
   await directScenes(s.p, s.c, { data: { plain: [], demos: [], done: [{ title: 'Повторы', benefit: '', visible: true, sample: { text: SAMPLE.text, buttons: SAMPLE.buttons } }] }, baseScenes: BASE, now: NOW, mode: 'on', vp: s.vp, agent, stills });
   assert.equal(calls.length, 1);
+});
+
+test('0.15.4 учёт расхода: usage.json в рабочей папке, сумма в результате и строка в журнале', async () => {
+  const s = setup(); const lines = [];
+  const u = (input, read, out) => ({ usage: { input, cache_write: 0, cache_read: read, output: out, turns: 2, cost_usd: 0.01 } });
+  const sc = scripted([(cwd) => { writes(GOOD)(cwd); return u(100, 5000, 900); }, () => ({ text: '[]', ...u(50, 7000, 200) })]);
+  const r = await direct(s, 'review', sc.agent, { log: (l) => lines.push(l) });
+  assert.deepEqual(r.usage, { calls: 2, input: 150, cache_write: 0, cache_read: 12000, output: 1100, tokens: 13250, cost_usd: 0.02 });
+  const saved = JSON.parse(fs.readFileSync(path.join(r.workDir, 'usage.json'), 'utf8'));
+  assert.deepEqual(saved.calls.map((c) => c.role), ['mcfly:director', 'mcfly:user']); assert.equal(saved.total.tokens, 13250);
+  assert.match(lines.join('\n'), /запусков 2, токенов 13250/);
+});
+test('0.15.4 usageOf: поля итогового события claude; нет usage — null', async () => {
+  const { usageOf } = await import('../src/director.js');
+  assert.deepEqual(usageOf({ usage: { input_tokens: 3, cache_creation_input_tokens: 10, cache_read_input_tokens: 20, output_tokens: 4 }, num_turns: 5, total_cost_usd: 0.5 }), { input: 3, cache_write: 10, cache_read: 20, output: 4, turns: 5, cost_usd: 0.5 });
+  assert.equal(usageOf({ result: 'x' }), null); assert.equal(usageOf(null), null);
+});
+
+test('0.15.4 экономия: повторные запуски режиссёра продолжают его сессию, зритель — отдельная; сессия не продолжилась — один запуск с нуля', async () => {
+  const sid = (id) => (cwd) => { writes(GOOD)(cwd); return { sessionId: id }; };
+  let s = setup(); let sc = scripted([(cwd) => { writes(BAD)(cwd); return { sessionId: 'S1' }; }, sid('S1'), says('[{"scene":1,"kind":"view","problem":"п","fix":"ф"}]'), sid('S1')]);
+  await direct(s, 'review', sc.agent);
+  assert.deepEqual(sc.calls.map((c) => [c.agent, c.resume]), [['mcfly:director', ''], ['mcfly:director', 'S1'], ['mcfly:user', ''], ['mcfly:director', 'S1']]);
+  s = setup(); sc = scripted([(cwd) => { writes(BAD)(cwd); return { sessionId: 'S1' }; }, () => ({ ok: false, reason: 'error: сессия не найдена' }), sid('S2')]);
+  const r = await direct(s, 'on', sc.agent);
+  assert.equal(r.source, 'director'); assert.deepEqual(sc.calls.map((c) => c.resume || ''), ['', 'S1', '']); assert.match(sc.calls[2].prompt, /Сначала прочитай GUIDE\.md/);
+});
+test('0.15.4 экономия: в задании — бюджет речи в знаках; данные без служебных полей и отступов; --resume в аргументах', async () => {
+  const s = setup(); const { agent, calls } = scripted([writes(GOOD)]);
+  const many = { ...DATA, need: ['x'], next: 'y', running: false, planning: true, done: Array.from({ length: 8 }, (_, i) => ({ title: `В ${i}`, benefit: 'п', visible: true, sample: i ? null : { text: SAMPLE.text, buttons: SAMPLE.buttons } })) };
+  const r = await directScenes(s.p, s.c, { data: many, baseScenes: BASE, now: NOW, mode: 'on', vp: s.vp, agent, stills });
+  assert.match(calls[0].prompt, /не больше \d+ знаков, а раз заметных пунктов в данных много \(8\) — не меньше \d+/); assert.doesNotMatch(calls[0].prompt, /base\.json/);
+  const text = fs.readFileSync(path.join(r.workDir, 'data.json'), 'utf8'); const d = JSON.parse(text);
+  assert.ok(!text.includes('\n')); for (const k of ['html', 'keyboard', 'need', 'next', 'running', 'planning']) assert.ok(!(k in d), k);
+  const seen = []; const run = async (o) => { seen.push(o); return { exitCode: 0, stdout: `${JSON.stringify({ type: 'result', is_error: false, result: 'ок', session_id: 'abc' })}\n`, stderr: '', timedOut: false }; };
+  const a = await runAgent(cfg, { agent: 'mcfly:director', prompt: 'п', cwd: '/tmp/x', timeoutMs: 1, run, resume: 'abc' });
+  assert.equal(a.sessionId, 'abc'); assert.equal(seen[0].args[seen[0].args.indexOf('--resume') + 1], 'abc'); assert.equal(seen[0].args.at(-1), 'п');
+});
+
+test('0.15.4 учёт: цена продолженной сессии считается приростом, а не нарастающим итогом', async () => {
+  const s = setup(); const u = (cost) => ({ input: 1, cache_write: 0, cache_read: 0, output: 1, turns: 1, cost_usd: cost });
+  const sc = scripted([(cwd) => { writes(BAD)(cwd); return { sessionId: 'S1', usage: u(0.10) }; }, (cwd) => { writes(GOOD)(cwd); return { sessionId: 'S1', usage: u(0.13) }; }]);
+  const r = await direct(s, 'on', sc.agent);
+  assert.equal(r.usage.cost_usd, 0.13); // 0.10 + прирост 0.03, а не 0.23
+});
+
+test('0.15.4 экономия: зритель работает на лёгкой модели из video.viewer_model, режиссёр — на модели роли', async () => {
+  const s = setup(); const { agent, calls } = scripted([writes(GOOD), says('[]')]);
+  await direct(s, 'review', agent);
+  assert.deepEqual(calls.map((c) => c.model), ['', 'claude-haiku-5-5']);
+  const s2 = setup({ viewer_model: '' }); const sc = scripted([writes(GOOD), says('[]')]);
+  await direct(s2, 'review', sc.agent);
+  assert.deepEqual(sc.calls.map((c) => c.model), ['', '']);
+  assert.throws(() => parseConfig('project: demo\nvideo:\n  viewer_model: "a b"'), /video\.viewer_model/);
+});
+
+test('0.15.4 данные режиссёру: при списке сделанного пересказы последних прогонов не передаются; без списка — остаются', async () => {
+  const s = setup();
+  let r = await directScenes(s.p, s.c, { data: { ...DATA, done: [{ title: 'Повторы', benefit: 'п', visible: true, sample: { text: SAMPLE.text, buttons: SAMPLE.buttons } }] }, baseScenes: BASE, now: NOW, mode: 'on', vp: s.vp, agent: scripted([writes(GOOD)]).agent, stills });
+  assert.ok(!('plain' in JSON.parse(fs.readFileSync(path.join(r.workDir, 'data.json'), 'utf8'))));
+  r = await directScenes(s.p, s.c, { data: { ...DATA, done: [] }, baseScenes: BASE, now: new Date(NOW.getTime() + 1000), mode: 'on', vp: s.vp, agent: scripted([writes(GOOD)]).agent, stills });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(r.workDir, 'data.json'), 'utf8')).plain.length, 1);
 });

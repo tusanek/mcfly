@@ -32,7 +32,7 @@ export const DEFAULT_CONFIG = {
   // Находки для доработки самого mcfly (0.11.0): агенты и сессии регистрируют, владелец одобряет в боте, одобренное — в общий ящик inbox
   findings: { enabled: true, inbox: '~/mcfly-inbox.md' },
   // Сводка коротким роликом с голосом (0.12.0): после текста сводки, отдельным сообщением; pronounce — { слово: как прочитать }
-  video: { enabled: false, voice: 'eugene', voice_speed: 1.1, max_seconds: 60, weekly_max_seconds: 120, timeout_minutes: 15, director: 'review', director_minutes: 8, pronounce: {} },
+  video: { enabled: false, voice: 'eugene', voice_speed: 1.1, max_seconds: 60, weekly_max_seconds: 120, timeout_minutes: 15, director: 'review', director_minutes: 8, viewer_model: 'claude-haiku-5-5', pronounce: {} },
 };
 
 function merge(base, over) {
@@ -89,6 +89,7 @@ export function validate(cfg) {
   if (!['off', 'on', 'review'].includes(video.director)) errors.push('video.director: off (сцены ролика собирает код), on (сценарий пишет режиссёр) или review (режиссёр и зритель)');
   if (!(typeof video.director_minutes === 'number' && video.director_minutes >= 1 && video.director_minutes <= 30)) errors.push('video.director_minutes: число от 1 до 30');
   else if (video.director !== 'off' && !(video.director_minutes < video.timeout_minutes)) errors.push('video.director_minutes: меньше video.timeout_minutes — иначе на сборку ролика не останется времени');
+  if (typeof video.viewer_model !== 'string' || !/^[\w.:-]*$/.test(video.viewer_model)) errors.push('video.viewer_model: название модели зрителя или пустая строка — модель роли');
   if (!video.pronounce || typeof video.pronounce !== 'object' || Array.isArray(video.pronounce) || Object.values(video.pronounce).some((v) => typeof v !== 'string')) errors.push('video.pronounce: словарь «слово: как прочитать»');
   if (!cfg.links || typeof cfg.links !== 'object' || Array.isArray(cfg.links)) errors.push('links: словарь «подпись: адрес»');
   else for (const [k, v] of Object.entries(cfg.links)) if (!/^https?:\/\/[^\s"<>]+$/.test(String(v))) errors.push(`links.${k}: адрес http:// или https:// без пробелов, кавычек и <>`);
