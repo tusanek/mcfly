@@ -13,7 +13,7 @@ import { pullAnswers, pollAnswers } from './pull.js';
 import { buildContext, isMcflyProject, hasProduct } from './context.js';
 import { loadQuestions, saveQuestions, addQuestion, expireQuestions, openQuestions } from './questions.js';
 import { branchProgress, commitPaths } from './git.js';
-import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, priorityOf } from './approvals.js';
+import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, approveFast, priorityOf } from './approvals.js';
 import { appendMetric, readMetrics, aggregate, formatEvents } from './metrics.js';
 import { createTelegram, extractMessages } from './telegram.js';
 import * as schedule from './schedule.js';
@@ -238,7 +238,7 @@ export async function main(argv) {
         // 0.16.0, быстрый путь: небольшой взятый пункт без видимых изменений одобряется сразу — по признакам плана, а не по слову команды
         const block = items.length ? fastTrackBlock(c, items, cfg, category) : 'план не по взятому пункту';
         if (!block) {
-          setApproval(c, 'approved', 'fast', `быстрый путь: ${ideas.join(', ')} — ${[...new Set(items.map((it) => it.size))].join('/')}, снаружи ничего не меняется`, now);
+          approveFast(c, `быстрый путь: ${ideas.join(', ')} — ${[...new Set(items.map((it) => it.size))].join('/')}, снаружи ничего не меняется`, now);
           appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_fast', value: 1, change: c.name });
           appendText(p.answers, `\n## ${fmtLocal(now)} — ${c.name} одобрено сразу после «Берём» (быстрый путь, ${ideas.join(', ')})\n`);
           log(`Одобрено сразу: ${c.name} (быстрый путь — пункт небольшой, снаружи ничего не меняется). Реализуйте его в этом же прогоне, если лимит изменений не исчерпан.`); return 0;

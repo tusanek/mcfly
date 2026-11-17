@@ -13,7 +13,7 @@ import { buildLeadPrompt, MCFLY_ROOT } from './prompt.js';
 import { appendMetric, runStats, readMetrics } from './metrics.js';
 import { activeDayHandoff, latestShift, renderAutoHandoff, writeShift, shiftFileName } from './shift-files.js';
 import { loadQuestions, saveQuestions, expireQuestions, openQuestions } from './questions.js';
-import { listChanges, expireApprovals, approvedWithWork, pendingApprovals, proposalExcerpt, approvalDeadline, isAutoApprovable, isPaused, archivedSince } from './approvals.js';
+import { listChanges, expireApprovals, approvedWithWork, pendingApprovals, proposalExcerpt, approvalDeadline, isAutoApprovable, isPaused, archivedSince, recheckFast, fastPlanIntact } from './approvals.js';
 import { pullAnswers, errorLine, spawnDayRun } from './pull.js';
 import { createTelegram } from './telegram.js';
 import { ensureVpn } from './vpn.js';
@@ -276,7 +276,7 @@ export function finishMessage(cfg, record, p) {
   // 0.16.0: планы, одобренные в этом прогоне быстрым путём, — владелец видит их в итоге, а не узнаёт задним числом
   const since = new Date(record.started_at || 0);
   const fast = [...archivedSince(p.openspecChanges, since), ...changes].filter((c) => c.mcfly.by === 'fast' && new Date(c.mcfly.decided_at || 0) >= since)
-    .map((c) => `${truncate(changeTitle(p, c), 100)}${c.tasksOpen > 0 ? ' — в работе' : ' — сделано'}`);
+    .map((c) => `${truncate(changeTitle(p, c), 100)}${c.tasksOpen > 0 ? ' — в работе' : ' — сделано'}${fastPlanIntact(c) ? '' : ' ⚠️ план менялся после одобрения — проверьте'}`);
   // Решения — главное: если не влезает, урезается пересказ, а не вопросы.
   const assemble = (plainMax) => {
     const lines = [finishText(cfg, record)];
@@ -356,6 +356,8 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
       const defaulted = expireQuestions(qdata, cfg, now); saveQuestions(p, qdata);
       for (const q of defaulted) appendText(p.answers, `\n## ${fmtLocal(now)} — ${q.id} закрыт по умолчанию (срок истёк)\n${q.default || '(ответа по умолчанию нет)'}\n`);
       for (const c of expireApprovals(listChanges(p.openspecChanges), cfg, now)) appendText(p.answers, `\n## ${fmtLocal(now)} — ${c.name} одобрено автоматически (срок истёк)\n`);
+      // 0.16.1: быстрое одобрение относится к тексту плана — изменился после одобрения, возвращаем владельцу до начала работы
+      for (const c of recheckFast(listChanges(p.openspecChanges), now)) appendText(p.answers, `\n## ${fmtLocal(now)} — ${c.name} возвращено на одобрение владельца\nплан изменился после быстрого одобрения\n`);
       // Ночь без сданной смены — авто-передача по фактам (день работал, но смену не сдал).
       if (mode === 'night' && !activeDayHandoff(p)) writeShift(p, 'day', renderAutoHandoff(p, 'day', now), now);
     }
@@ -432,6 +434,8 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
       note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', ...new Set(vpnNotes), denials ? `отказов разрешений: ${denials}` : '', fallback ? 'репортёр не написал отчёт, записана авто-сводка' : '', validateNote(validate),
         dirty ? `незакоммиченных файлов: ${dirty}` : '', unfinished.length ? `незакоммиченная работа в worktree: ${unfinished.map(describeWorktree).join(', ')}` : ''].filter(Boolean).join('; '),
     };
+    // 0.16.1: план, изменённый в прогоне после быстрого одобрения, — на одобрение владельца (до решения о цепочке и до итога)
+    for (const c of recheckFast(listChanges(p.openspecChanges))) appendText(p.answers, `\n## ${fmtLocal(new Date())} — ${c.name} возвращено на одобрение владельца\nплан изменился после быстрого одобрения\n`);
     // Цепочка: решение до записи — причина попадает в журнал и итог прогона.
     const chain = chainDecision({ cfg, p, record, projectDir, started });
     if (chain.reason) record.chain = chain.chain ? 'следующий прогон запущен сразу' : `прогон подряд не запущен: ${chain.reason}`;

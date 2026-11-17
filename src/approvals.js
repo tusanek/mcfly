@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
+import crypto from 'node:crypto';
 import { readText, writeText, exists, truncate } from './util.js';
 import { autoDefault } from './config.js';
 
@@ -103,6 +104,32 @@ export function fastTrackBlock(change, ideaItems, cfg, category = change.mcfly.c
   if (!tasks) return 'в плане нет задач';
   if (tasks > cfg.limits.max_tasks_per_change) return `задач ${tasks} — больше limits.max_tasks_per_change`;
   return '';
+}
+/**
+ * Отпечаток плана (0.16.1): proposal.md и список задач без отметок «сделано». Быстрое одобрение относится к этому тексту:
+ * изменился — одобрение больше не действует (иначе после «Одобрено сразу» в план можно было бы дописать что угодно).
+ */
+export function planHash(change) {
+  const tasks = readText(path.join(change.dir, 'tasks.md'), '').replace(/^(\s*[-*+] )\[[ xX]\]/gm, '$1[ ]');
+  return crypto.createHash('sha256').update(`${readText(path.join(change.dir, 'proposal.md'), '')}\n---\n${tasks}`).digest('hex').slice(0, 32);
+}
+/** Одобрить быстрым путём: решение кода по признакам плана; отпечаток плана сохраняется в метаданных. */
+export function approveFast(change, note = '', now = new Date()) {
+  return writeMeta(change, { ...change.mcfly, approval: 'approved', decided_at: now.toISOString(), by: 'fast', note, fast_hash: planHash(change) });
+}
+/** План быстро одобренного изменения тот же, что был при одобрении (нет отпечатка — не тот же). */
+export const fastPlanIntact = (change) => Boolean(change.mcfly.fast_hash) && change.mcfly.fast_hash === planHash(change);
+/**
+ * Перепроверка быстрых одобрений (0.16.1): если proposal.md или список задач изменились после одобрения, изменение
+ * возвращается на одобрение владельца. Вызывается в начале и в конце прогона. Возвращает возвращённые изменения.
+ */
+export function recheckFast(changes, now = new Date()) {
+  const held = [];
+  for (const c of changes) {
+    if (!isFastApproved(c) || fastPlanIntact(c)) continue;
+    holdApproval(c, 'план изменился после быстрого одобрения', now); held.push(c);
+  }
+  return held;
 }
 /** Одобрено быстрым путём (by: fast) — без второго нажатия владельца. */
 export const isFastApproved = (change) => change.mcfly.approval === 'approved' && change.mcfly.by === 'fast';
