@@ -82,13 +82,15 @@ const Words = ({ text, frame, fps, start = 0, step = 3, style }) => (
 const Chat = ({ scene, project, A, frame, fps }) => {
   const { chat } = scene;
   const t = spring({ frame: frame - 8, fps, config: SOFT });
-  const size = chat.text.length < 90 ? 52 : chat.text.length < 160 ? 46 : chat.text.length < 320 ? 41 : 37;
   const rows = chat.text.split('\n');
+  // Размер текста — по объёму и числу строк на экране: длинное сообщение должно влезть целиком, а не обрезаться снизу
+  const tall = rows.reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 34)), 0);
+  const size = chat.text.length < 90 && tall <= 3 ? 52 : chat.text.length < 160 && tall <= 6 ? 46 : chat.text.length < 320 && tall <= 10 ? 41 : tall <= 13 ? 37 : 31;
   const step = pace(scene, fps, rows.length, 0.4, 3, 12);
   const isItem = (l) => /^\s*(\d+[.)]|[•\-–—])\s/.test(l || '');
   const lastAt = 18 + rows.length * step;
   return (
-    <div style={{ background: 'rgba(6,10,18,0.72)', border: `2px solid ${EDGE}`, borderRadius: 48, padding: '30px 32px 40px', opacity: t, transform: `translateY(${(1 - t) * 60}px) scale(${0.96 + 0.04 * t})`, boxShadow: `0 40px 120px ${A}1f` }}>
+    <div style={{ background: 'rgba(6,10,18,0.72)', border: `2px solid ${EDGE}`, borderRadius: 48, padding: '30px 32px 40px', flexShrink: 0, opacity: t, transform: `translateY(${(1 - t) * 60}px) scale(${0.96 + 0.04 * t})`, boxShadow: `0 40px 120px ${A}1f` }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 20, paddingBottom: 26, marginBottom: 30, borderBottom: `2px solid ${EDGE}` }}>
         <div style={{ width: 68, height: 68, borderRadius: 34, background: `linear-gradient(135deg, ${A}, ${A}88)`, color: C.bg, fontSize: 36, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{String(project || '•').slice(0, 1).toUpperCase()}</div>
         <div style={{ color: C.text, fontSize: 36, fontWeight: 700 }}>{project}</div>
