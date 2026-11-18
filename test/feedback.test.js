@@ -121,7 +121,7 @@ test('0.5.8: зависший claude прерывается сторожем, п
   const dir = bareProject(); const p = paths(dir);
   const bin = tmpDir('fake-claude-hang-'); const script = path.join(bin, 'claude.sh');
   fs.writeFileSync(script, `#!/bin/sh\nprintf '%s\\n' '{"type":"system","subtype":"api_retry","attempt":1,"error":"unknown"}'\nexec sleep 30\n`, { mode: 0o755 });
-  fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), `project: demo\nrun:\n  claude_bin: ${script}\n  max_minutes: 5\n  network_retries: 1\n  network_retry_minutes: 1\n`);
+  fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), `project: demo\nrun:\n  claude_bin: ${script}\n  max_minutes: 5\n  network_retries: 1\n  network_retry_minutes: 1\n  min_retry_minutes: 0\n`);
   const notes = []; const waits = []; const t0 = Date.now();
   const r = await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async (ms) => { waits.push(ms); }, notify: async (t) => { notes.push(t); }, apiWatch: { stallMs: 300, intervalMs: 50 } });
   assert.ok(Date.now() - t0 < 15_000, 'не ждал лимита прогона');

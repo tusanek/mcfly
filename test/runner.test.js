@@ -421,3 +421,19 @@ test('0.14.1: вывод проверки не разобрать — решае
   assert.equal(validateNote({ available: true, ...v }), 'openspec validate: есть ошибки');
   assert.equal(validateNote({ available: false, ok: null }), '');
 });
+
+test('0.17.4: после обрыва повтор не запускается, если до конца лимита прогона останется меньше min_retry_minutes', async () => {
+  for (const [pause, calls] of [[95, 1], [85, 2]]) { // max_minutes в заготовке — 120
+    const dir = bareProject(); const p = paths(dir);
+    const fake = fakeClaudeSeq(dir, [noAccess, { lines: [resultEvent()] }], { config: `  network_retry_minutes: ${pause}\n  min_retry_minutes: 30\n` });
+    const waits = [];
+    const r = await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async (ms) => { waits.push(ms); }, notify: async () => {} });
+    assert.equal(fake.calls(), calls, `пауза ${pause}`);
+    const events = fs.readFileSync(path.join(p.runs, r.id, 'events.log'), 'utf8');
+    if (calls === 1) {
+      assert.equal(r.status, 'network'); assert.deepEqual(waits, []);
+      assert.match(events, /↻ повтор не запущен: после паузы до конца лимита прогона осталось бы 25 мин \(меньше 30\)/);
+      assert.match(readRecord(p, r.id).note, /повтор не запущен/);
+    } else { assert.equal(r.status, 'ok'); assert.deepEqual(waits, [pause * 60_000]); }
+  }
+});

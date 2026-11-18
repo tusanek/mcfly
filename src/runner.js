@@ -402,7 +402,9 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     // Нет доступа к API (упал VPN или сеть) — claude падает за секунды, работы не сделано: ждём и повторяем в пределах лимита прогона.
     const runDeadline = started.getTime() + cfg.run.max_minutes * 60_000;
     const retryMs = cfg.run.network_retry_minutes * 60_000;
-    let result, parsed, attempts = 0, costUsd = null, turns = null;
+    // 0.17.4: повтор доживает до прежнего срока — с остатком меньше min_retry_minutes он успеет только прочитать контекст
+    const minRetryMs = cfg.run.min_retry_minutes * 60_000;
+    let result, parsed, attempts = 0, costUsd = null, turns = null, shortRetry = '';
     const vpnNotes = [];
     const checkVpn = async () => {
       const v = await ensureVpn(cfg.run.vpn_service, { scutil: cfg.run.scutil_bin, sleep });
@@ -423,7 +425,12 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
       // Стоимость и ходы — сумма по попыткам: прерванная попытка тоже тратила квоту.
       if (parsed.costUsd != null) costUsd = Math.round(((costUsd || 0) + parsed.costUsd) * 1e6) / 1e6;
       if (parsed.turns != null) turns = (turns || 0) + parsed.turns;
-      if (parsed.status !== 'network' || attempts > cfg.run.network_retries || Date.now() + retryMs >= runDeadline) break;
+      if (parsed.status !== 'network' || attempts > cfg.run.network_retries) break;
+      const left = runDeadline - (Date.now() + retryMs);
+      if (left <= 0 || left < minRetryMs) {
+        shortRetry = `повтор не запущен: после паузы до конца лимита прогона осталось бы ${Math.max(0, Math.round(left / 60_000))} мин (меньше ${cfg.run.min_retry_minutes})`;
+        event(`↻ ${shortRetry}`); break;
+      }
       // VPN переподключён — повторяем сразу; иначе ждём, пока вернётся сеть.
       const reconnected = (await checkVpn()).action === 'reconnected';
       event(`↻ нет доступа к API (${parsed.errorText.split('\n')[0].slice(0, 120)}), повтор ${reconnected ? 'сразу' : `через ${cfg.run.network_retry_minutes} мин`} (попытка ${attempts + 1} из ${cfg.run.network_retries + 1})`);
@@ -440,7 +447,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const record = {
       id, mode, slot, started_at: started.toISOString(), ended_at: new Date().toISOString(), status: parsed.status, attempts, duration_ms: Date.now() - started.getTime(), exit_code: result.exitCode,
       cost_usd: costUsd, turns, usage, max_changes: limit, ...(chained ? { chained: true } : {}), permission_denials: denials, subagents: parsed.subagents, session_id: parsed.sessionId, validate_ok: validate.ok, dirty_files: dirty, error: parsed.errorText,
-      note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', ...new Set(vpnNotes), denials ? `отказов разрешений: ${denials}` : '', fallback ? 'репортёр не написал отчёт, записана авто-сводка' : '', validateNote(validate),
+      note: [parsed.status !== 'ok' ? parsed.errorText.split('\n')[0] : '', shortRetry, ...new Set(vpnNotes), denials ? `отказов разрешений: ${denials}` : '', fallback ? 'репортёр не написал отчёт, записана авто-сводка' : '', validateNote(validate),
         dirty ? `незакоммиченных файлов: ${dirty}` : '', unfinished.length ? `незакоммиченная работа в worktree: ${unfinished.map(describeWorktree).join(', ')}` : ''].filter(Boolean).join('; '),
     };
     // 0.16.1: план, изменённый в прогоне после быстрого одобрения, — на одобрение владельца (до решения о цепочке и до итога)
