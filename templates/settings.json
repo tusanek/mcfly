@@ -5,7 +5,9 @@
       "Bash(mcfly finding add *)",
       "Bash(mcfly ideas add *)",
       "Bash(mcfly metric add *)",
-      "Bash(mcfly question add *)"
+      "Bash(mcfly question add *)",
+      "Bash(mcfly worktree link)",
+      "Bash(mcfly worktree link --project *)"
     ],
     "deny": [
       "Bash(git push --force*)",

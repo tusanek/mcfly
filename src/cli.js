@@ -58,6 +58,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   action list | trust | run <id> [--yes]          действия владельца из раздела actions: список, подтверждение раздела
                                                   (только в терминале), запуск из терминала (итог и в Telegram)
   action prepare|exec <id> --ticket <t>           служебные: их запускает бот после нажатия кнопки
+  worktree link                                 в своём worktree: ссылки на общие папки основного каталога (worktree.shared, например node_modules)
   finding add --text <t> [--evidence <t>]        находка для доработки самого mcfly (не проекта); владелец решает в боте, передавать ли
   finding list | finding send <Fн> | finding drop <Fн>   список; передать в общий ящик или убрать (только владелец в терминале)
   video setup | video build [--weekly] [--director off|on|review] [--send]   ролик-сводка с голосом (video.enabled): установить сборщик и озвучку (около 2 ГБ);
@@ -77,7 +78,7 @@ export async function main(argv) {
   if (cmd && cmd !== 'init' && cmd !== 'shift') {
     const { projectRoot } = await import('./shift-git.js');
     projectDir = projectRoot(givenDir);
-    if (projectDir !== givenDir) console.error(`mcfly: ${givenDir} — worktree сессии, работаю с основным деревом проекта ${projectDir}`);
+    if (projectDir !== givenDir && cmd !== 'worktree') console.error(`mcfly: ${givenDir} — worktree сессии, работаю с основным деревом проекта ${projectDir}`);
   }
   const p = paths(projectDir);
   const log = (...a) => console.log(...a);
@@ -373,6 +374,19 @@ export async function main(argv) {
         return r.status === 'ok' ? 0 : 1;
       }
       break;
+    }
+    case 'worktree': {
+      if (sub !== 'link') { console.error('mcfly worktree link'); return 1; }
+      const { linkShared } = await import('./worktree.js');
+      const shared = cfg.worktree.shared;
+      if (!shared.length) { log('Общих папок нет (worktree.shared пуст) — подключать нечего.'); return 0; }
+      const top = fs.realpathSync(givenDir);
+      if (top === fs.realpathSync(projectDir)) { log('Это основной каталог проекта: общие папки здесь свои, ссылки не нужны.'); return 0; }
+      const r = linkShared({ worktreeDir: top, mainDir: projectDir, shared });
+      if (r.linked.length) log(`Подключено: ${r.linked.join(', ')}`);
+      if (r.present.length) log(`Уже есть: ${r.present.join(', ')}`);
+      if (r.missing.length) { console.error(`Нет в основном каталоге ${projectDir}: ${r.missing.join(', ')} — зависимости ставит лид или devops в основном каталоге; сообщи лиду.`); return 1; }
+      return 0;
     }
     case 'finding': {
       // Находки для доработки самого mcfly (0.11.0): регистрируют агенты прогона и сессии, решает владелец
