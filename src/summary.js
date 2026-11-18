@@ -295,6 +295,8 @@ export function summaryData(p, cfg, { now = new Date(), since = null } = {}) {
       : `Вопрос <b>${escHtml(q.id)}</b>: ${escHtml(q.text)} — без ответа по умолчанию, команда ждёт вас`);
   }
   for (const c of pend) {
+    // 0.17.0: план, который команда вернула владельцу, — не «одобрить», а вопрос с причиной
+    if (c.mcfly.held) { need.push(`Команда вернула вам план <b>${changeTitle(p, c, escHtml)}</b>: ${escHtml(truncate(String(c.mcfly.note || 'без пояснения').replace(/\s+/g, ' '), 300))} — кнопки ниже: всё равно делать или закрыть без работы`); continue; }
     // 0.9.0: без служебного имени; у изменения без пункта списка название и есть начало описания — не повторяем
     need.push(`Одобрить ${c.mcfly.idea ? `<b>${changeTitle(p, c, escHtml)}</b>: ` : `<b>${labels.get(c.name)}</b>: `}${inline(proposalExcerpt(c, EXCERPT))}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
   }
@@ -417,6 +419,11 @@ export function summaryKeyboard(p, cfg) {
   }
   const changes = listChanges(p.openspecChanges); const pend = pendingApprovals(changes); const labels = planLabels(changes);
   for (const c of pend) {
+    // 0.17.0: план, который команда вернула (mcfly.held), — свои кнопки: привычное «Одобрить» здесь нажимали по ошибке
+    if (c.mcfly.held) {
+      if (fitsData(`cl:${c.name}`)) rows.push([{ text: `✅ Всё равно делать ${c.mcfly.idea || 'план'}`, callback_data: `ap:${c.name}` }, { text: '🗑 Закрыть без работы', callback_data: `cl:${c.name}` }]);
+      continue;
+    }
     // План по пункту списка (0.7.0): «отклонить» значит «не сейчас» — пункт уходит на обсуждение в сессии
     if (fitsData(`ap:${c.name}`)) rows.push([{ text: `✅ Одобрить ${c.mcfly.idea || labels.get(c.name)}`, callback_data: `ap:${c.name}` }, { text: c.mcfly.idea ? '⏸ Не сейчас' : '❌ Отклонить', callback_data: `rj:${c.name}` }]);
     // 0.10.0: образцы из плана («Как это будет выглядеть») — отдельной кнопкой под одобрением

@@ -1,10 +1,10 @@
 import { appendText, fmtLocal } from './util.js';
 import { loadQuestions, saveQuestions, answerQuestion } from './questions.js';
-import { listChanges, setApproval, moveFirst } from './approvals.js';
+import { listChanges, setApproval, moveFirst, closeChange } from './approvals.js';
 import { viewOf } from './overview.js';
 import { commandText } from './util.js';
 import { parseActionText } from './action-config.js';
-import { loadIdeas, saveIdeas, addIdea, transitionIdea, findIdea, markFirst } from './ideas.js';
+import { loadIdeas, saveIdeas, addIdea, transitionIdea, findIdea, markFirst, closeIdea, isArchived } from './ideas.js';
 import path from 'node:path';
 import { loadFindings, saveFindings, addFinding, decideFinding, newFindings } from './findings.js';
 import { parseReminder, addReminder, cancelReminder, snoozeReminder, whenText } from './reminders.js';
@@ -18,6 +18,10 @@ export function parseMessage(text) {
   if ((m = /^не\s+сейчас\s+(I\d+)\s*([\s\S]*)$/i.exec(t))) return { type: 'defer', id: m[1].toUpperCase(), note: m[2].trim() };
   // «⬆ Вперёд» (0.16.0): «вперёд I7» или «вперёд имя-изменения» — первым в очереди; кнопка up:
   if ((m = /^впер[её]д\s+([\w.-]+)\s*$/i.exec(t))) return { type: 'first', target: m[1] };
+  // 0.17.0: «закрыть I7» / «закрыть имя» — закрыть без работы (кнопка cl:); «вернуть имя» — отменить сделанное без одобрения (кнопка rv:).
+  // Обычная фраза с этими словами («закрыть вопрос») остаётся заметкой: applyMessages проверяет, что такое изменение или пункт есть.
+  if ((m = /^закрыть\s+([\w.-]+)\s*$/i.exec(t))) return { type: 'close', target: m[1], text: t };
+  if ((m = /^вернуть\s+([\w.-]+)\s*$/i.exec(t))) return { type: 'revert', change: m[1], text: t };
   if ((m = /^(?:approve|ok|одобряю|одобрить|да)\s+([\w.-]+)\s*([\s\S]*)$/i.exec(t))) return { type: 'approve', change: m[1], note: m[2].trim() };
   if ((m = /^(?:reject|отклоняю|отклонить|нет)\s+([\w.-]+)\s*([\s\S]*)$/i.exec(t))) return { type: 'reject', change: m[1], note: m[2].trim() };
   // Образцы (0.10.0): «образец имя» (кнопка sh:) — отвечает pull.js; «образец кнопка» — нажатие ненастоящей кнопки под образцом.
@@ -186,6 +190,40 @@ export function applyMessages(p, messages, { now = new Date(), by = 'human', onR
         if (r.error) { acks.push(`ℹ️ ${label}: ${r.error}`); break; }
         appendText(p.answers, `\n## ${stamp} — вперёд ${r.change.name}\n`);
         acks.push(`⬆ ${label} — первым в очереди${r.change.mcfly.approval === 'pending' ? ' (план ещё ждёт вашего одобрения)' : ''}`);
+        break;
+      }
+      case 'close': {
+        // 0.17.0: закрыть без работы — решение владельца: изменение отклоняется с пометкой closed, его пункты закрываются окончательно
+        const isIdea = /^I\d+$/i.test(parsed.target);
+        const it = isIdea && !idata.error ? findIdea(idata, parsed.target) : null;
+        const c = changes.find((x) => x.name === (it?.change || parsed.target) && x.mcfly.approval !== 'rejected') || null;
+        if (!c && !(it && ['taken', 'planned', 'discuss'].includes(it.status))) {
+          if (it) { acks.push(`ℹ️ ${it.id}: закрыть можно взятый, спланированный или отложенный пункт`); break; }
+          appendText(p.answers, `\n## ${stamp} — заметка\n${parsed.text}\n`); acks.push('📝 Записал как заметку для команды'); break;
+        }
+        const ids = c ? (c.mcfly.ideas || (c.mcfly.idea ? [c.mcfly.idea] : [])) : [it.id];
+        if (c) closeChange(c, by, '', now);
+        const closed = [];
+        if (!idata.error) for (const id of ids) { const r = closeIdea(idata, id, c ? `закрыто без работы вместе с планом ${c.name}` : '', now); if (!r.error) { closed.push(r.idea.id); ideasDirty = true; } }
+        const what = [c ? c.name : '', ...closed].filter(Boolean).join(', ');
+        appendText(p.answers, `\n## ${stamp} — закрыто без работы ${what}\n`);
+        acks.push(`🗑 ${what}: закрыто без работы${c ? ' — команда уберёт план в ближайшем прогоне' : ''}`);
+        break;
+      }
+      case 'revert': {
+        // 0.17.0: «↩ Вернуть» — взятый пункт «вернуть изменение», поднятый вперёд; его план идёт быстрым путём (revert_of)
+        if (!isArchived(p.openspecChanges, parsed.change)) { appendText(p.answers, `\n## ${stamp} — заметка\n${parsed.text}\n`); acks.push('📝 Записал как заметку для команды'); break; }
+        if (idata.error) { acks.push(broken); break; }
+        if (cfg && !cfg.ideas?.enabled) { acks.push('ℹ️ Список предложений выключен — напишите команде заметкой, что вернуть'); break; }
+        const had = idata.ideas.find((x) => x.revert_of === parsed.change && ['taken', 'planned'].includes(x.status));
+        if (had) { acks.push(`ℹ️ ${parsed.change}: возврат уже в очереди (${had.id})`); break; }
+        try {
+          const idea = addIdea(idata, { title: `Вернуть изменение ${parsed.change}`, benefit: 'владелец нажал «Вернуть»: отменить это изменение и вернуть прежнее поведение (откат его слияния), с тестами', source: 'owner-note', size: 'S', now, newArguments: 'повторный возврат' });
+          transitionIdea(idata, idea.id, 'taken', { actor: 'bot', note: 'кнопка «Вернуть»', now });
+          idea.revert_of = parsed.change; idea.first_at = now.toISOString(); ideasDirty = true;
+          appendText(p.answers, `\n## ${stamp} — вернуть ${parsed.change} (${idea.id})\n`);
+          acks.push(`↩ Принял: ближайший прогон вернёт ${parsed.change} как было (${idea.id}, первым в очереди)`);
+        } catch (e) { acks.push(`ℹ️ ${e.message}`); }
         break;
       }
       case 'run':

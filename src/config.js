@@ -21,13 +21,13 @@ export const DEFAULT_CONFIG = {
   },
   telegram: { chat_id: '', token_env: 'MCFLY_TELEGRAM_TOKEN', owner_id: '' }, // owner_id — кто может запускать действия (0.6.0); пусто — личный чат chat_id
   // 0.16.0: max_changes_night — предел ночного прогона (0 — как max_changes_per_run); run_choices — кнопки «сколько берём» на «запусти» (пусто — без вопроса)
-  limits: { max_changes_per_run: 2, max_changes_night: 0, max_tasks_per_change: 10, run_choices: [] },
+  limits: { max_changes_per_run: 2, max_changes_night: 0, max_tasks_per_change: 10, run_choices: [], followups_per_run: 0 }, // followups_per_run (0.17.0): доделок без одобрения за прогон, 0 — выключено
   // Ссылки в «статус» (0.6.1): { <подпись>: <адрес http(s)> }, например сайт продукта
   links: {},
   // Действия владельца из Telegram (0.6.0): { <id>: { title, run, describe?, prepare?, offer?, followups?, timeout_minutes?, confirm?, during_run?, vpn? } }
   actions: {},
   // Список предложений (0.7.0): enabled false — прежнее поведение (команда без одобренной работы планирует сама)
-  ideas: { enabled: true, backlog: '', per_run: 2, per_idle_run: 4, show: 7, research: true, plan_ahead: 1, fast_sizes: [] }, // fast_sizes (0.16.0): размеры взятых пунктов, чей план без видимых изменений одобряется сразу
+  ideas: { enabled: true, backlog: '', per_run: 2, per_idle_run: 4, show: 7, research: true, plan_ahead: 1, fast_sizes: [], fast_edits: false }, // fast_edits (0.17.0): мелкая правка существующего видимого по пункту S — тоже быстрым путём; // fast_sizes (0.16.0): размеры взятых пунктов, чей план без видимых изменений одобряется сразу
   // Навыки Claude Code для задач с интерфейсом (0.10.0), например ['impeccable']: их вызывают дизайнер и разработчик
   design: { skills: [] },
   // Находки для доработки самого mcfly (0.11.0): агенты и сессии регистрируют, владелец одобряет в боте, одобренное — в общий ящик inbox
@@ -86,7 +86,9 @@ export function validate(cfg) {
   if (!(Number.isInteger(ideas.show) && ideas.show >= 1)) errors.push('ideas.show: целое число от 1');
   if (!(Number.isInteger(ideas.plan_ahead) && ideas.plan_ahead >= 1)) errors.push('ideas.plan_ahead: целое число от 1 — сколько планов держать на одобрении');
   if (!(Array.isArray(ideas.fast_sizes) && ideas.fast_sizes.every((x) => ['S', 'M', 'L'].includes(x)))) errors.push('ideas.fast_sizes: список размеров S, M, L — планы по таким взятым пунктам без видимых изменений одобряются сразу; [] — выключено');
+  if (typeof ideas.fast_edits !== 'boolean') errors.push('ideas.fast_edits: true или false — мелкая правка существующего видимого без второго одобрения');
   const limits = cfg.limits || {};
+  if (!(Number.isInteger(limits.followups_per_run) && limits.followups_per_run >= 0)) errors.push('limits.followups_per_run: целое число от 0 — сколько доделок без одобрения за прогон (0 — выключено)');
   for (const k of ['max_changes_per_run', 'max_tasks_per_change']) if (!(Number.isInteger(limits[k]) && limits[k] >= 1)) errors.push(`limits.${k}: целое число от 1`);
   if (!(Number.isInteger(limits.max_changes_night) && limits.max_changes_night >= 0)) errors.push('limits.max_changes_night: целое число от 0 (0 — как max_changes_per_run)');
   if (!(Array.isArray(limits.run_choices) && limits.run_choices.length <= 4 && limits.run_choices.every((x) => Number.isInteger(x) && x >= 1 && x <= MAX_RUN_CHANGES))) errors.push(`limits.run_choices: до четырёх целых чисел от 1 до ${MAX_RUN_CHANGES}, например [1, 3, 5]; [] — бот не спрашивает, сколько брать`);

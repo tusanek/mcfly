@@ -39,6 +39,8 @@ function writeMeta(change, mcfly) {
 export function requestApproval(change, { category = 'spec', priority, now = new Date(), idea, ideas = [] } = {}) {
   return writeMeta(change, { ...change.mcfly, approval: 'pending', category, ...(priority != null ? { priority: Number(priority) } : {}), ...(idea ? { idea } : {}), ...(ideas.length > 1 ? { ideas } : {}), requested_at: now.toISOString(), decided_at: '', by: '', note: '' });
 }
+/** Категория эскалации изменения — для плана, одобряемого без запроса (доделка, 0.17.0). */
+export function writeCategory(change, category) { return writeMeta(change, { ...change.mcfly, category }); }
 export function setApproval(change, status, by, note = '', now = new Date(), { priority } = {}) {
   return writeMeta(change, { ...change.mcfly, approval: status, ...(priority != null ? { priority: Number(priority) } : {}), decided_at: now.toISOString(), by, note });
 }
@@ -53,7 +55,8 @@ export function approvalDeadline(change, cfg) {
   return new Date(new Date(change.mcfly.requested_at || 0).getTime() + hours * 3600_000);
 }
 /** План по пункту списка предложений (mcfly.idea, 0.7.0) молчанием не одобряется — только кнопкой владельца. */
-export function isAutoApprovable(change, cfg) { return !change.mcfly.idea && autoDefault(cfg, change.mcfly.category || 'spec'); }
+// 0.17.0: план, который команда вернула владельцу (mcfly.held), молчанием тоже не одобряется
+export function isAutoApprovable(change, cfg) { return !change.mcfly.idea && !change.mcfly.held && autoDefault(cfg, change.mcfly.category || 'spec'); }
 /** Авто-одобряет просроченные pending-изменения (кроме категорий без auto_default). */
 export function expireApprovals(changes, cfg, now = new Date()) {
   const auto = [];
@@ -84,11 +87,38 @@ export function moveFirst(changes, name) {
   return { change: c, error: null };
 }
 const SAMPLES_HEAD = /^##\s+Как это будет выглядеть\s*$/im;
+/** Текст раздела «Как это будет выглядеть» плана (до следующего заголовка второго уровня); раздела нет — пустая строка. */
+function samplesSection(change) {
+  const out = []; let on = false;
+  for (const line of String(change.proposal || '').split('\n')) {
+    if (/^##\s/.test(line)) { if (on) break; on = SAMPLES_HEAD.test(line); continue; }
+    if (on) out.push(line);
+  }
+  return out.join('\n');
+}
+/** Пометка планировщика «Правка существующего: <что и где>» в разделе образцов (0.17.0). */
+const EDIT_MARK = /^\s*Правка существующего\s*[:：]\s*\S/im;
+/**
+ * Что в плане с видимым (0.17.0): '' — годится для одобрения без владельца, иначе причина отказа. Годится, если в разделе
+ * «Как это будет выглядеть» нет образцов («Снаружи ничего не меняется») либо, при ideas.fast_edits, это правка существующего:
+ * строка «Правка существующего: …», а задач не больше escalation.small_change_max_tasks.
+ */
+function visibleBlock(change, cfg) {
+  if (!SAMPLES_HEAD.test(change.proposal || '')) return 'в плане нет раздела «Как это будет выглядеть»';
+  if (!proposalSamples(change).length) return '';
+  if (!cfg.ideas?.fast_edits || !EDIT_MARK.test(samplesSection(change))) return 'изменение меняет то, что человек видит или нажимает';
+  const tasks = change.tasksDone + change.tasksOpen; const max = Number(cfg.escalation.small_change_max_tasks || 0);
+  if (tasks > max) return `правка видимого на ${tasks} задач — больше escalation.small_change_max_tasks`;
+  return '';
+}
+/** Вид плана, одобренного без владельца: edit — правка существующего видимого, quiet — снаружи ничего не меняется. */
+export const fastKind = (change) => (proposalSamples(change).length ? 'edit' : 'quiet');
 /**
  * Быстрый путь (0.16.0): почему план по взятым пунктам НЕ одобряется сразу; пустая строка — одобряется.
  * Условия проверяет код, а не команда: все пункты — размера из ideas.fast_sizes; категория с ответом по умолчанию (не prod);
- * в proposal есть раздел «Как это будет выглядеть» без образцов («Снаружи ничего не меняется»); задач не больше
- * limits.max_tasks_per_change; план не возвращали на одобрение (mcfly.held).
+ * план не возвращали на одобрение (mcfly.held); задач не больше limits.max_tasks_per_change; с видимым — см. visibleBlock
+ * (правка существующего — только для пунктов S). Пункт «вернуть изменение» (revert_of, 0.17.0) проверку видимого не проходит:
+ * владелец уже решил.
  */
 export function fastTrackBlock(change, ideaItems, cfg, category = change.mcfly.category || 'spec') {
   const sizes = cfg.ideas?.fast_sizes || [];
@@ -98,12 +128,33 @@ export function fastTrackBlock(change, ideaItems, cfg, category = change.mcfly.c
   if (big) return `пункт ${big.id} размера ${big.size} — такие владелец одобряет сам`;
   if (!autoDefault(cfg, category)) return `категория ${category} — только решение владельца`;
   if (change.mcfly.held) return 'план уже возвращали на одобрение';
-  if (!SAMPLES_HEAD.test(change.proposal || '')) return 'в плане нет раздела «Как это будет выглядеть»';
-  if (proposalSamples(change).length) return 'изменение меняет то, что человек видит или нажимает';
   const tasks = change.tasksDone + change.tasksOpen;
   if (!tasks) return 'в плане нет задач';
   if (tasks > cfg.limits.max_tasks_per_change) return `задач ${tasks} — больше limits.max_tasks_per_change`;
+  if (ideaItems.every((x) => x.revert_of)) return '';
+  const visible = visibleBlock(change, cfg);
+  if (visible) return visible;
+  const notSmall = fastKind(change) === 'edit' && ideaItems.find((x) => x.size !== 'S');
+  if (notSmall) return `правка видимого без одобрения — только для небольших пунктов, а ${notSmall.id} размера ${notSmall.size}`;
   return '';
+}
+/**
+ * Доделка без одобрения (0.17.0, `approval request --followup <родитель>`): почему НЕ одобряется; пустая строка — одобряется.
+ * Доделка — небольшая работа к уже завершённому изменению: родитель в архиве, задач не больше
+ * escalation.small_change_max_tasks, категория с ответом по умолчанию, за прогон — не больше limits.followups_per_run
+ * (used — сколько уже одобрено в этом прогоне), с видимым — см. visibleBlock.
+ */
+export function followupBlock(change, cfg, { parentArchived, used = 0, category = change.mcfly.category || 'spec' }) {
+  const max = Number(cfg.limits.followups_per_run || 0);
+  if (!max) return 'доделки без одобрения выключены (limits.followups_per_run)';
+  if (!parentArchived) return 'родительского изменения нет в архиве — доделка возможна только к завершённой работе';
+  if (used >= max) return `за этот прогон уже ${used} доделок — предел limits.followups_per_run`;
+  if (!autoDefault(cfg, category)) return `категория ${category} — только решение владельца`;
+  if (change.mcfly.held) return 'план уже возвращали на одобрение';
+  const tasks = change.tasksDone + change.tasksOpen; const small = Number(cfg.escalation.small_change_max_tasks || 0);
+  if (!tasks) return 'в плане нет задач';
+  if (tasks > small) return `задач ${tasks} — для доделки много (escalation.small_change_max_tasks)`;
+  return visibleBlock(change, cfg);
 }
 /**
  * Отпечаток плана (0.16.1): proposal.md и список задач без отметок «сделано». Быстрое одобрение относится к этому тексту:
@@ -114,8 +165,8 @@ export function planHash(change) {
   return crypto.createHash('sha256').update(`${readText(path.join(change.dir, 'proposal.md'), '')}\n---\n${tasks}`).digest('hex').slice(0, 32);
 }
 /** Одобрить быстрым путём: решение кода по признакам плана; отпечаток плана сохраняется в метаданных. */
-export function approveFast(change, note = '', now = new Date()) {
-  return writeMeta(change, { ...change.mcfly, approval: 'approved', decided_at: now.toISOString(), by: 'fast', note, fast_hash: planHash(change) });
+export function approveFast(change, note = '', now = new Date(), { by = 'fast', followupOf = '' } = {}) {
+  return writeMeta(change, { ...change.mcfly, approval: 'approved', decided_at: now.toISOString(), by, note, fast_hash: planHash(change), fast_kind: fastKind(change), ...(followupOf ? { followup_of: followupOf } : {}) });
 }
 /** План быстро одобренного изменения тот же, что был при одобрении (нет отпечатка — не тот же). */
 export const fastPlanIntact = (change) => Boolean(change.mcfly.fast_hash) && change.mcfly.fast_hash === planHash(change);
@@ -131,8 +182,16 @@ export function recheckFast(changes, now = new Date()) {
   }
   return held;
 }
-/** Одобрено быстрым путём (by: fast) — без второго нажатия владельца. */
-export const isFastApproved = (change) => change.mcfly.approval === 'approved' && change.mcfly.by === 'fast';
+/** Кем одобрено без владельца: fast — быстрый путь после «Берём», followup — доделка без «Берём» (0.17.0). */
+export const FAST_BY = ['fast', 'followup'];
+export const isFastApproved = (change) => change.mcfly.approval === 'approved' && FAST_BY.includes(change.mcfly.by);
+/**
+ * «Закрыть без работы» (0.17.0): владелец закрывает изменение, которое не нужно делать. Пометка closed — команда в начале
+ * прогона убирает папку такого изменения.
+ */
+export function closeChange(change, by, note = '', now = new Date()) {
+  return writeMeta(change, { ...change.mcfly, approval: 'rejected', closed: true, decided_at: now.toISOString(), by, note: note || 'закрыто владельцем без работы' });
+}
 /**
  * Вернуть быстро одобренный план на одобрение владельца (0.16.0, `mcfly approval hold`): страховка — можно и команде
  * в прогоне, потому что только ужесточает. Повторно быстрым путём такой план не одобрится (mcfly.held).

@@ -47,13 +47,16 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false, now 
   }
   const pend = pendingApprovals(changes);
   L.push('', `Ожидают одобрения (${pend.length}):`);
-  for (const c of pend) L.push(`- ${c.name} (запрошено ${c.mcfly.requested_at ? fmtShort(new Date(c.mcfly.requested_at)) : '?'})`);
+  for (const c of pend) L.push(`- ${c.name} (запрошено ${c.mcfly.requested_at ? fmtShort(new Date(c.mcfly.requested_at)) : '?'})${c.mcfly.held ? ' — возвращено владельцу командой, ждёт его решения: не реализовывать' : ''}`);
   const paused = pausedChanges(changes);
   if (paused.length) {
     L.push('', `Отложены владельцем до даты — не брать, не планировать заново (${paused.length}):`);
     for (const c of paused) L.push(`- ${c.name}: до ${c.mcfly.paused_until}${c.mcfly.pause_note ? ` — ${truncate(String(c.mcfly.pause_note).replace(/\s+/g, ' '), 160)}` : ''}`);
   }
-  const other = changes.filter((c) => !work.includes(c) && !pend.includes(c) && !paused.includes(c));
+  // 0.17.0: закрытые владельцем без работы — команда убирает их папки, чтобы прогоны на них не натыкались
+  const closed = changes.filter((c) => c.mcfly.closed && c.mcfly.approval === 'rejected');
+  if (closed.length) L.push('', `Закрыты владельцем без работы — в шаге 0 удали папку изменения (openspec/changes/<имя>) и его ветку change/<имя>, закоммить, работу по ним не веди (${closed.length}): ${closed.map((c) => c.name).join(', ')}`);
+  const other = changes.filter((c) => !work.includes(c) && !pend.includes(c) && !paused.includes(c) && !closed.includes(c));
   if (other.length) { L.push('', 'Прочие изменения:'); for (const c of other) L.push(`- ${c.name}: одобрение=${c.mcfly.approval || 'не запрошено'}, задач открыто ${c.tasksOpen}`); }
   const worktrees = teamWorktrees(p.projectDir);
   const team = worktrees.filter((w) => w.team); const others = worktrees.filter((w) => !w.team);
@@ -78,9 +81,9 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false, now 
       // 0.10.0: жалобы владельца «неудобно: …» — раньше остальных взятых
       // 0.16.0: поднятые владельцем «⬆ Вперёд» — раньше всех; размер нужен для быстрого пути (ideas.fast_sizes)
       const taken = takenInOrder(d);
-      const ux = taken.filter((x) => x.ux).map((x) => x.id); const first = taken.filter((x) => x.first_at).map((x) => x.id);
+      const ux = taken.filter((x) => x.ux).map((x) => x.id); const first = taken.filter((x) => x.first_at).map((x) => x.id); const reverts = taken.filter((x) => x.revert_of).map((x) => `${x.id} — откат слияния изменения ${x.revert_of}`);
       const sized = cfg.ideas.fast_sizes?.length ? (list) => (list.length ? list.map((x) => `${x.id} [${x.size}] «${short(x.title)}»`).join(', ') : 'нет') : named;
-      const marks = [first.length ? `${first.join(', ')} — владелец поднял «вперёд», планируй и делай их раньше всех` : '', ux.length ? `${ux.join(', ')} — жалобы «неудобно», планируй и делай их первыми` : ''].filter(Boolean);
+      const marks = [first.length ? `${first.join(', ')} — владелец поднял «вперёд», планируй и делай их раньше всех` : '', ux.length ? `${ux.join(', ')} — жалобы «неудобно», планируй и делай их первыми` : '', reverts.length ? `возврат по кнопке владельца: ${reverts.join('; ')}` : ''].filter(Boolean);
       L.push(`Взятые владельцем — спланируй по порядку: ${sized(taken)}${marks.length ? ` (${marks.join('; ')})` : ''}`);
       L.push(`Спланированы: ${by(['planned']).map((x) => `${x.id} → ${x.change}`).join(', ') || 'нет'}`);
       L.push(`В списке: ${proposed.length} (ваших ${own}, команды ${proposed.length - own})`);

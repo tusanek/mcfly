@@ -35,7 +35,7 @@ function takeIdeas(p, sizes) {
 
 test('настройки: ночной предел, варианты числа изменений и размеры быстрого пути — по умолчанию выключены, проверяются', () => {
   const d = parseConfig('project: x\n');
-  assert.deepEqual(d.limits, { max_changes_per_run: 2, max_changes_night: 0, max_tasks_per_change: 10, run_choices: [] });
+  assert.deepEqual(d.limits, { max_changes_per_run: 2, max_changes_night: 0, max_tasks_per_change: 10, run_choices: [], followups_per_run: 0 });
   assert.deepEqual(d.ideas.fast_sizes, []);
   assert.throws(() => parseConfig('project: x\nlimits:\n  max_changes_per_run: 0\n'), /limits\.max_changes_per_run/);
   assert.throws(() => parseConfig('project: x\nlimits:\n  max_changes_night: -1\n'), /limits\.max_changes_night/);
@@ -141,7 +141,7 @@ test('итог прогона называет одобренное быстры
   const dir = gitRepo(bareProject()); const p = paths(dir); const started = new Date(Date.now() - 60_000);
   addChange(dir, 'quiet', { proposal: QUIET }); approveFast(listChanges(p.openspecChanges)[0]);
   const text = finishMessage(cfg, { id: 'r1', status: 'ok', mode: 'day', started_at: started.toISOString(), ended_at: new Date().toISOString() }, p).text;
-  assert.match(text, /⚡ Без второго одобрения[^\n]*в работе/);
+  assert.match(text, /⚡ Без вашего одобрения:\n• [^\n]*после «Берём», снаружи ничего не меняется — в работе/);
   const dir2 = gitRepo(bareProject()); const p2 = paths(dir2); takeIdeas(p2, ['S']);
   git(dir2, 'commit', '-q', '--allow-empty', '-m', 'feat: работа');
   const rec = { status: 'ok', usage: { five_hour: 0.1, seven_day: 0.3 } }; const since = new Date(Date.now() - 60_000);
