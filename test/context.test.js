@@ -121,3 +121,14 @@ test('0.7.6: отложенное до даты изменение — в кон
   assert.match(handoff, /### zen — отложено владельцем до 2099-02-01: не брать/);
   assert.match(handoff, /## Порядок\n1\. ddm\n/);
 });
+
+import { HANDOFF } from './helpers.js';
+test('0.17.3: изменения из передачи, которых нет в openspec/changes, в контекст не попадают — и лиду сказано почему', () => {
+  const dir = bareProject(); const p = paths(dir);
+  addChange(dir, 'page-map-seed');
+  writeShift(p, 'day', HANDOFF, new Date(2026, 9, 1, 18, 30));
+  const ctx = buildContext(p, cfg, { handoff: true });
+  assert.match(ctx, /Убрано из передачи — этих изменений уже нет в openspec\/changes[^\n]*: llm-adaptation\./);
+  assert.doesNotMatch(ctx, /### llm-adaptation|1\. llm-adaptation/);
+  assert.match(ctx, /2\. page-map-seed/);
+});

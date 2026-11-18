@@ -45,6 +45,25 @@ export function mentionedChanges(text) {
   }
   return [...new Set(names)];
 }
+/**
+ * 0.17.3: передача пишется один раз и действует до следующей ночной — изменения в ней могут исчезнуть
+ * (ушли в архив, удалены, переименованы). Убирает их блоки «### <имя> — …» и строки порядка; gone — убранные имена.
+ */
+export function pruneHandoff(text, existing) {
+  const have = new Set(existing);
+  const gone = mentionedChanges(text).filter((n) => !have.has(n));
+  if (!gone.length) return { text: String(text || ''), gone };
+  const out = []; let skip = false, inOrder = false;
+  for (const line of String(text || '').split('\n')) {
+    const h3 = /^###\s+([\w.-]+)\s+—/.exec(line);
+    if (h3 || /^#{1,2}\s/.test(line)) skip = Boolean(h3 && gone.includes(h3[1]));
+    if (/^##\s/.test(line)) inOrder = /^##\s+(Порядок|Предложение на день)\s*$/.test(line);
+    const item = inOrder && /^\s*\d+\.\s+([\w.-]+)/.exec(line);
+    if (skip || (item && gone.includes(item[1]))) continue;
+    out.push(line);
+  }
+  return { text: out.join('\n'), gone };
+}
 /** Пишет файл смены, не перезаписывая: занято — суффикс -2, -3. */
 export function writeShift(p, kind, text, now) {
   const base = shiftFileName(kind, now).replace(/\.md$/, '');
