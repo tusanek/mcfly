@@ -115,3 +115,9 @@ test('0.15.6: правки владельца в основном каталог
   assert.match(read('agents', 'developer.md'), /`sed -i`/);
   assert.match(read('prompts', 'run.md'), /кроме незакоммиченных правок владельца/);
 });
+
+test('0.17.1: команды по одной на вызов — составные с git отклоняет проверка разрешений', () => {
+  const read = (...p) => fs.readFileSync(path.join(MCFLY_ROOT, ...p), 'utf8');
+  assert.match(read('skills', 'mcfly-process', 'SKILL.md'), /Команды пиши по одной на вызов, особенно git/);
+  for (const r of ['developer', 'tester', 'reviewer']) assert.match(read('agents', `${r}.md`), /по одной на вызов|отдельным вызовом/, r);
+});

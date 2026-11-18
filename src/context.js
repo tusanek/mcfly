@@ -4,7 +4,7 @@ import { loadQuestions, openQuestions } from './questions.js';
 import { listChanges, pendingApprovals, approvedWithWork, pausedChanges, priorityOf } from './approvals.js';
 import { branchProgress, teamWorktrees } from './git.js';
 import { autoDefault } from './config.js';
-import { activeDayHandoff, validateHandoff } from './shift-files.js';
+import { activeDayHandoff, validateHandoff, pruneHandoff } from './shift-files.js';
 import { listActions } from './action-config.js';
 import { loadIdeas, takenInOrder } from './ideas.js';
 import { loadFindings, newFindings } from './findings.js';
@@ -25,7 +25,10 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false, now 
   if (!handoff) { /* хук SessionStart дневной сессии: передача адресована ночи */ } else if (h) {
     const missing = validateHandoff(h.text);
     L.push(`## Передача смены (mcfly/shifts/${h.file}) — действуй по ней в рамках одобренного: неодобренное не трогай, при расхождении правы одобрения и спецификации${missing.length ? `; формат нарушен: нет разделов ${missing.join(', ')}` : ''}`);
-    L.push(h.text.length > H_LIMIT ? `${h.text.slice(0, H_LIMIT)}\n…передача обрезана, полный текст — в файле` : h.text.trim(), '');
+    // 0.17.3: изменений, которых уже нет в openspec/changes, в передаче не показываем — иначе лид ставит их первыми в работу
+    const { text, gone } = pruneHandoff(h.text, listChanges(p.openspecChanges).map((c) => c.name));
+    if (gone.length) L.push(`Убрано из передачи — этих изменений уже нет в openspec/changes (завершены, удалены или переименованы), не бери их: ${gone.join(', ')}.`);
+    L.push(text.length > H_LIMIT ? `${text.slice(0, H_LIMIT)}\n…передача обрезана, полный текст — в файле` : text.trim(), '');
   } else L.push('## Передача смены: нет — работай по приоритетам одобрений', '');
   L.push(`Проект: ${cfg.project}. Каталог: ${p.projectDir}.`);
   L.push(`Лимиты: прогон ${cfg.run.max_minutes} мин, не больше ${limit} изменений за прогон, не больше ${cfg.limits.max_tasks_per_change} задач на изменение.`);

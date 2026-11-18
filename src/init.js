@@ -20,7 +20,9 @@ export function mergeSettings(existing, template) {
   return out;
 }
 /** Файлы mcfly вне git: секреты, локальное состояние, лок прогона, логи launchd, сырой вывод claude. */
-export const GITIGNORE_ENTRIES = ['mcfly/.env', 'mcfly/state.json', 'mcfly/.lock', 'mcfly/logs/', 'mcfly/runs/*/stdout.log', '.DS_Store'];
+export const GITIGNORE_ENTRIES = ['mcfly/.env', 'mcfly/state.json', 'mcfly/.lock', 'mcfly/logs/', 'mcfly/runs/*/stdout.log', '.DS_Store',
+  // 0.17.2: Playwright MCP кладёт журналы и скриншоты в каталог, где его запустил лид, — в основной checkout, а не в worktree разработчика
+  '.playwright-mcp/'];
 export function ensureGitignore(projectDir, entries) {
   const file = path.join(projectDir, '.gitignore');
   const cur = readText(file, '');

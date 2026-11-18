@@ -92,3 +92,13 @@ test('0.5.1: авто-передача называет несданные ве�
   git(dir, 'checkout', '-q', 'shift/other-20261001-1000'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'wip(other): x'); git(dir, 'checkout', '-q', 'main');
   assert.match(renderAutoHandoff(p, 'day', new Date(2026, 9, 1, 2, 0)), /## Заметки\n(.*\n)*- Не трогать: shift\/other-20261001-1000 — не сдано днём \(коммитов 1\)/);
 });
+
+import { pruneHandoff } from '../src/shift-files.js';
+test('0.17.3: pruneHandoff убирает из передачи изменения, которых уже нет, — блок и строку порядка', () => {
+  const r = pruneHandoff(HANDOFF, ['page-map-seed']);
+  assert.deepEqual(r.gone, ['llm-adaptation']);
+  assert.doesNotMatch(r.text, /llm-adaptation|2\.3 наполовину/);
+  assert.match(r.text, /## Изменения\n## Порядок\n2\. page-map-seed\n## Нужны решения человека/);
+  assert.match(r.text, /## Заметки\n- нет/);
+  assert.deepEqual(pruneHandoff(HANDOFF, ['llm-adaptation', 'page-map-seed']), { text: HANDOFF, gone: [] });
+});
