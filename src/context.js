@@ -38,6 +38,8 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false, now 
   if (product) L.push('', '## Описание продукта (mcfly/product.md) — для кого делаем и правила, которые нельзя нарушать; файл ведёт владелец, не менять', cap(product, PRODUCT_MAX), '');
   const goals = ownerDoc(path.join(p.root, 'goals.md'));
   if (goals) L.push('', '## Цели проекта (mcfly/goals.md) — файл ведёт владелец, не менять (галочку у сделанного пункта бэклога mcfly ставит сам в конце прогона)', cap(goals, GOALS_MAX), '');
+  const shared = cfg.worktree?.shared || [];
+  if (shared.length) L.push(`Общие папки (worktree.shared): ${shared.join(', ')} — стоят в основном каталоге; разработчик первым шагом в своём worktree запускает \`mcfly worktree link\`. Нет папки в основном каталоге — поставить зависимости там до раздачи задач.`);
   const skills = cfg.design?.skills || [];
   if (skills.length) L.push(`Навыки дизайна (design.skills): ${skills.join(', ')} — в задачах с интерфейсом дизайнер и разработчик вызывают их инструментом Skill до начала работы; навык недоступен — сказать лиду, это попадёт в отчёт.`);
   L.push(`Категории эскалации: ${Object.entries(cfg.escalation.categories).map(([k, v]) => `${k} (${v.label}${v.auto_default === false ? ', без ответа по умолчанию' : ''})`).join('; ')}.`);

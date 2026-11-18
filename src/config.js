@@ -1,6 +1,7 @@
 import YAML from 'yaml';
 import { readText } from './util.js';
 import { actionErrors } from './action-config.js';
+import { sharedErrors } from './worktree.js';
 
 export const DEFAULT_CONFIG = {
   project: 'project',
@@ -30,6 +31,8 @@ export const DEFAULT_CONFIG = {
   ideas: { enabled: true, backlog: '', per_run: 2, per_idle_run: 4, show: 7, research: true, plan_ahead: 1, fast_sizes: [], fast_edits: false }, // fast_edits (0.17.0): мелкая правка существующего видимого по пункту S — тоже быстрым путём; // fast_sizes (0.16.0): размеры взятых пунктов, чей план без видимых изменений одобряется сразу
   // Навыки Claude Code для задач с интерфейсом (0.10.0), например ['impeccable']: их вызывают дизайнер и разработчик
   design: { skills: [] },
+  // Общие папки в worktree команды (0.18.0), например ['miniapp/node_modules']: ставятся в основном каталоге, разработчик подключает ссылками (mcfly worktree link)
+  worktree: { shared: [] },
   // Находки для доработки самого mcfly (0.11.0): агенты и сессии регистрируют, владелец одобряет в боте, одобренное — в общий ящик inbox
   findings: { enabled: true, inbox: '~/mcfly-inbox.md' },
   // Сводка коротким роликом с голосом (0.12.0): после текста сводки, отдельным сообщением; pronounce — { слово: как прочитать }
@@ -93,6 +96,7 @@ export function validate(cfg) {
   for (const k of ['max_changes_per_run', 'max_tasks_per_change']) if (!(Number.isInteger(limits[k]) && limits[k] >= 1)) errors.push(`limits.${k}: целое число от 1`);
   if (!(Number.isInteger(limits.max_changes_night) && limits.max_changes_night >= 0)) errors.push('limits.max_changes_night: целое число от 0 (0 — как max_changes_per_run)');
   if (!(Array.isArray(limits.run_choices) && limits.run_choices.length <= 4 && limits.run_choices.every((x) => Number.isInteger(x) && x >= 1 && x <= MAX_RUN_CHANGES))) errors.push(`limits.run_choices: до четырёх целых чисел от 1 до ${MAX_RUN_CHANGES}, например [1, 3, 5]; [] — бот не спрашивает, сколько брать`);
+  errors.push(...sharedErrors(cfg.worktree?.shared));
   const skills = cfg.design?.skills;
   if (!Array.isArray(skills) || skills.some((x) => typeof x !== 'string' || !/^[\w:.-]+$/.test(x))) errors.push('design.skills: список названий навыков, например [impeccable]');
   if (typeof cfg.findings?.enabled !== 'boolean') errors.push('findings.enabled: true или false');

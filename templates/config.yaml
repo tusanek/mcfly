@@ -65,6 +65,12 @@ ideas:
 design:
   skills: []                    # например [impeccable]
 
+# Общие папки для worktree команды (0.18.0). Claude Code создаёт worktree разработчика без неотслеживаемых файлов:
+# зависимостей (node_modules и т. п.) там нет. Перечисленные папки ставятся один раз в основном каталоге,
+# а разработчик подключает их ссылками командой mcfly worktree link.
+worktree:
+  shared: []                    # например [miniapp/node_modules]
+
 # Действия владельца кнопками в Telegram (0.6.0) — по желанию; см. README «Действия владельца в Telegram»
 # actions:
 #   deploy:

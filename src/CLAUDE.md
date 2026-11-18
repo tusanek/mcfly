@@ -1,6 +1,6 @@
 # src: код CLI mcfly
 
-Вход: cli.js (разбор команд: run, summary, answers, status, ideas, finding, question, approval, metric, telegram, action, remind, schedule, video). Тесты к модулю: test/<модуль>.test.js (нет отдельных тестов у action-config, chain, notices, state).
+Вход: cli.js (разбор команд: run, summary, answers, status, ideas, finding, question, approval, metric, telegram, action, remind, schedule, video, worktree). Тесты к модулю: test/<модуль>.test.js (нет отдельных тестов у action-config, chain, notices, state).
 
 ## Прогон
 - runner.js - прогон: лок, запись прогона, коммит служебных файлов, запасная сводка, уведомления в Telegram, передача смены на ночь.
@@ -36,6 +36,7 @@
 - actions.js - действия владельца из бота: доверие, коды подтверждения, блокировка, запуск команды.
 - action-config.js - раздел actions в config.yaml: проверка и умолчания.
 - shift-git.js и shift-files.js - передача смены: ветки и merge, файлы передачи и их проверка.
+- worktree.js - общие папки (worktree.shared) в worktree команды: ссылки на папки основного каталога, исключение из git.
 - git.js - помощники git: незакоммиченные файлы, worktree команды, ветки изменений.
 
 ## Служебное
