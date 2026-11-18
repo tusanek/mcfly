@@ -13,7 +13,7 @@ import { buildLeadPrompt, MCFLY_ROOT } from './prompt.js';
 import { appendMetric, runStats, readMetrics } from './metrics.js';
 import { activeDayHandoff, latestShift, renderAutoHandoff, writeShift, shiftFileName } from './shift-files.js';
 import { loadQuestions, saveQuestions, expireQuestions, openQuestions } from './questions.js';
-import { listChanges, expireApprovals, approvedWithWork, pendingApprovals, proposalExcerpt, approvalDeadline, isAutoApprovable, isPaused, archivedSince, recheckFast, fastPlanIntact } from './approvals.js';
+import { listChanges, expireApprovals, approvedWithWork, pendingApprovals, proposalExcerpt, approvalDeadline, isAutoApprovable, isPaused, archivedSince, recheckFast, fastPlanIntact, FAST_BY } from './approvals.js';
 import { pullAnswers, errorLine, spawnDayRun } from './pull.js';
 import { createTelegram } from './telegram.js';
 import { ensureVpn } from './vpn.js';
@@ -244,6 +244,8 @@ function decisionLines(cfg, p, changes) {
   }
   const labels = planLabels(changes);
   for (const c of pendingApprovals(changes)) {
+    // 0.17.0: план, который команда вернула владельцу, — не «одобрить», а вопрос с причиной
+    if (c.mcfly.held) { out.push(`↩ Команда вернула вам план ${changeTitle(p, c)}: ${truncate(String(c.mcfly.note || 'без пояснения').replace(/\s+/g, ' '), QUESTION_MAX)}. Кнопки ниже: всё равно делать или закрыть без работы`); continue; }
     out.push(`📋 Одобрить ${c.mcfly.idea ? `${changeTitle(p, c)}: ` : `${labels.get(c.name)}: `}${proposalExcerpt(c, EXCERPT_MAX)}${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`);
   }
   const found = pendingFindings(p, cfg);
@@ -275,14 +277,21 @@ export function finishMessage(cfg, record, p) {
   const next = `Дальше: ${record.chain && record.chain.startsWith('следующий') ? `${record.chain}` : nextRunText(approvedWithWork(changes), pendingApprovals(changes), (c) => progressWords(p.projectDir, c), undefined, ideasBrief(p, cfg), label)}${record.chain && !record.chain.startsWith('следующий') ? ` (${record.chain})` : ''}`;
   // 0.16.0: планы, одобренные в этом прогоне быстрым путём, — владелец видит их в итоге, а не узнаёт задним числом
   const since = new Date(record.started_at || 0);
-  const fast = [...archivedSince(p.openspecChanges, since), ...changes].filter((c) => c.mcfly.by === 'fast' && new Date(c.mcfly.decided_at || 0) >= since)
-    .map((c) => `${truncate(changeTitle(p, c), 100)}${c.tasksOpen > 0 ? ' — в работе' : ' — сделано'}${fastPlanIntact(c) ? '' : ' ⚠️ план менялся после одобрения — проверьте'}`);
+  // 0.17.0: сюда же — доделки без «Берём» и мелкие правки существующего видимого; под завершёнными — кнопка «↩ Вернуть»
+  const done = archivedSince(p.openspecChanges, since).filter((c) => FAST_BY.includes(c.mcfly.by) && new Date(c.mcfly.decided_at || 0) >= since);
+  const going = changes.filter((c) => FAST_BY.includes(c.mcfly.by) && c.mcfly.approval === 'approved' && new Date(c.mcfly.decided_at || 0) >= since);
+  const how = (c) => [c.mcfly.by === 'followup' ? 'доделка' : 'после «Берём»', c.mcfly.fast_kind === 'edit' ? 'правка существующего' : 'снаружи ничего не меняется'].join(', ');
+  const fast = [...done.map((c) => [c, 'сделано']), ...going.map((c) => [c, c.tasksOpen > 0 ? 'в работе' : 'сделано'])]
+    .map(([c, state]) => `• ${truncate(changeTitle(p, c), 100)} — ${how(c)} — ${state}${fastPlanIntact(c) ? '' : ' ⚠️ план менялся после одобрения — проверьте'}`);
+  const fits = (d) => Buffer.byteLength(d) <= 64;
+  const undo = cfg.ideas?.enabled ? done.map((c) => [c, c.name.replace(/^\d{4}-\d{2}-\d{2}-/, '')]).filter(([, name]) => fits(`rv:${name}`))
+    .map(([c, name]) => [{ text: `↩ Вернуть: ${truncate(changeTitle(p, c, undefined, { short: true }).replace(/[«»]/g, ''), 40)}`, callback_data: `rv:${name}` }]) : [];
   // Решения — главное: если не влезает, урезается пересказ, а не вопросы.
   const assemble = (plainMax) => {
     const lines = [finishText(cfg, record)];
     const plain = plainWords(sec, plainMax);
     if (plain) lines.push('', plain);
-    if (fast.length) lines.push('', `⚡ Без второго одобрения (после «Берём», снаружи ничего не меняется): ${fast.join('; ')}`);
+    if (fast.length) lines.push('', `⚡ Без вашего одобрения${undo.length ? ' (отменить — кнопка «↩ Вернуть» ниже)' : ''}:`, ...fast);
     if (record.goals_checked?.length) lines.push('', `🎯 Отмечено в целях: ${record.goals_checked.map((t) => truncate(t, 120)).join('; ')}`);
     if (need.length) lines.push('', 'Нужно от вас:', ...bullets(need, NEED_MAX));
     if (decide.length) lines.push('', 'Решить:', ...decide);
@@ -291,7 +300,7 @@ export function finishMessage(cfg, record, p) {
   };
   let text = assemble(1500);
   for (let k = 1200; text.length > MESSAGE_MAX && k >= PLAIN_MIN; k -= 300) text = assemble(k);
-  return { text: truncate(text, MESSAGE_MAX), keyboard: summaryKeyboard(p, cfg) };
+  return { text: truncate(text, MESSAGE_MAX), keyboard: [...summaryKeyboard(p, cfg), ...undo] };
 }
 
 /**
@@ -438,7 +447,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const heldFast = recheckFast(listChanges(p.openspecChanges));
     for (const c of heldFast) appendText(p.answers, `\n## ${fmtLocal(new Date())} — ${c.name} возвращено на одобрение владельца\nплан изменился после быстрого одобрения\n`);
     // то же для уже завершённых в этом прогоне: вернуть нечего, но цепочку останавливаем и помечаем в итоге
-    const alteredDone = archivedSince(p.openspecChanges, started).filter((c) => c.mcfly.by === 'fast' && !fastPlanIntact(c)).map((c) => c.name);
+    const alteredDone = archivedSince(p.openspecChanges, started).filter((c) => FAST_BY.includes(c.mcfly.by) && !fastPlanIntact(c)).map((c) => c.name);
     // Цепочка: решение до записи — причина попадает в журнал и итог прогона.
     const altered = [...heldFast.map((c) => c.name), ...alteredDone];
     if (altered.length) record.fast_altered = altered;

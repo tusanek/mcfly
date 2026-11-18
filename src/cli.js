@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { loadIdeas, saveIdeas, addIdea, findIdea, transitionIdea, closeIdeaByChange, markFirst, IDEA_STATUS_RU } from './ideas.js';
+import { loadIdeas, saveIdeas, addIdea, findIdea, transitionIdea, closeIdeaByChange, markFirst, isArchived, IDEA_STATUS_RU } from './ideas.js';
 import YAML from 'yaml';
 import { paths, loadState, saveState } from './state.js';
 import { loadConfig, autoDefault, isCategory, MAX_RUN_CHANGES } from './config.js';
@@ -13,7 +13,7 @@ import { pullAnswers, pollAnswers } from './pull.js';
 import { buildContext, isMcflyProject, hasProduct } from './context.js';
 import { loadQuestions, saveQuestions, addQuestion, expireQuestions, openQuestions } from './questions.js';
 import { branchProgress, commitPaths } from './git.js';
-import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, approveFast, fastPlanIntact, priorityOf } from './approvals.js';
+import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, approveFast, fastPlanIntact, followupBlock, fastKind, writeCategory, priorityOf } from './approvals.js';
 import { appendMetric, readMetrics, aggregate, formatEvents } from './metrics.js';
 import { createTelegram, extractMessages } from './telegram.js';
 import * as schedule from './schedule.js';
@@ -41,7 +41,8 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   ideas done <Iн> --change <имя>                  закрыть взятый пункт по изменению из архива (можно в прогоне)
   ideas first <Iн>                                взятый пункт — первым в очереди на план (в прогоне запрещено)
   question list | question expire
-  approval request <изменение> [--category <c>] [--priority <n>]
+  approval request <изменение> [--category <c>] [--priority <n>] [--idea <Iн,…>] [--followup <родитель>]
+                                                  --idea — план по взятым пунктам; --followup — доделка к завершённому изменению (одобряется сразу или отказ)
   approval set <изменение> approved|rejected [--note <t>] [--priority <n>]   (меньше = раньше; по умолчанию 100)
   approval pause <изменение> --until <ГГГГ-ММ-ДД> [--note <t>] | approval resume <изменение>
                                                   отложить одобренное изменение до даты (команда не берёт) / вернуть в работу
@@ -68,7 +69,7 @@ export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
     project: { type: 'string' }, mode: { type: 'string' }, changes: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, weekly: { type: 'boolean' }, director: { type: 'string' }, list: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
-    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
+    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, followup: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
   const givenDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
   // init — в указанном каталоге, shift — сам различает сессию и основное дерево; остальные — в основном дереве проекта
@@ -221,6 +222,20 @@ export async function main(argv) {
         if (hasProduct(p) && !/^##\s+Как это будет выглядеть\s*$/im.test(c.proposal || '')) {
           console.error(`В плане ${c.name} нет раздела «## Как это будет выглядеть». Если изменение меняет то, что человек видит или нажимает (сообщения и кнопки бота — тоже), лид вызывает mcfly:designer, и тот добавляет образцы; если нет — добавьте в proposal.md этот раздел с одной строкой «Снаружи ничего не меняется». Потом запросите одобрение снова.`); return 1;
         }
+        if (values.followup != null) {
+          // 0.17.0: доделка к завершённому изменению — без «Берём»: либо одобряется сразу по признакам плана, либо отказ
+          // (тогда это обычное предложение в список). Одобрение молчанием для неё не запрашивается.
+          if (values.idea) { console.error('--followup и --idea вместе не указывают: доделка — не пункт списка'); return 1; }
+          const parent = String(values.followup || '').trim();
+          const used = runIdEnv ? readMetrics(p).filter((m) => m.type === 'event' && m.key === 'changes_followup' && m.run_id === runIdEnv).length : 0;
+          const block = followupBlock(c, cfg, { parentArchived: /^[a-z0-9][a-z0-9-]*$/.test(parent) && isArchived(p.openspecChanges, parent), used, category });
+          if (block) { console.error(`Доделка ${c.name} не принята: ${block}. Удалите черновик изменения и оформите предложением — mcfly ideas add --source team …: владелец решит кнопкой «Берём».`); return 1; }
+          writeCategory(c, category);
+          approveFast(c, `доделка к ${parent}${fastKind(c) === 'edit' ? ', правка существующего' : ', снаружи ничего не меняется'}`, now, { by: 'followup', followupOf: parent });
+          appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_followup', value: 1, change: c.name });
+          appendText(p.answers, `\n## ${fmtLocal(now)} — ${c.name} одобрено сразу как доделка к ${parent}\n`);
+          log(`Одобрено сразу: ${c.name} (доделка к ${parent}). Реализуйте её в этом же прогоне после задач владельца.`); return 0;
+        }
         let idea = null; let ideas = []; let items = [];
         if (values.idea) {
           // План по пунктам списка (0.7.0): только по взятым владельцем пунктам; пункты становятся спланированными.
@@ -239,10 +254,10 @@ export async function main(argv) {
         // 0.16.0, быстрый путь: небольшой взятый пункт без видимых изменений одобряется сразу — по признакам плана, а не по слову команды
         const block = items.length ? fastTrackBlock(c, items, cfg, category) : 'план не по взятому пункту';
         if (!block) {
-          approveFast(c, `быстрый путь: ${ideas.join(', ')} — ${[...new Set(items.map((it) => it.size))].join('/')}, снаружи ничего не меняется`, now);
+          approveFast(c, `быстрый путь: ${ideas.join(', ')} — ${[...new Set(items.map((it) => it.size))].join('/')}, ${items.every((it) => it.revert_of) ? 'возврат по кнопке владельца' : fastKind(c) === 'edit' ? 'правка существующего' : 'снаружи ничего не меняется'}`, now);
           appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_fast', value: 1, change: c.name });
           appendText(p.answers, `\n## ${fmtLocal(now)} — ${c.name} одобрено сразу после «Берём» (быстрый путь, ${ideas.join(', ')})\n`);
-          log(`Одобрено сразу: ${c.name} (быстрый путь — пункт небольшой, снаружи ничего не меняется). Реализуйте его в этом же прогоне, если лимит изменений не исчерпан.`); return 0;
+          log(`Одобрено сразу: ${c.name} (быстрый путь). Реализуйте его в этом же прогоне, если лимит изменений не исчерпан.`); return 0;
         }
         log(`Одобрение запрошено: ${c.name}. Человек увидит его в утренней сводке.${items.length && cfg.ideas.fast_sizes.length ? ` Ждёт кнопки владельца: ${block}.` : ''}`); return 0; }
       // Решение человека сразу в истории; во время прогона HEAD под агентами не двигаем — метаданные закоммитит прогон.
@@ -274,7 +289,7 @@ export async function main(argv) {
       }
       if (sub === 'hold') {
         // 0.16.0: страховка быстрого пути — команда может только ужесточить: вернуть план на одобрение владельца
-        if (!isFastApproved(c)) { console.error(`${c.name}: вернуть на одобрение можно только план, одобренный быстрым путём`); return 1; }
+        if (!isFastApproved(c)) { console.error(`${c.name}: вернуть на одобрение можно только план, одобренный без владельца (быстрый путь или доделка)`); return 1; }
         holdApproval(c, values.note || '', now);
         appendText(p.answers, `\n## ${fmtLocal(now)} — ${c.name} возвращено на одобрение владельца\n${values.note || '(без причины)'}\n`);
         log(`${c.name}: ждёт одобрения владельца. Не реализуйте и не сливайте его до одобрения.`); return commitMeta(`chore(${c.name}): возвращено на одобрение`);

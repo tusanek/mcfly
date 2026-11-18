@@ -100,10 +100,11 @@ export function createTelegram({ token, fetchImpl = globalThis.fetch, timeoutMs 
  * напоминания (0.8.0): rs:Rн («отложить Rн» — «⏰ Через час»), rx:Rн («отменить Rн»);
  * находки для mcfly (0.11.0): fb:Fн или fb:все («передать Fн»), fx:Fн («не надо Fн»), fl:1 («находки»);
  * очередь (0.16.0): up:Iн или up:имя («вперёд …» — «⬆ Вперёд»), qu:1 («очередь»), rn:N («запусти N» — сколько изменений взять);
+ * без одобрения (0.17.0): cl:имя или cl:Iн («закрыть …» — «🗑 Закрыть без работы»), rv:имя («вернуть …» — «↩ Вернуть»);
  * образцы (0.10.0): sh:имя («образец имя» — «👀 Как будет выглядеть»), sm:… — ненастоящая кнопка под образцом, ничего не делает.
  */
 export function callbackText(data) {
-  const m = /^(ap|rj|qd|rn|ac|ax|an|ib|ix|il|rs|rx|sh|sm|fb|fx|fl|up|qu):(.+)$/.exec(String(data || ''));
+  const m = /^(ap|rj|qd|rn|ac|ax|an|ib|ix|il|rs|rx|sh|sm|fb|fx|fl|up|qu|cl|rv):(.+)$/.exec(String(data || ''));
   if (!m) return null;
   if (m[1] === 'fb') return `передать ${m[2]}`;
   if (m[1] === 'fx') return `не надо ${m[2]}`;
@@ -119,6 +120,8 @@ export function callbackText(data) {
   if (m[1] === 'rn') { const n = /^(\d{1,2})(!?)$/.exec(m[2]); return n ? `запусти ${n[2] ? 'всё равно ' : ''}${n[1]}` : 'запусти'; }
   if (m[1] === 'up') return `вперёд ${m[2]}`;
   if (m[1] === 'qu') return 'очередь';
+  if (m[1] === 'cl') return `закрыть ${m[2]}`;
+  if (m[1] === 'rv') return `вернуть ${m[2]}`;
   if (m[1] === 'ac') return `действие ${m[2]}`;
   if (m[1] === 'an') return `действие ${m[2]} отмена`;
   if (m[1] === 'ax') { const [id, code] = m[2].split(':'); return code ? `действие ${id} да ${code}` : null; }

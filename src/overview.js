@@ -105,12 +105,13 @@ const changeLine = (p, cfg, c, now = new Date(), labels = new Map()) => {
   const st = c.mcfly.approval;
   const title = changeTitle(p, c, escHtml);
   const steps = progressWords(p.projectDir, c);
+  if (st === 'pending' && c.mcfly.held) return `↩ <b>${title}</b> — команда вернула план вам: ${escHtml(truncate(String(c.mcfly.note || 'без пояснения').replace(/\s+/g, ' '), 160))}`;
   if (st === 'pending' && c.mcfly.idea) return `⏳ <b>${title}</b> — ждёт вашего решения, само не одобрится`;
   const label = labels.get(c.name);
   if (st === 'pending') return `⏳ <b>${label && label !== 'план' ? `${label.replace('план', 'План')}: ` : ''}${title}</b> — ждёт одобрения${isAutoApprovable(c, cfg) ? ` (авто-одобрение ${fmtShort(approvalDeadline(c, cfg))})` : ''}`;
   if (st === 'rejected') return `⛔ ${title} — отклонено`;
   if (st === 'approved' && isPaused(c, now)) return `⏸ <b>${title}</b> — отложено до ${escHtml(fmtDay(pausedUntil(c)))}, ${steps}`;
-  if (st === 'approved') return `${c.tasksOpen > 0 ? '🔧' : '🏁'} <b>${title}</b> — ${isFastApproved(c) ? 'одобрено сразу после «Берём»' : 'одобрено'}, ${steps}`;
+  if (st === 'approved') return `${c.tasksOpen > 0 ? '🔧' : '🏁'} <b>${title}</b> — ${isFastApproved(c) ? (c.mcfly.by === 'followup' ? 'доделка без одобрения' : 'одобрено сразу после «Берём»') : 'одобрено'}, ${steps}`;
   return `⚪ ${title} — одобрение не запрошено, ${steps}`;
 };
 const toParts = (html) => splitHtml(html, MAX);
@@ -280,6 +281,8 @@ export function helpView(p, cfg) {
     start,
     '✅ «одобряю имя-изменения» — разрешить команде делать изменение, например «одобряю site-design»',
     '⬆ «вперёд I7» или «вперёд имя-изменения» — поставить взятый пункт или изменение первым в очереди',
+    '🗑 «закрыть I7» или «закрыть имя-изменения» — закрыть без работы пункт или план, который делать не нужно',
+    '↩ «вернуть имя-изменения» — отменить сделанное без вашего одобрения: ближайший прогон вернёт как было',
     '⛔ «отклоняю имя-изменения причина» — отказать, например «отклоняю site-design не сейчас»',
     '💬 «Q12: ответ» — ответ на вопрос команды; «Q12: по умолчанию» — согласиться с ответом по умолчанию',
     '↩️ Ответ свайпом на сообщение с одним вопросом — ответ на этот вопрос, «Q12:» писать не нужно',
