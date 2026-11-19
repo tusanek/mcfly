@@ -162,7 +162,9 @@ export function followupBlock(change, cfg, { parentArchived, used = 0, category 
  */
 export function planHash(change) {
   const tasks = readText(path.join(change.dir, 'tasks.md'), '').replace(/^(\s*[-*+] )\[[ xX]\]/gm, '$1[ ]');
-  return crypto.createHash('sha256').update(`${readText(path.join(change.dir, 'proposal.md'), '')}\n---\n${tasks}`).digest('hex').slice(0, 32);
+  // 0.19.0: строки «Картинка:» в отпечаток не входят — картинки к образцам можно дорисовать после одобрения
+  const proposal = readText(path.join(change.dir, 'proposal.md'), '').split('\n').filter((l) => !PICTURE.test(l)).join('\n');
+  return crypto.createHash('sha256').update(`${proposal}\n---\n${tasks}`).digest('hex').slice(0, 32);
 }
 /** Одобрить быстрым путём: решение кода по признакам плана; отпечаток плана сохраняется в метаданных. */
 export function approveFast(change, note = '', now = new Date(), { by = 'fast', followupOf = '' } = {}) {
@@ -250,25 +252,37 @@ const BUTTON_ROW = /^\s*(\[[^\[\]\n]+\]\s*)+$/;
  * в тройных обратных кавычках; строки вида «[Готово] [Отложить]» внутри блока — ряды кнопок. Раздела или блоков нет — пустой список
  * («Снаружи ничего не меняется» — не образец). Подзаголовок без блока — образец из одного заголовка: на экране ничего не появляется.
  */
+/** Строка картинки образца (0.19.0): «Картинка: <путь от корня проекта>». */
+const PICTURE = /^\s*Картинка\s*[:：]\s*(\S.*?)\s*$/;
+/** Файл картинки образца (0.19.0): абсолютный путь, если это PNG/JPG внутри проекта и он есть, иначе null. */
+export function sampleImage(projectDir, rel) {
+  const root = path.resolve(projectDir); const file = path.resolve(root, String(rel || ''));
+  if (!file.startsWith(root + path.sep) || !/\.(png|jpe?g)$/i.test(file)) return null;
+  try { return fs.statSync(file).isFile() ? file : null; } catch { return null; }
+}
 export function proposalSamples(change) {
-  const out = []; let on = false; let fence = false; let title = ''; let cur = null;
+  const out = []; let on = false; let fence = false; let title = ''; let cur = null; const pics = {};
   for (const line of String(change.proposal || '').split('\n')) {
     if (!fence && /^##\s/.test(line)) { on = /^##\s+Как это будет выглядеть\s*$/i.test(line.trim()); continue; }
     if (!on) continue;
     if (/^\s*```/.test(line)) {
       fence = !fence;
-      if (fence) cur = { title, lines: [] }; else { out.push(cur); cur = null; title = ''; }
+      if (fence) cur = { title, lines: [], images: pics[title] || [] }; else { out.push(cur); cur = null; title = ''; }
       continue;
     }
     if (fence) { cur.lines.push(line); continue; }
+    // 0.19.0: «Картинка: <путь>» под подзаголовком — картинка образца (вне блока); относится к последнему образцу этого подзаголовка
+    const pic = PICTURE.exec(line);
+    if (pic) { const last = out.at(-1); if (title) (pics[title] ||= []).push(pic[1].trim()); else if (last) (last.images ||= []).push(pic[1].trim()); continue; }
     const h = /^###\s+(.+?)\s*$/.exec(line);
     // 0.11.0: подзаголовок без блока — случай, когда пользователь ничего не видит («Пишет кто-то другой — бот молчит»)
-    if (h) { if (title) out.push({ title, lines: [] }); title = h[1]; }
+    if (h) { if (title) out.push({ title, lines: [], images: pics[title] || [] }); title = h[1]; }
   }
-  if (title) out.push({ title, lines: [] });
+  if (title) out.push({ title, lines: [], images: pics[title] || [] });
   return out.map((x) => ({
     title: x.title,
     text: x.lines.filter((l) => !BUTTON_ROW.test(l)).join('\n').trim(),
     buttons: x.lines.filter((l) => BUTTON_ROW.test(l)).map((l) => [...l.matchAll(/\[([^\[\]\n]+)\]/g)].map((m) => m[1].trim())),
-  })).filter((x) => x.text || x.buttons.length || x.title);
+    images: x.images || [],
+  })).filter((x) => x.text || x.buttons.length || x.title || x.images.length);
 }
