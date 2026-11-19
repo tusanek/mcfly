@@ -13,7 +13,7 @@ import { pullAnswers, pollAnswers } from './pull.js';
 import { buildContext, isMcflyProject, hasProduct } from './context.js';
 import { loadQuestions, saveQuestions, addQuestion, expireQuestions, openQuestions } from './questions.js';
 import { branchProgress, commitPaths } from './git.js';
-import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, approveFast, fastPlanIntact, followupBlock, fastKind, writeCategory, priorityOf, markNoSpecs } from './approvals.js';
+import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, approveFast, fastPlanIntact, followupBlock, fastKind, writeCategory, priorityOf, markNoSpecs, proposalSamples } from './approvals.js';
 import { appendMetric, readMetrics, aggregate, formatEvents } from './metrics.js';
 import { createTelegram, extractMessages } from './telegram.js';
 import * as schedule from './schedule.js';
@@ -230,6 +230,8 @@ export async function main(argv) {
         if (hasProduct(p) && !/^##\s+Как это будет выглядеть\s*$/im.test(c.proposal || '')) {
           console.error(`В плане ${c.name} нет раздела «## Как это будет выглядеть». Если изменение меняет то, что человек видит или нажимает (сообщения и кнопки бота — тоже), лид вызывает mcfly:designer, и тот добавляет образцы; если нет — добавьте в proposal.md этот раздел с одной строкой «Снаружи ничего не меняется». Потом запросите одобрение снова.`); return 1;
         }
+        // 0.19.0: образцы владелец смотрит картинками — без них покажутся текстом; не отказ, а напоминание дизайнеру
+        { const samples = proposalSamples(c); if (samples.length && !samples.some((x) => x.images.length)) log('⚠ У образцов нет картинок: владелец увидит их текстом. Добавьте под образцами строки «Картинка: <путь>» (сообщения бота — по шаблону mcfly samples template).'); }
         if (values.followup != null) {
           // 0.17.0: доделка к завершённому изменению — без «Берём»: либо одобряется сразу по признакам плана, либо отказ
           // (тогда это обычное предложение в список). Одобрение молчанием для неё не запрашивается.

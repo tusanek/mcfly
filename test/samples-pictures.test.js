@@ -133,3 +133,20 @@ test('безопасность: ссылка (symlink) внутри проект
   fs.mkdirSync(path.join(dir, 'design'), { recursive: true }); fs.symlinkSync(outside, path.join(dir, 'design', 'leak.png'));
   assert.equal(sampleImage(dir, 'design/leak.png'), null);
 });
+
+// --- задача 4: предупреждение при запросе одобрения ---
+import { spawnSync } from 'node:child_process';
+import { MCFLY_ROOT } from '../src/prompt.js';
+const cliRun = (args, dir) => spawnSync(process.execPath, [path.join(MCFLY_ROOT, 'bin', 'mcfly'), ...args], { cwd: dir, encoding: 'utf8', env: { ...process.env, MCFLY_PROJECT_DIR: '', MCFLY_RUN_ID: '' } });
+
+test('approval request: план с образцами без картинок — предупреждение, но принят; с картинкой — без предупреждения', () => {
+  const dir = bareProject();
+  addChange(dir, 'no-pics', { proposal: `## Простыми словами\nПлан.\n\n${BASE.slice(BASE.indexOf('## Как'))}` });
+  const r = cliRun(['approval', 'request', 'no-pics'], dir);
+  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /⚠ У образцов нет картинок/);
+  const pics = pictured(['01-light.png']);
+  const ok = cliRun(['approval', 'request', 'pics'], pics.dir);
+  assert.equal(ok.status, 0, ok.stderr); assert.doesNotMatch(ok.stdout, /нет картинок/);
+  const quiet = bareProject(); addChange(quiet, 'quiet', { proposal: '## Простыми словами\nП.\n\n## Как это будет выглядеть\nСнаружи ничего не меняется\n' });
+  assert.doesNotMatch(cliRun(['approval', 'request', 'quiet'], quiet).stdout, /нет картинок/);
+});
