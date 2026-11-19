@@ -182,6 +182,22 @@ export function recheckFast(changes, now = new Date()) {
   }
   return held;
 }
+/** Есть ли в изменении дельты спецификаций (specs/<область>/spec.md). */
+export function hasDeltas(change) {
+  const dir = path.join(change.dir, 'specs'); if (!fs.existsSync(dir)) return false;
+  return fs.readdirSync(dir, { withFileTypes: true }).some((d) => d.isDirectory() && fs.existsSync(path.join(dir, d.name, 'spec.md')));
+}
+/**
+ * Доделка-уборка без дельт (0.18.5): openspec validate --strict требует дельту или skip_specs: true, а роли пропускать дельты
+ * без одобрения запрещено. Ставит mcfly, а не роль, и только доделке «снаружи ничего не меняется» без дельт: это решение кода
+ * по признакам плана, как и само одобрение доделки. true — пометка поставлена.
+ */
+export function markNoSpecs(change) {
+  if (change.mcfly.by !== 'followup' || fastKind(change) !== 'quiet' || hasDeltas(change)) return false;
+  const meta = { ...change.meta, skip_specs: true };
+  writeText(path.join(change.dir, '.openspec.yaml'), YAML.stringify(meta)); change.meta = meta;
+  return true;
+}
 /** Кем одобрено без владельца: fast — быстрый путь после «Берём», followup — доделка без «Берём» (0.17.0). */
 export const FAST_BY = ['fast', 'followup'];
 export const isFastApproved = (change) => change.mcfly.approval === 'approved' && FAST_BY.includes(change.mcfly.by);

@@ -150,3 +150,25 @@ test('«Вернуть»: в итоге прогона — блок и кноп�
   assert.equal(fastTrackBlock(byName(p)['revert-hint-fix'], [idea], on), '');
   assert.match(fastTrackBlock(byName(p)['revert-hint-fix'], [{ id: 'I5', size: 'S' }], on), /видит или нажимает/);
 });
+
+test('0.18.5: доделка-уборка без дельт — skip_specs ставит mcfly; с дельтами, правкой видимого и не доделке — нет', async () => {
+  const YAML = (await import('yaml')).default;
+  const dir = bareProject(); const p = paths(dir); fs.writeFileSync(p.config, CONFIG.replace('followups_per_run: 2', 'followups_per_run: 5'));
+  archive(dir, 'parent');
+  addChange(dir, 'tidy', { proposal: QUIET });
+  const withSpec = addChange(dir, 'tidy-spec', { proposal: QUIET });
+  fs.mkdirSync(path.join(withSpec, 'specs', 'area'), { recursive: true }); fs.writeFileSync(path.join(withSpec, 'specs', 'area', 'spec.md'), '## MODIFIED Requirements\n');
+  addChange(dir, 'hint', { proposal: EDIT });
+  const meta = (n) => YAML.parse(fs.readFileSync(path.join(dir, 'openspec', 'changes', n, '.openspec.yaml'), 'utf8'));
+  const r = cli(['approval', 'request', 'tidy', '--followup', 'parent'], dir, inRun);
+  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /skip_specs: true/);
+  assert.equal(meta('tidy').skip_specs, true); assert.equal(meta('tidy').mcfly.by, 'followup', 'одобрение не потеряно');
+  assert.equal(isFastApproved(byName(p).tidy), true);
+  assert.equal(cli(['approval', 'request', 'tidy-spec', '--followup', 'parent'], dir, inRun).status, 0);
+  assert.equal(meta('tidy-spec').skip_specs, undefined, 'дельты есть — пометка не нужна');
+  assert.equal(cli(['approval', 'request', 'hint', '--followup', 'parent'], dir, inRun).status, 0);
+  assert.equal(meta('hint').skip_specs, undefined, 'правка видимого — без пропуска дельт');
+  const own = addChange(dir, 'owned', { proposal: QUIET }); approveFast(byName(p).owned, 'быстрый путь', new Date());
+  const { markNoSpecs } = await import('../src/approvals.js');
+  assert.equal(markNoSpecs(byName(p).owned), false, 'быстрый путь по пункту владельца — не доделка'); assert.ok(own);
+});

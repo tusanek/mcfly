@@ -13,7 +13,7 @@ import { pullAnswers, pollAnswers } from './pull.js';
 import { buildContext, isMcflyProject, hasProduct } from './context.js';
 import { loadQuestions, saveQuestions, addQuestion, expireQuestions, openQuestions } from './questions.js';
 import { branchProgress, commitPaths } from './git.js';
-import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, approveFast, fastPlanIntact, followupBlock, fastKind, writeCategory, priorityOf } from './approvals.js';
+import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, approveFast, fastPlanIntact, followupBlock, fastKind, writeCategory, priorityOf, markNoSpecs } from './approvals.js';
 import { appendMetric, readMetrics, aggregate, formatEvents } from './metrics.js';
 import { createTelegram, extractMessages } from './telegram.js';
 import * as schedule from './schedule.js';
@@ -239,9 +239,10 @@ export async function main(argv) {
           if (block) { console.error(`Доделка ${c.name} не принята: ${block}. Удалите черновик изменения и оформите предложением — mcfly ideas add --source team …: владелец решит кнопкой «Берём».`); return 1; }
           writeCategory(c, category);
           approveFast(c, `доделка к ${parent}${fastKind(c) === 'edit' ? ', правка существующего' : ', снаружи ничего не меняется'}`, now, { by: 'followup', followupOf: parent });
+          const noSpecs = markNoSpecs(c); // 0.18.5: уборка без дельт проходит openspec validate --strict
           appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_followup', value: 1, change: c.name });
           appendText(p.answers, `\n## ${fmtLocal(now)} — ${c.name} одобрено сразу как доделка к ${parent}\n`);
-          log(`Одобрено сразу: ${c.name} (доделка к ${parent}). Реализуйте её в этом же прогоне после задач владельца.`); return 0;
+          log(`Одобрено сразу: ${c.name} (доделка к ${parent}). Реализуйте её в этом же прогоне после задач владельца.${noSpecs ? ' Дельт спецификаций нет — mcfly поставил skip_specs: true; поведение не меняйте.' : ''}`); return 0;
         }
         let idea = null; let ideas = []; let items = [];
         if (values.idea) {
