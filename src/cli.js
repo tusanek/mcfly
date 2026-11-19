@@ -380,12 +380,18 @@ export async function main(argv) {
       const { linkShared } = await import('./worktree.js');
       const shared = cfg.worktree.shared;
       if (!shared.length) { log('Общих папок нет (worktree.shared пуст) — подключать нечего.'); return 0; }
-      const top = fs.realpathSync(givenDir);
-      if (top === fs.realpathSync(projectDir)) { log('Это основной каталог проекта: общие папки здесь свои, ссылки не нужны.'); return 0; }
-      const r = linkShared({ worktreeDir: top, mainDir: projectDir, shared });
+      // 0.18.1: «где я» — --project или текущий каталог, но не MCFLY_PROJECT_DIR: runner кладёт туда основной каталог,
+      // и из worktree агента команда отвечала «это основной каталог». --project с основным каталогом из worktree — тоже текущий.
+      const { projectRoot } = await import('./shift-git.js');
+      const cwd = fs.realpathSync(process.cwd());
+      let top = fs.realpathSync(values.project ? path.resolve(values.project) : cwd);
+      let mainDir = fs.realpathSync(projectRoot(top));
+      if (top === mainDir && cwd !== mainDir && fs.realpathSync(projectRoot(cwd)) === mainDir) top = cwd;
+      if (top === mainDir) { log('Это основной каталог проекта: общие папки здесь свои, ссылки не нужны. В worktree запускай из его каталога или с --project <каталог worktree>.'); return 0; }
+      const r = linkShared({ worktreeDir: top, mainDir, shared });
       if (r.linked.length) log(`Подключено: ${r.linked.join(', ')}`);
       if (r.present.length) log(`Уже есть: ${r.present.join(', ')}`);
-      if (r.missing.length) { console.error(`Нет в основном каталоге ${projectDir}: ${r.missing.join(', ')} — зависимости ставит лид или devops в основном каталоге; сообщи лиду.`); return 1; }
+      if (r.missing.length) { console.error(`Нет в основном каталоге ${mainDir}: ${r.missing.join(', ')} — зависимости ставит лид или devops в основном каталоге; сообщи лиду.`); return 1; }
       return 0;
     }
     case 'finding': {
