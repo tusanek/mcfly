@@ -163,7 +163,10 @@ export function followupBlock(change, cfg, { parentArchived, used = 0, category 
 export function planHash(change) {
   const tasks = readText(path.join(change.dir, 'tasks.md'), '').replace(/^(\s*[-*+] )\[[ xX]\]/gm, '$1[ ]');
   // 0.19.0: строки «Картинка:» в отпечаток не входят — картинки к образцам можно дорисовать после одобрения
-  const proposal = readText(path.join(change.dir, 'proposal.md'), '').split('\n').filter((l) => !PICTURE.test(l)).join('\n');
+  // Вырезаются только настоящие строки картинок: в разделе образцов, вне блока, с путём к PNG/JPG — иначе так можно было бы
+  // дописать в одобренный план что угодно, не вернув его владельцу.
+  const lines = readText(path.join(change.dir, 'proposal.md'), '').split('\n'); const skip = picturesInSamples(lines);
+  const proposal = lines.filter((_, i) => !skip.has(i)).join('\n');
   return crypto.createHash('sha256').update(`${proposal}\n---\n${tasks}`).digest('hex').slice(0, 32);
 }
 /** Одобрить быстрым путём: решение кода по признакам плана; отпечаток плана сохраняется в метаданных. */
@@ -254,11 +257,28 @@ const BUTTON_ROW = /^\s*(\[[^\[\]\n]+\]\s*)+$/;
  */
 /** Строка картинки образца (0.19.0): «Картинка: <путь от корня проекта>». */
 const PICTURE = /^\s*Картинка\s*[:：]\s*(\S.*?)\s*$/;
+/** Путь картинки, который не входит в отпечаток плана: относительный, без «..», PNG/JPG, без пробелов. */
+const PICTURE_PATH = /^(?!\/)(?!.*(^|\/)\.\.(\/|$))[\p{L}\p{N}_.\/-]+\.(png|jpe?g)$/iu;
+/** Номера строк картинок образцов: в разделе «Как это будет выглядеть», вне блока, с допустимым путём. */
+function picturesInSamples(lines) {
+  const out = new Set(); let on = false; let fence = false;
+  lines.forEach((line, i) => {
+    if (!fence && /^##\s/.test(line)) { on = /^##\s+Как это будет выглядеть\s*$/i.test(line.trim()); return; }
+    if (!on) return;
+    if (/^\s*```/.test(line)) { fence = !fence; return; }
+    const m = !fence && PICTURE.exec(line);
+    if (m && PICTURE_PATH.test(m[1].trim())) out.add(i);
+  });
+  return out;
+}
 /** Файл картинки образца (0.19.0): абсолютный путь, если это PNG/JPG внутри проекта и он есть, иначе null. */
 export function sampleImage(projectDir, rel) {
-  const root = path.resolve(projectDir); const file = path.resolve(root, String(rel || ''));
-  if (!file.startsWith(root + path.sep) || !/\.(png|jpe?g)$/i.test(file)) return null;
-  try { return fs.statSync(file).isFile() ? file : null; } catch { return null; }
+  // Проверка по настоящим путям (realpath): ссылка внутри проекта на файл снаружи — не картинка
+  try {
+    const root = fs.realpathSync(projectDir); const file = fs.realpathSync(path.resolve(root, String(rel || '')));
+    if (!file.startsWith(root + path.sep) || !/\.(png|jpe?g)$/i.test(file)) return null;
+    return fs.statSync(file).isFile() ? path.resolve(projectDir, String(rel)) : null;
+  } catch { return null; }
 }
 export function proposalSamples(change) {
   const out = []; let on = false; let fence = false; let title = ''; let cur = null; const pics = {};

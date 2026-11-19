@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { readText, writeText, fmtShort, fmtDay, fmtDuration, truncate, pad2, commandText } from './util.js';
 import { readMetrics, aggregate } from './metrics.js';
 import { loadQuestions, openQuestions } from './questions.js';
-import { listChanges, pendingApprovals, approvedWithWork, approvalDeadline, isAutoApprovable, isPaused, pausedUntil, proposalSamples, isFastApproved } from './approvals.js';
+import { listChanges, pendingApprovals, approvedWithWork, approvalDeadline, isAutoApprovable, isPaused, pausedUntil, proposalSamples, isFastApproved, sampleImage } from './approvals.js';
 import { autoDefault } from './config.js';
 import { parseSlot } from './window.js';
 import { currentRun } from './runner.js';
@@ -397,13 +397,21 @@ export async function sendSamples(tg, chatId, p, cfg, name) {
   if (!samples.length) { await tg.sendMessage(chatId, c ? 'У этого плана нет образцов: снаружи ничего не меняется' : 'Такого плана уже нет — посмотрите «статус»'); return 0; }
   await tg.sendMessage(chatId, `👀 <b>Как будет выглядеть: ${changeTitle(p, c, escHtml)}</b>\n<i>Ниже образцы — так это увидит пользователь. Кнопки под ними ненастоящие.</i>`, { html: true });
   for (const [i, x] of samples.slice(0, SAMPLES_MAX).entries()) {
+    // 0.19.0: образец с картинками — альбомом; ненайденные картинки и отказ Telegram — образец текстом, как раньше
+    const found = x.images.map((rel) => [rel, sampleImage(p.projectDir, rel)]);
+    const files = found.filter(([, f]) => f).map(([, f]) => f);
+    const missing = found.filter(([, f]) => !f).map(([rel]) => rel);
+    if (files.length && tg.sendPhotos) {
+      try { await tg.sendPhotos(chatId, files.slice(0, 10), { caption: truncate(`${i + 1}. ${x.title || 'Образец'}`, 1000) }); continue; } catch { /* текстом ниже */ }
+    }
+    const lost = missing.length ? `\n<i>${missing.map((rel) => `картинка ${escHtml(rel)} не найдена`).join('; ')}</i>` : '';
     const keyboard = x.buttons.map((row, r) => row.map((text, k) => ({ text: truncate(text, 40), callback_data: `sm:${i}.${r}.${k}` })));
     // 0.11.0: заголовок курсивом и образец — одним сообщением (раньше двумя, связь в чате терялась). Пояснение в скобках
     // («(бот не отвечает совсем)») и образец без текста — курсивом: это слова команды, а не ответ бота.
     const note = /^\([^\n]*\)$/.test(x.text) && !keyboard.length;
     const head = `<i>${i + 1}. ${escHtml(x.title || 'Образец')}${note ? ` — ${escHtml(x.text.slice(1, -1))}` : ''}</i>`;
     const body = note || !x.text ? '' : `\n\n${escHtml(truncate(x.text, MAX - 200))}`;
-    await tg.sendMessage(chatId, `${head}${body}`, { html: true, keyboard: keyboard.length ? keyboard : null });
+    await tg.sendMessage(chatId, `${head}${body}${lost}`, { html: true, keyboard: keyboard.length ? keyboard : null });
   }
   if (samples.length > SAMPLES_MAX) await tg.sendMessage(chatId, `… ещё образцов: ${samples.length - SAMPLES_MAX} — в описании плана`);
   return samples.length;
