@@ -401,10 +401,16 @@ export async function sendSamples(tg, chatId, p, cfg, name) {
     const found = x.images.map((rel) => [rel, sampleImage(p.projectDir, rel)]);
     const files = found.filter(([, f]) => f).map(([, f]) => f);
     const missing = found.filter(([, f]) => !f).map(([rel]) => rel);
+    const lostLine = missing.length ? `<i>${missing.map((rel) => `картинка ${escHtml(rel)} не найдена`).join('; ')}</i>` : '';
+    let refused = '';
     if (files.length && tg.sendPhotos) {
-      try { await tg.sendPhotos(chatId, files.slice(0, 10), { caption: truncate(`${i + 1}. ${x.title || 'Образец'}`, 1000) }); continue; } catch { /* текстом ниже */ }
+      try {
+        await tg.sendPhotos(chatId, files.slice(0, 10), { caption: truncate(`${i + 1}. ${x.title || 'Образец'}`, 1000) });
+        if (lostLine) await tg.sendMessage(chatId, `<i>${i + 1}.</i> ${lostLine}`, { html: true }); // часть картинок не нашлась — не молчим
+        continue;
+      } catch (e) { refused = `<i>Telegram не принял картинки: ${escHtml(truncate(String(e?.message || e), 200))}</i>`; }
     }
-    const lost = missing.length ? `\n<i>${missing.map((rel) => `картинка ${escHtml(rel)} не найдена`).join('; ')}</i>` : '';
+    const lost = [lostLine, refused].filter(Boolean).map((l) => `\n${l}`).join('');
     const keyboard = x.buttons.map((row, r) => row.map((text, k) => ({ text: truncate(text, 40), callback_data: `sm:${i}.${r}.${k}` })));
     // 0.11.0: заголовок курсивом и образец — одним сообщением (раньше двумя, связь в чате терялась). Пояснение в скобках
     // («(бот не отвечает совсем)») и образец без текста — курсивом: это слова команды, а не ответ бота.

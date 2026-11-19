@@ -281,24 +281,26 @@ export function sampleImage(projectDir, rel) {
   } catch { return null; }
 }
 export function proposalSamples(change) {
-  const out = []; let on = false; let fence = false; let title = ''; let cur = null; const pics = {};
+  const out = []; let on = false; let fence = false; let title = ''; let cur = null;
+  // 0.19.0: картинки перед блоком ждут его (pending, обнуляется на каждом подзаголовке); после блока — к только что закрытому образцу
+  let pending = []; let closed = null;
   for (const line of String(change.proposal || '').split('\n')) {
     if (!fence && /^##\s/.test(line)) { on = /^##\s+Как это будет выглядеть\s*$/i.test(line.trim()); continue; }
     if (!on) continue;
     if (/^\s*```/.test(line)) {
       fence = !fence;
-      if (fence) cur = { title, lines: [], images: pics[title] || [] }; else { out.push(cur); cur = null; title = ''; }
+      if (fence) { cur = { title, lines: [], images: pending }; pending = []; } else { out.push(cur); closed = cur; cur = null; title = ''; }
       continue;
     }
     if (fence) { cur.lines.push(line); continue; }
     // 0.19.0: «Картинка: <путь>» под подзаголовком — картинка образца (вне блока); относится к последнему образцу этого подзаголовка
     const pic = PICTURE.exec(line);
-    if (pic) { const last = out.at(-1); if (title) (pics[title] ||= []).push(pic[1].trim()); else if (last) (last.images ||= []).push(pic[1].trim()); continue; }
+    if (pic) { (title || !closed ? pending : closed.images).push(pic[1].trim()); continue; }
     const h = /^###\s+(.+?)\s*$/.exec(line);
     // 0.11.0: подзаголовок без блока — случай, когда пользователь ничего не видит («Пишет кто-то другой — бот молчит»)
-    if (h) { if (title) out.push({ title, lines: [], images: pics[title] || [] }); title = h[1]; }
+    if (h) { if (title) out.push({ title, lines: [], images: pending }); pending = []; closed = null; title = h[1]; }
   }
-  if (title) out.push({ title, lines: [], images: pics[title] || [] });
+  if (title) out.push({ title, lines: [], images: pending });
   return out.map((x) => ({
     title: x.title,
     text: x.lines.filter((l) => !BUTTON_ROW.test(l)).join('\n').trim(),

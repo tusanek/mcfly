@@ -150,3 +150,22 @@ test('approval request: план с образцами без картинок �
   const quiet = bareProject(); addChange(quiet, 'quiet', { proposal: '## Простыми словами\nП.\n\n## Как это будет выглядеть\nСнаружи ничего не меняется\n' });
   assert.doesNotMatch(cliRun(['approval', 'request', 'quiet'], quiet).stdout, /нет картинок/);
 });
+
+// --- итоговое ревью ---
+test('ревью: одинаковые подзаголовки — у каждого образца свои картинки; картинка перед блоком — этому блоку', () => {
+  const dir = bareProject();
+  const c = change(dir, 'same', '## Как это будет выглядеть\n### Вечером\n```\nбыло\n```\nКартинка: 1.png\n### Вечером\nКартинка: 2.png\n```\nстало\n```\n');
+  assert.deepEqual(proposalSamples(c).map((x) => [x.text, x.images]), [['было', ['1.png']], ['стало', ['2.png']]]);
+  const before = change(dir, 'before', '## Как это будет выглядеть\n### X\nКартинка: 1.png\n```\nа\n```\n### X\nКартинка: 2.png\n```\nб\n```\n');
+  assert.deepEqual(proposalSamples(before).map((x) => x.images), [['1.png'], ['2.png']]);
+});
+
+test('ревью: альбом ушёл, но часть картинок не найдена — отдельной строкой; Telegram не принял — текст с пояснением', async () => {
+  const half = pictured(['01-light.png'], 'Картинка: design/samples/x/01-dark.png\n');
+  const t1 = fakeTg(); await sendSamples(t1, '42', half.p, cfg, 'pics');
+  assert.equal(t1.sent.filter((m) => m.kind === 'photos').length, 1);
+  assert.ok(t1.sent.some((m) => m.kind === 'text' && /картинка design\/samples\/x\/01-dark\.png не найдена/.test(m.text)));
+  const ok = pictured(['01-light.png']);
+  const t2 = fakeTg({ failPhotos: true }); await sendSamples(t2, '42', ok.p, cfg, 'pics');
+  assert.ok(t2.sent.some((m) => m.kind === 'text' && /Повторы/.test(m.text) && /Telegram не принял картинки: .*PHOTO_INVALID_DIMENSIONS/.test(m.text)));
+});
