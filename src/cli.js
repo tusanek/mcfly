@@ -66,6 +66,12 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   remind list | remind rm <Rн>                    напоминания владельцу (ставятся в боте: «напомни 19:00 текст»)
 Общие флаги: --project <dir> (по умолчанию текущий каталог или MCFLY_PROJECT_DIR)`;
 
+/**
+ * Код выхода `mcfly run` для launchd. 0.18.2: пропуск из-за идущего прогона (locked) — штатный, как пропущенный слот:
+ * иначе `schedule status` показывал у ночного задания «последний выход с кодом 1», хотя ничего не сломалось.
+ */
+export const runExitCode = (status) => (['ok', 'dry-run', 'missed', 'locked'].includes(status) ? 0 : 1);
+
 export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
     project: { type: 'string' }, mode: { type: 'string' }, changes: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, weekly: { type: 'boolean' }, director: { type: 'string' }, list: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
@@ -117,7 +123,7 @@ export async function main(argv) {
         changes = Number(values.changes);
         if (!(Number.isInteger(changes) && changes >= 1 && changes <= MAX_RUN_CHANGES)) { console.error(`--changes: целое число от 1 до ${MAX_RUN_CHANGES}`); return 1; }
       }
-      const r = await run({ projectDir, mode: values.mode || 'day', dryRun: !!values['dry-run'], now, log, changes }); return ['ok', 'dry-run', 'missed'].includes(r.status) ? 0 : 1; }
+      const r = await run({ projectDir, mode: values.mode || 'day', dryRun: !!values['dry-run'], now, log, changes }); return runExitCode(r.status); }
     case 'summary': {
       if (values.weekly && values.list) {
         // Только полный список недели: без --send — файл виджета для просмотра в браузере и его размер, с --send — отправить

@@ -228,3 +228,9 @@ test('0.15.0 video build: неизвестное значение --director —
   const r = cli(['video', 'build', '--director', 'always'], dir);
   assert.equal(r.status, 1); assert.match(r.stderr, /--director: off/);
 });
+
+test('0.18.2: прогон, пропущенный из-за идущего (locked), для launchd не сбой — код 0', async () => {
+  const { runExitCode } = await import('../src/cli.js');
+  for (const s of ['ok', 'dry-run', 'missed', 'locked']) assert.equal(runExitCode(s), 0, s);
+  for (const s of ['error', 'quota', 'network', 'timeout']) assert.equal(runExitCode(s), 1, s);
+});
