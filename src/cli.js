@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { loadIdeas, saveIdeas, addIdea, findIdea, transitionIdea, closeIdeaByChange, markFirst, isArchived, IDEA_STATUS_RU } from './ideas.js';
+import { loadIdeas, saveIdeas, addIdea, findIdea, transitionIdea, closeIdeaByChange, planIdeaPart, markFirst, isArchived, IDEA_STATUS_RU } from './ideas.js';
 import YAML from 'yaml';
 import { paths, loadState, saveState } from './state.js';
 import { loadConfig, autoDefault, isCategory, MAX_RUN_CHANGES } from './config.js';
@@ -41,7 +41,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   ideas done <Iн> --change <имя>                  закрыть взятый пункт по изменению из архива (можно в прогоне)
   ideas first <Iн>                                взятый пункт — первым в очереди на план (в прогоне запрещено)
   question list | question expire
-  approval request <изменение> [--category <c>] [--priority <n>] [--idea <Iн,…>] [--followup <родитель>]
+  approval request <изменение> [--category <c>] [--priority <n>] [--idea <Iн,…>] [--followup <родитель>] [--part]
                                                   --idea — план по взятым пунктам; --followup — доделка к завершённому изменению (одобряется сразу или отказ)
   approval set <изменение> approved|rejected [--note <t>] [--priority <n>]   (меньше = раньше; по умолчанию 100)
   approval pause <изменение> --until <ГГГГ-ММ-ДД> [--note <t>] | approval resume <изменение>
@@ -76,7 +76,7 @@ export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
     project: { type: 'string' }, mode: { type: 'string' }, changes: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, weekly: { type: 'boolean' }, director: { type: 'string' }, list: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
-    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, retry: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, followup: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
+    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, retry: { type: 'boolean' }, part: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, followup: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
   const givenDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
   // init — в указанном каталоге, shift — сам различает сессию и основное дерево; остальные — в основном дереве проекта
@@ -251,9 +251,14 @@ export async function main(argv) {
           const idata = loadIdeas(p); if (idata.error) { console.error(idata.error); return 1; }
           const ids = [...new Set(String(values.idea).split(',').map((x) => x.trim().toUpperCase()).filter(Boolean))];
           const found = ids.map((id) => [id, findIdea(idata, id)]);
-          const bad = found.find(([, it]) => !it || it.status !== 'taken');
-          if (!ids.length || bad) { console.error(`${bad ? bad[0] : '(номер не указан)'} не взят владельцем (статус: ${bad?.[1] ? IDEA_STATUS_RU[bad[1].status] || bad[1].status : 'нет такого'})`); return 1; }
-          for (const [, it] of found) transitionIdea(idata, it.id, 'planned', { actor: 'team', change: c.name, now });
+          // 0.18.8: --part — план одной части большого пункта: годится и уже спланированный (по прошлой части) пункт
+          const okStatus = values.part ? ['taken', 'planned'] : ['taken'];
+          const bad = found.find(([, it]) => !it || !okStatus.includes(it.status));
+          if (!ids.length || bad) {
+            const hint = bad?.[1]?.status === 'planned' ? ` — если это следующая часть большого пункта, добавьте --part: mcfly approval request ${c.name} --idea ${bad[0]} --part` : '';
+            console.error(`${bad ? bad[0] : '(номер не указан)'} не взят владельцем (статус: ${bad?.[1] ? IDEA_STATUS_RU[bad[1].status] || bad[1].status : 'нет такого'})${hint}`); return 1;
+          }
+          for (const [, it] of found) { if (values.part) planIdeaPart(idata, it.id, c.name, now); else transitionIdea(idata, it.id, 'planned', { actor: 'team', change: c.name, now }); }
           saveIdeas(p, idata); items = found.map(([, it]) => it); ideas = items.map((it) => it.id); idea = ideas[0];
         }
         // 0.16.0: пункт, который владелец поднял «вперёд», — его план первым в очереди, если приоритет не задан явно

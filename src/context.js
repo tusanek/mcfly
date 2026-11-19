@@ -90,7 +90,10 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false, now 
       const sized = cfg.ideas.fast_sizes?.length ? (list) => (list.length ? list.map((x) => `${x.id} [${x.size}] «${short(x.title)}»`).join(', ') : 'нет') : named;
       const marks = [first.length ? `${first.join(', ')} — владелец поднял «вперёд», планируй и делай их раньше всех` : '', ux.length ? `${ux.join(', ')} — жалобы «неудобно», планируй и делай их первыми` : '', reverts.length ? `возврат по кнопке владельца: ${reverts.join('; ')}` : ''].filter(Boolean);
       L.push(`Взятые владельцем — спланируй по порядку: ${sized(taken)}${marks.length ? ` (${marks.join('; ')})` : ''}`);
-      L.push(`Спланированы: ${by(['planned']).map((x) => `${x.id} → ${x.change}`).join(', ') || 'нет'}`);
+      L.push(`Спланированы: ${by(['planned']).map((x) => `${x.id} → ${x.change}${x.parts?.length > 1 ? ` (часть ${x.parts.length})` : ''}`).join(', ') || 'нет'}`);
+      // 0.18.8: пункт, который делается частями, после части снова взят — следующая часть или закрытие
+      const inParts = taken.filter((x) => x.parts?.length);
+      if (inParts.length) L.push(`Делаются частями: ${inParts.map((x) => `${x.id} — готово ${x.parts.length} (${x.parts.join(', ')})`).join('; ')}. Следующую часть планируй с --part; всё сделано — mcfly ideas done <Iн> --change <последняя часть>`);
       L.push(`В списке: ${proposed.length} (ваших ${own}, команды ${proposed.length - own})`);
       L.push(`Не трогать, решение в сессии: ${named(by(['discuss', 'rejected']))}`);
     }

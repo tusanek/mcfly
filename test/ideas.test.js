@@ -184,3 +184,38 @@ test('0.15.5 ideas set <Iн> done: владелец в сессии отмеча
   const r = cli155(['ideas', 'set', 'I1', 'done'], dir);
   assert.equal(r.status, 0, r.stderr); assert.equal(ideasOf(dir)[0].status, 'done');
 });
+
+test('0.18.8 большой пункт частями: вторая часть с --part принимается, после части пункт снова взят, закрывается ideas done', async () => {
+  const { finishIdeas } = await import('../src/runner.js');
+  const { buildContext } = await import('../src/context.js');
+  const { loadConfig } = await import('../src/config.js');
+  const dir = projectWithTaken(1); const p = paths(dir); const changes = path.join(dir, 'openspec', 'changes');
+  const plan = (n) => addChange155(dir, n, { proposal: `## Простыми словами\nЧасть ${n}.\n\nСнаружи ничего не меняется.\n` });
+  plan('part-1'); plan('part-2');
+  assert.equal(cli155(['approval', 'request', 'part-1', '--idea', 'I1', '--part'], dir).status, 0);
+  const no = cli155(['approval', 'request', 'part-2', '--idea', 'I1'], dir);
+  assert.equal(no.status, 1); assert.match(no.stderr, /спланировано\) — если это следующая часть большого пункта, добавьте --part/);
+  const yes = cli155(['approval', 'request', 'part-2', '--idea', 'I1', '--part'], dir);
+  assert.equal(yes.status, 0, yes.stderr);
+  assert.deepEqual(ideasOf(dir)[0].parts, ['part-1', 'part-2']); assert.equal(ideasOf(dir)[0].change, 'part-2');
+  archive(dir, 'part-1'); archive(dir, 'part-2');
+  assert.deepEqual(finishIdeas(p, { ideas: { enabled: true } }), [], 'части в архиве не закрывают пункт');
+  assert.equal(ideasOf(dir)[0].status, 'taken', 'снова взят — ждёт следующей части');
+  assert.match(buildContext(p, loadConfig(p.config)), /Делаются частями: I1 — готово 2 \(part-1, part-2\)\. Следующую часть планируй с --part/);
+  plan('part-3');
+  assert.equal(cli155(['approval', 'request', 'part-3', '--idea', 'I1', '--part'], dir).status, 0);
+  assert.deepEqual(ideasOf(dir)[0].parts, ['part-1', 'part-2', 'part-3']);
+  archive(dir, 'part-3'); finishIdeas(p, { ideas: { enabled: true } });
+  const done = cli155(['ideas', 'done', 'I1', '--change', 'part-3'], dir);
+  assert.equal(done.status, 0, done.stderr); assert.equal(ideasOf(dir)[0].status, 'done');
+});
+
+test('0.18.8 пункт, который владелец вернул во взятые после ошибочного закрытия, — прошлая часть остаётся в списке частей', () => {
+  const data = { ideas: [] }; addIdea(data, idea({ size: 'L' }));
+  Object.assign(data.ideas[0], { status: 'taken', change: 'old-part' });
+  return import('../src/ideas.js').then(({ planIdeaPart }) => {
+    assert.equal(planIdeaPart(data, 'I1', 'next-part').error, null);
+    assert.deepEqual(data.ideas[0].parts, ['old-part', 'next-part']); assert.equal(data.ideas[0].status, 'planned');
+    assert.match(planIdeaPart({ ideas: [{ id: 'I2', status: 'proposed' }] }, 'I2', 'x').error, /не взят/);
+  });
+});
