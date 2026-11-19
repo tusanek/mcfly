@@ -105,15 +105,35 @@ export function markFirst(data, id, now = new Date()) {
   idea.first_at = now.toISOString();
   return { idea, error: null };
 }
-/** Спланированные пункты, чьё изменение ушло из openspec/changes (заархивировано), — сделаны. */
+/**
+ * Спланированные пункты, чьё изменение ушло из openspec/changes (заархивировано), — сделаны.
+ * 0.18.8: пункт, который делается частями (parts), после части не закрывается, а снова становится взятым — команда
+ * планирует следующую часть (`approval request --idea <Iн> --part`) или закрывает его после последней (`mcfly ideas done`).
+ */
 export function syncDoneIdeas(data, changesDir, now = new Date()) {
   const done = [];
   for (const x of data.ideas) {
     if (x.status !== 'planned' || !x.change) continue;
     let alive = false; try { alive = fs.statSync(path.join(changesDir, x.change)).isDirectory(); } catch {}
-    if (!alive && !transitionIdea(data, x.id, 'done', { actor: 'team', now }).error) done.push(x);
+    if (alive) continue;
+    if (x.parts?.length) { Object.assign(x, { status: 'taken', decided_at: now.toISOString() }); continue; }
+    if (!transitionIdea(data, x.id, 'done', { actor: 'team', now }).error) done.push(x);
   }
   return done;
+}
+/**
+ * План одной части большого пункта (0.18.8, `approval request --idea <Iн> --part`): взятый или уже спланированный пункт
+ * становится спланированным по этой части, а изменения всех частей копятся в idea.parts. Такой пункт не закрывается
+ * сам при архивации части — только командой `mcfly ideas done <Iн> --change <последняя часть>`. Возвращает { idea, error }.
+ */
+export function planIdeaPart(data, id, change, now = new Date()) {
+  const idea = findIdea(data, id);
+  if (!idea) return { idea: null, error: 'такого предложения нет' };
+  if (!['taken', 'planned'].includes(idea.status)) return { idea, error: `пункт не взят владельцем (статус: ${IDEA_STATUS_RU[idea.status] || idea.status})` };
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(String(change))) return { idea, error: 'нужно имя изменения (латиница, цифры, дефис)' };
+  const parts = [...new Set([...(idea.parts || []), ...(idea.change && !idea.parts ? [idea.change] : []), change])];
+  Object.assign(idea, { status: 'planned', change, parts, decided_at: now.toISOString() });
+  return { idea, error: null };
 }
 /** Кратко для «Статуса» и сводки: { taken: [id], proposed, owner } или null (список выключен или файл испорчен). */
 export function ideasBrief(p, cfg) {

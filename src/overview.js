@@ -329,7 +329,9 @@ export function ideasView(p, cfg, { page = 1 } = {}) {
   const L = [...head];
   if (v.active.length) {
     const approval = Object.fromEntries(listChanges(p.openspecChanges).map((c) => [c.name, c.mcfly.approval]));
-    L.push('', ...v.active.map((x) => (x.status === 'taken'
+    L.push('', ...v.active.map((x) => (x.status === 'taken' && x.parts?.length
+      ? `🧩 ${escHtml(x.id)} — делается частями, готово ${x.parts.length}, команда планирует следующую: ${escHtml(x.title)}`
+      : x.status === 'taken'
       ? `${x.first_at ? '⬆' : x.ux ? '😖' : '⏳'} ${escHtml(x.id)} — ${x.first_at ? 'поднят вперёд, прогон начнёт с него' : x.ux ? 'неудобно, команда займётся первым делом' : 'ждёт прогона'}: ${escHtml(x.title)}`
       : approval[x.change] === 'approved'
         ? `🔧 ${escHtml(x.id)} — план одобрен, команда делает: ${escHtml(x.title)}`

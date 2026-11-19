@@ -109,10 +109,11 @@ export function finishIdeas(p, cfg, info = {}) {
   if (!cfg.ideas?.enabled) return [];
   try {
     const d = loadIdeas(p); if (d.error) return [];
+    const before = JSON.stringify(d.ideas); // 0.18.8: пункт частями возвращается во взятые — это тоже изменение
     const done = syncDoneIdeas(d, p.openspecChanges);
     // 0.11.0: сделанный пункт бэклога владельца отмечается в mcfly/goals.md (info.goals — тексты отмеченных пунктов)
     info.goals = tickGoals(p, d.ideas.filter((x) => x.status === 'done' && x.source === 'owner-backlog' && !x.goal_checked));
-    if (done.length || info.goals.length) saveIdeas(p, d);
+    if (done.length || info.goals.length || JSON.stringify(d.ideas) !== before) saveIdeas(p, d);
     return done;
   } catch { return []; } // список — не повод терять коммит и итог прогона
 }
