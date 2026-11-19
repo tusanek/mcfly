@@ -10,7 +10,7 @@ import { currentRun } from './runner.js';
 import { MCFLY_ROOT } from './prompt.js';
 import { ensureDir, readJson, pad2 } from './util.js';
 import { listChanges, approvedWithWork, pendingApprovals } from './approvals.js';
-import { summaryKeyboard } from './summary.js';
+import { summaryKeyboard, summaryRetryDue } from './summary.js';
 import { enqueueNotice, flushNotices } from './notices.js';
 import { autoApproveAndStart } from './chain.js';
 import { ACTION_TYPES, handleActionMessage, spawnAction, ownerId } from './actions.js';
@@ -19,6 +19,11 @@ import { MAX_RUN_CHANGES } from './config.js';
 import { deliverDueReminders, remindersView } from './reminders.js';
 
 /** Дневной прогон отдельным процессом: опрос ответов не ждёт его конца. */
+/** 0.18.3: досылка утренней сводки отдельным процессом — сборка ролика не держит опрос бота. */
+export function spawnSummary(projectDir) {
+  spawn(process.execPath, [path.join(MCFLY_ROOT, 'bin', 'mcfly'), 'summary', '--send', '--retry', '--project', projectDir], { cwd: projectDir, detached: true, stdio: 'ignore' }).unref();
+}
+
 export function spawnDayRun(projectDir, { chained = false, changes = null } = {}) {
   const env = { ...process.env }; if (chained) env.MCFLY_CHAINED = '1'; else delete env.MCFLY_CHAINED;
   spawn(process.execPath, [path.join(MCFLY_ROOT, 'bin', 'mcfly'), 'run', '--mode', 'day', '--project', projectDir, ...(changes ? ['--changes', String(changes)] : [])], { cwd: projectDir, detached: true, stdio: 'ignore', env }).unref();
@@ -88,7 +93,7 @@ export function errorLine(e) {
  */
 export async function pullAnswers({ projectDir, cfg, p, log = console.log, telegram = null, now = new Date(), startRun = spawnDayRun,
   startAction = (kind, id, ticket) => spawnAction(projectDir, kind, id, ticket),
-  timeoutSec = 0, lockWaitMs = 0, sleep = realSleep, quietEmpty = false, session = {}, flush = false }) {
+  timeoutSec = 0, lockWaitMs = 0, sleep = realSleep, quietEmpty = false, session = {}, flush = false, startSummary = spawnSummary }) {
   const token = process.env[cfg.telegram.token_env];
   if (!token || !cfg.telegram.chat_id) { log('Telegram не настроен (нет токена или chat_id), опрос пропущен.'); return { applied: 0, messages: [], disabled: true }; }
   const tg = telegram || createTelegram({ token });
@@ -124,14 +129,14 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
       if (!count && cfg.limits.run_choices.length) { choiceRow = runChoiceRow(cfg, lastChoice, { force: FORCE_RE.test(text) }); return 'Сколько изменений взять за этот прогон?'; }
       const n = count ? Math.min(count, MAX_RUN_CHANGES) : null;
       session.runStartedAt = Date.now(); if (n) startRun(projectDir, { changes: n }); else startRun(projectDir); started = true;
-      if (n) { state.run_changes = n; lastChoice = n; saveState(p, state); }
+      if (n) { lastChoice = n; saveState(p, { ...loadState(p), run_changes: n }); }
       return `▶️ Запускаю прогон${n ? ` — изменений не больше ${n}` : ''} — итог придёт сообщением`;
     };
     // Сбой применения (не сеть) не должен оставлять offset на месте: иначе цикл применял бы ту же пачку каждые 12 с
     // (дубли в answers.md, повторные одобрения и «запусти»). Пачка пропускается, человек получает предупреждение.
     try { acks = applyMessages(p, messages, { now, onRun, cfg }); }
     catch (e) { log(`Сообщения из Telegram не применены: ${errorLine(e)}`); acks = [`⚠️ Не удалось применить сообщения (${messages.length}): ${errorLine(e)}. Повторите их позже.`]; }
-    if (nextOffset) { state.telegram_offset = nextOffset; saveState(p, state); }
+    if (nextOffset) saveState(p, { ...loadState(p), telegram_offset: nextOffset });
   } finally { releasePullLock(p, lock); }
   // Нажатие кнопки ждёт ответа, иначе Telegram крутит на ней индикатор; устаревшее нажатие API отклоняет — не страшно.
   for (const m of messages.filter((x) => x.callbackId)) { try { await tg.answerCallbackQuery(m.callbackId, 'Принято'); } catch {} }
@@ -178,9 +183,20 @@ export async function pullAnswers({ projectDir, cfg, p, log = console.log, teleg
       await handleActionMessage({ parsed, p, cfg, now, spawn: startAction, send });
     } catch (e) { log(`Ответ на действие не отправлен: ${errorLine(e)}`); }
   }
-  if (flush) await flushNotices(p, (text, kb, o = {}) => tg.sendMessage(cfg.telegram.chat_id, text, { keyboard: kb, html: !!o.html }), { now, log });
+  if (flush) {
+    await flushNotices(p, (text, kb, o = {}) => tg.sendMessage(cfg.telegram.chat_id, text, { keyboard: kb, html: !!o.html }), { now, log });
+    retrySummary(p, projectDir, { now, log, startSummary });
+  }
   if (messages.length || !quietEmpty) log(`Telegram: сообщений ${messages.length}, применено ${acks.length}.`);
   return { applied: acks.length, messages };
+}
+
+/** 0.18.3: связь есть, а утренняя сводка не ушла — дослать (в тот же день до 18:00), позже — снять пометку. */
+export function retrySummary(p, projectDir, { now = new Date(), log = () => {}, startSummary = spawnSummary } = {}) {
+  const state = loadState(p); const due = summaryRetryDue(state, now);
+  if (due === 'drop') { delete state.summary_pending; saveState(p, state); log('Утреннюю сводку дослать не удалось — следующая охватит и этот день.'); }
+  else if (due === 'start') { state.summary_pending.retry_at = now.toISOString(); saveState(p, state); startSummary(projectDir); log('Связь есть — досылаю утреннюю сводку.'); }
+  return due;
 }
 
 /**

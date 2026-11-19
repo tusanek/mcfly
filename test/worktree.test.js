@@ -45,6 +45,35 @@ test('0.18.0: нет папки в основном каталоге — код 
   assert.equal(none.code, 0); assert.match(none.out, /Общих папок нет/);
 });
 
+/** Запуск из каталога cwd с MCFLY_PROJECT_DIR, как в прогоне: runner кладёт туда основной каталог. */
+async function inDir(cwd, argv, env = {}) {
+  const was = process.cwd(); const saved = {};
+  for (const [k, v] of Object.entries(env)) { saved[k] = process.env[k]; process.env[k] = v; }
+  process.chdir(cwd);
+  try { return await quiet(argv); } finally {
+    process.chdir(was);
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+}
+
+test('0.18.1: в прогоне (MCFLY_PROJECT_DIR — основной каталог) из worktree агента ссылка создаётся', async () => {
+  const { dir, wt } = project(['miniapp/node_modules']);
+  const r = await inDir(wt, ['worktree', 'link'], { MCFLY_PROJECT_DIR: dir });
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /Подключено: miniapp\/node_modules/);
+  assert.ok(fs.lstatSync(path.join(wt, 'miniapp', 'node_modules')).isSymbolicLink());
+  assert.equal(git(wt, 'status', '--porcelain'), '');
+});
+
+test('0.18.1: --project с основным каталогом из worktree — ссылка в текущем worktree; из основного каталога — ссылки не нужны', async () => {
+  const { dir, wt } = project(['miniapp/node_modules']);
+  const r = await inDir(wt, ['worktree', 'link', '--project', dir], { MCFLY_PROJECT_DIR: dir });
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /Подключено/);
+  assert.ok(fs.lstatSync(path.join(wt, 'miniapp', 'node_modules')).isSymbolicLink());
+  const m = await inDir(dir, ['worktree', 'link'], { MCFLY_PROJECT_DIR: dir });
+  assert.equal(m.code, 0); assert.match(m.out, /Это основной каталог проекта/);
+  assert.ok(fs.lstatSync(path.join(dir, 'miniapp', 'node_modules')).isDirectory(), 'в основном каталоге папка не тронута');
+});
+
 test('0.18.0: worktree.shared проверяется при загрузке, попадает в контекст, разрешена в настройках проекта', () => {
   const dir = bareProject(); const ok = loadConfig(paths(dir).config);
   assert.deepEqual(ok.worktree.shared, []);

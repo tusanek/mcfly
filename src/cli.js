@@ -13,7 +13,7 @@ import { pullAnswers, pollAnswers } from './pull.js';
 import { buildContext, isMcflyProject, hasProduct } from './context.js';
 import { loadQuestions, saveQuestions, addQuestion, expireQuestions, openQuestions } from './questions.js';
 import { branchProgress, commitPaths } from './git.js';
-import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, approveFast, fastPlanIntact, followupBlock, fastKind, writeCategory, priorityOf } from './approvals.js';
+import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, approveFast, fastPlanIntact, followupBlock, fastKind, writeCategory, priorityOf, markNoSpecs } from './approvals.js';
 import { appendMetric, readMetrics, aggregate, formatEvents } from './metrics.js';
 import { createTelegram, extractMessages } from './telegram.js';
 import * as schedule from './schedule.js';
@@ -66,11 +66,17 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   remind list | remind rm <Rн>                    напоминания владельцу (ставятся в боте: «напомни 19:00 текст»)
 Общие флаги: --project <dir> (по умолчанию текущий каталог или MCFLY_PROJECT_DIR)`;
 
+/**
+ * Код выхода `mcfly run` для launchd. 0.18.2: пропуск из-за идущего прогона (locked) — штатный, как пропущенный слот:
+ * иначе `schedule status` показывал у ночного задания «последний выход с кодом 1», хотя ничего не сломалось.
+ */
+export const runExitCode = (status) => (['ok', 'dry-run', 'missed', 'locked'].includes(status) ? 0 : 1);
+
 export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
     project: { type: 'string' }, mode: { type: 'string' }, changes: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, weekly: { type: 'boolean' }, director: { type: 'string' }, list: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
-    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, followup: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
+    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, retry: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, followup: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
   const givenDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
   // init — в указанном каталоге, shift — сам различает сессию и основное дерево; остальные — в основном дереве проекта
@@ -117,7 +123,7 @@ export async function main(argv) {
         changes = Number(values.changes);
         if (!(Number.isInteger(changes) && changes >= 1 && changes <= MAX_RUN_CHANGES)) { console.error(`--changes: целое число от 1 до ${MAX_RUN_CHANGES}`); return 1; }
       }
-      const r = await run({ projectDir, mode: values.mode || 'day', dryRun: !!values['dry-run'], now, log, changes }); return ['ok', 'dry-run', 'missed'].includes(r.status) ? 0 : 1; }
+      const r = await run({ projectDir, mode: values.mode || 'day', dryRun: !!values['dry-run'], now, log, changes }); return runExitCode(r.status); }
     case 'summary': {
       if (values.weekly && values.list) {
         // Только полный список недели: без --send — файл виджета для просмотра в браузере и его размер, с --send — отправить
@@ -138,7 +144,7 @@ export async function main(argv) {
         log(`${w.caption}\nВиджет: ${file} (${Buffer.byteLength(w.html)} байт, после сжатия ${packedSize(w.html)} из 4096)`); return 0;
       }
       if (values.weekly) { const { sendWeekly, composeWeekly } = await import('./weekly.js'); if (values.send) await sendWeekly(p, cfg, { now, log }); else log(htmlToPlain(composeWeekly(p, cfg, { now }))); return 0; }
-      if (values.send) await sendSummary(p, cfg, { now, log }); else { const since = new Date(now.getTime() - 24 * 3600_000); log(htmlToPlain(composeSummary(p, cfg, { now, since }))); log(`\n${techTail(p, cfg, { since })}`); } return 0; }
+      if (values.send) await sendSummary(p, cfg, { now, log, retry: !!values.retry }); else { const since = new Date(now.getTime() - 24 * 3600_000); log(htmlToPlain(composeSummary(p, cfg, { now, since }))); log(`\n${techTail(p, cfg, { since })}`); } return 0; }
     case 'answers': {
       // Задание launchd (answers --project …) — длинный опрос почти до следующего запуска: ответ на «запусти» и кнопки за секунды.
       // Чтения одного offset исключает блокировка опроса (pull.js); прогон до 0.5.4 читает без неё — пока он идёт, не читаем.
@@ -233,9 +239,10 @@ export async function main(argv) {
           if (block) { console.error(`Доделка ${c.name} не принята: ${block}. Удалите черновик изменения и оформите предложением — mcfly ideas add --source team …: владелец решит кнопкой «Берём».`); return 1; }
           writeCategory(c, category);
           approveFast(c, `доделка к ${parent}${fastKind(c) === 'edit' ? ', правка существующего' : ', снаружи ничего не меняется'}`, now, { by: 'followup', followupOf: parent });
+          const noSpecs = markNoSpecs(c); // 0.18.5: уборка без дельт проходит openspec validate --strict
           appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_followup', value: 1, change: c.name });
           appendText(p.answers, `\n## ${fmtLocal(now)} — ${c.name} одобрено сразу как доделка к ${parent}\n`);
-          log(`Одобрено сразу: ${c.name} (доделка к ${parent}). Реализуйте её в этом же прогоне после задач владельца.`); return 0;
+          log(`Одобрено сразу: ${c.name} (доделка к ${parent}). Реализуйте её в этом же прогоне после задач владельца.${noSpecs ? ' Дельт спецификаций нет — mcfly поставил skip_specs: true; поведение не меняйте.' : ''}`); return 0;
         }
         let idea = null; let ideas = []; let items = [];
         if (values.idea) {
@@ -380,12 +387,18 @@ export async function main(argv) {
       const { linkShared } = await import('./worktree.js');
       const shared = cfg.worktree.shared;
       if (!shared.length) { log('Общих папок нет (worktree.shared пуст) — подключать нечего.'); return 0; }
-      const top = fs.realpathSync(givenDir);
-      if (top === fs.realpathSync(projectDir)) { log('Это основной каталог проекта: общие папки здесь свои, ссылки не нужны.'); return 0; }
-      const r = linkShared({ worktreeDir: top, mainDir: projectDir, shared });
+      // 0.18.1: «где я» — --project или текущий каталог, но не MCFLY_PROJECT_DIR: runner кладёт туда основной каталог,
+      // и из worktree агента команда отвечала «это основной каталог». --project с основным каталогом из worktree — тоже текущий.
+      const { projectRoot } = await import('./shift-git.js');
+      const cwd = fs.realpathSync(process.cwd());
+      let top = fs.realpathSync(values.project ? path.resolve(values.project) : cwd);
+      let mainDir = fs.realpathSync(projectRoot(top));
+      if (top === mainDir && cwd !== mainDir && fs.realpathSync(projectRoot(cwd)) === mainDir) top = cwd;
+      if (top === mainDir) { log('Это основной каталог проекта: общие папки здесь свои, ссылки не нужны. В worktree запускай из его каталога или с --project <каталог worktree>.'); return 0; }
+      const r = linkShared({ worktreeDir: top, mainDir, shared });
       if (r.linked.length) log(`Подключено: ${r.linked.join(', ')}`);
       if (r.present.length) log(`Уже есть: ${r.present.join(', ')}`);
-      if (r.missing.length) { console.error(`Нет в основном каталоге ${projectDir}: ${r.missing.join(', ')} — зависимости ставит лид или devops в основном каталоге; сообщи лиду.`); return 1; }
+      if (r.missing.length) { console.error(`Нет в основном каталоге ${mainDir}: ${r.missing.join(', ')} — зависимости ставит лид или devops в основном каталоге; сообщи лиду.`); return 1; }
       return 0;
     }
     case 'finding': {
