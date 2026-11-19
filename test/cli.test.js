@@ -234,3 +234,17 @@ test('0.18.2: прогон, пропущенный из-за идущего (loc
   for (const s of ['ok', 'dry-run', 'missed', 'locked']) assert.equal(runExitCode(s), 0, s);
   for (const s of ['error', 'quota', 'network', 'timeout']) assert.equal(runExitCode(s), 1, s);
 });
+
+test('0.19.0: samples template — кладёт шаблон чата в проект, повтор не перезаписывает', () => {
+  const dir = tmpDir(); cli(['init', '--name', 'demo'], dir);
+  const r = cli(['samples', 'template'], dir);
+  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /Шаблон: design\/samples\/telegram-chat\.html/);
+  const file = path.join(dir, 'design', 'samples', 'telegram-chat.html');
+  const html = fs.readFileSync(file, 'utf8');
+  assert.match(html, /theme=dark|theme === 'dark'|"dark"/); assert.match(html, /390px/);
+  assert.match(html, /<!-- ТЕКСТ -->/); assert.match(html, /<!-- КНОПКИ -->/);
+  fs.writeFileSync(file, 'моя правка');
+  const again = cli(['samples', 'template'], dir);
+  assert.equal(again.status, 0); assert.match(again.stdout, /Уже есть: design\/samples\/telegram-chat\.html/);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'моя правка');
+});

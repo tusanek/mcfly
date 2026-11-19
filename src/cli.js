@@ -58,6 +58,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   action list | trust | run <id> [--yes]          действия владельца из раздела actions: список, подтверждение раздела
                                                   (только в терминале), запуск из терминала (итог и в Telegram)
   action prepare|exec <id> --ticket <t>           служебные: их запускает бот после нажатия кнопки
+  samples template                              шаблон «чат Telegram» для картинок образцов сообщений бота → design/samples/telegram-chat.html
   worktree link                                 в своём worktree: ссылки на общие папки основного каталога (worktree.shared, например node_modules)
   finding add --text <t> [--evidence <t>]        находка для доработки самого mcfly (не проекта); владелец решает в боте, передавать ли
   finding list | finding send <Fн> | finding drop <Fн>   список; передать в общий ящик или убрать (только владелец в терминале)
@@ -386,6 +387,17 @@ export async function main(argv) {
         return r.status === 'ok' ? 0 : 1;
       }
       break;
+    }
+    case 'samples': {
+      // 0.19.0: шаблон «чат Telegram» для картинок образцов: копия в проект, своя правка не перезаписывается
+      if (sub !== 'template') { console.error('mcfly samples template'); return 1; }
+      const rel = path.join('design', 'samples', 'telegram-chat.html'); const dst = path.join(projectDir, rel);
+      if (fs.existsSync(dst)) { log(`Уже есть: ${rel}`); return 0; }
+      fs.mkdirSync(path.dirname(dst), { recursive: true });
+      fs.copyFileSync(path.join(MCFLY_ROOT, 'templates', 'design', 'telegram-chat.html'), dst);
+      log(`Шаблон: ${rel}`);
+      log('Скопируй его под образец (design/samples/<изменение>/NN.html), впиши текст у метки ТЕКСТ и кнопки у метки КНОПКИ, сними элемент #shot Playwright при ширине 390 — светлая тема и ?theme=dark — в NN-light.png и NN-dark.png, а в proposal.md под образцом добавь строки «Картинка: <путь>».');
+      return 0;
     }
     case 'worktree': {
       if (sub !== 'link') { console.error('mcfly worktree link'); return 1; }
