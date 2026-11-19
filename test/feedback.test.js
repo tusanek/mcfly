@@ -230,3 +230,46 @@ test('0.7.0: «запусти» — взятый пункт запускает �
   await pullAnswers({ projectDir: dir, cfg: tgCfg, p, telegram: tg, log: () => {}, startRun: (x) => started.push(x) });
   assert.deepEqual(started, [dir]); assert.match(tg.sent[0].text, /▶️ Запускаю/);
 });
+
+test('0.18.3: сводка не ушла — пометка для досылки; досылка при связи, без повторной тревоги; удача снимает пометку', async () => {
+  const { loadState } = await import('../src/state.js');
+  const { retrySummary } = await import('../src/pull.js');
+  const dir = bareProject(); const p = paths(dir); const c = { ...cfg, telegram: { chat_id: '1', token_env: 'TOK' } }; process.env.TOK = 'x';
+  saveState(p, { last_summary_at: '2026-11-17T06:00:00Z', telegram_offset: 7 });
+  const at = (h, m = 0) => new Date(2026, 10, 18, h, m);
+  const down = { sendMessage: async () => { throw new Error('fetch failed'); } };
+  await assert.rejects(sendSummary(p, c, { telegram: down, log: () => {}, now: at(9) }));
+  assert.equal(loadState(p).summary_pending.failed_at, at(9).toISOString());
+  assert.match(fs.readFileSync(noticesPath(p), 'utf8'), /дошлю, как появится связь/);
+  assert.equal(loadState(p).telegram_offset, 7, 'остальное состояние не тронуто');
+
+  const started = [];
+  assert.equal(retrySummary(p, dir, { now: at(10), startSummary: (d) => started.push(d) }), 'start');
+  assert.equal(retrySummary(p, dir, { now: at(10, 10), startSummary: (d) => started.push(d) }), null, 'не чаще раза в 20 минут');
+  assert.deepEqual(started, [dir]);
+
+  // досылка тоже не прошла — тревоги второй раз нет, время сбоя прежнее
+  fs.rmSync(noticesPath(p));
+  await assert.rejects(sendSummary(p, c, { telegram: down, log: () => {}, now: at(10, 1), retry: true }));
+  assert.ok(!fs.existsSync(noticesPath(p)), 'тревога не повторяется');
+  assert.equal(loadState(p).summary_pending.failed_at, at(9).toISOString());
+  assert.equal(retrySummary(p, dir, { now: at(10, 30), startSummary: (d) => started.push(d) }), 'start');
+
+  const sent = []; const up = { sendMessage: async (_c, t) => { sent.push(t); return [{ message_id: 1 }]; } };
+  const r = await sendSummary(p, c, { telegram: up, log: () => {}, now: at(10, 31), retry: true });
+  assert.equal(r.sent, true); assert.ok(sent.length);
+  const s = loadState(p); assert.equal(s.summary_pending, undefined); assert.equal(s.last_summary_at, at(10, 31).toISOString());
+  assert.equal(retrySummary(p, dir, { now: at(11), startSummary: (d) => started.push(d) }), null);
+});
+
+test('0.18.3: после 18:00 и на следующий день сводку не досылаем — пометка снимается, период остаётся для следующей', async () => {
+  const { loadState } = await import('../src/state.js');
+  const { retrySummary } = await import('../src/pull.js');
+  const dir = bareProject(); const p = paths(dir); const started = [];
+  for (const now of [new Date(2026, 10, 18, 18, 5), new Date(2026, 10, 19, 8)]) {
+    saveState(p, { last_summary_at: '2026-11-17T06:00:00Z', summary_pending: { failed_at: new Date(2026, 10, 18, 9).toISOString() } });
+    assert.equal(retrySummary(p, dir, { now, startSummary: (d) => started.push(d) }), 'drop');
+    assert.equal(loadState(p).summary_pending, undefined); assert.equal(loadState(p).last_summary_at, '2026-11-17T06:00:00Z');
+  }
+  assert.deepEqual(started, []);
+});

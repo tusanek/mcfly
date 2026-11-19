@@ -76,7 +76,7 @@ export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
     project: { type: 'string' }, mode: { type: 'string' }, changes: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, weekly: { type: 'boolean' }, director: { type: 'string' }, list: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
-    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, followup: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
+    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, retry: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, followup: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
   const givenDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
   // init — в указанном каталоге, shift — сам различает сессию и основное дерево; остальные — в основном дереве проекта
@@ -144,7 +144,7 @@ export async function main(argv) {
         log(`${w.caption}\nВиджет: ${file} (${Buffer.byteLength(w.html)} байт, после сжатия ${packedSize(w.html)} из 4096)`); return 0;
       }
       if (values.weekly) { const { sendWeekly, composeWeekly } = await import('./weekly.js'); if (values.send) await sendWeekly(p, cfg, { now, log }); else log(htmlToPlain(composeWeekly(p, cfg, { now }))); return 0; }
-      if (values.send) await sendSummary(p, cfg, { now, log }); else { const since = new Date(now.getTime() - 24 * 3600_000); log(htmlToPlain(composeSummary(p, cfg, { now, since }))); log(`\n${techTail(p, cfg, { since })}`); } return 0; }
+      if (values.send) await sendSummary(p, cfg, { now, log, retry: !!values.retry }); else { const since = new Date(now.getTime() - 24 * 3600_000); log(htmlToPlain(composeSummary(p, cfg, { now, since }))); log(`\n${techTail(p, cfg, { since })}`); } return 0; }
     case 'answers': {
       // Задание launchd (answers --project …) — длинный опрос почти до следующего запуска: ответ на «запусти» и кнопки за секунды.
       // Чтения одного offset исключает блокировка опроса (pull.js); прогон до 0.5.4 читает без неё — пока он идёт, не читаем.

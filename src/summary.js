@@ -439,7 +439,25 @@ export function summaryKeyboard(p, cfg) {
   return rows;
 }
 
-export async function sendSummary(p, cfg, { now = new Date(), telegram = null, log = console.log, video = sendSummaryVideo } = {}) {
+/** 0.18.3: досылка утренней сводки после сбоя связи — только в тот же день и до этого часа, не чаще раза в SUMMARY_RETRY_EVERY_MIN минут. */
+export const SUMMARY_RETRY_UNTIL_HOUR = 18;
+export const SUMMARY_RETRY_EVERY_MIN = 20;
+/**
+ * Что делать с неотправленной сводкой (state.summary_pending): 'start' — запустить досылку, 'drop' — поздно, снять пометку
+ * (last_summary_at не двигался — завтрашняя сводка охватит и этот день), null — ничего.
+ */
+export function summaryRetryDue(state, now = new Date()) {
+  const pend = state?.summary_pending; if (!pend?.failed_at) return null;
+  const failed = new Date(pend.failed_at);
+  if (failed.toDateString() !== now.toDateString() || now.getHours() >= SUMMARY_RETRY_UNTIL_HOUR) return 'drop';
+  if (pend.retry_at && now - new Date(pend.retry_at) < SUMMARY_RETRY_EVERY_MIN * 60_000) return null;
+  return 'start';
+}
+
+/** Сбой связи с Telegram (сеть, нет ответа, 502–504 прокси), а не отказ API: такую отправку есть смысл повторить. */
+export const isLinkError = (e) => /fetch failed|нет ответа|HTTP 50[234]|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|getaddrinfo/i.test(`${e?.message || e} ${e?.cause?.code || ''}`);
+/** retry (0.18.3) — досылка из задания answers: при новом сбое тревогу не повторяет, пометка остаётся. */
+export async function sendSummary(p, cfg, { now = new Date(), telegram = null, log = console.log, video = sendSummaryVideo, retry = false } = {}) {
   const state = loadState(p);
   const since = state.last_summary_at ? new Date(state.last_summary_at) : new Date(now.getTime() - 24 * 3600_000);
   const data = summaryData(p, cfg, { now, since }); const html = data.html;
@@ -453,11 +471,18 @@ export async function sendSummary(p, cfg, { now = new Date(), telegram = null, l
     for (const [i, part] of parts.entries()) { const sent = await tg.sendMessage(cfg.telegram.chat_id, part, { html: true, keyboard: i === 0 ? keyboard : null }); if (i === 0) firstId = sent?.[0]?.message_id ?? null; }
   } catch (e) {
     // Короткая тревога простым текстом; last_summary_at не двигается — следующая сводка охватит и этот период. Ошибка — дальше, launchd увидит код 1.
-    const alarm = `⚠️ mcfly ${cfg.project}: сводка не отправлена (${truncate(String(e?.message || e), 300)}), смотрите \`mcfly summary\``;
+    // 0.18.3: сбой связи (не отказ Telegram) — пометка для досылки: задание answers отправит сводку при первой удачной связи в тот же день
+    // Отказ API при досылке — пометку снять: повтор не поможет.
+    const link = isLinkError(e); const st = loadState(p);
+    if (link) st.summary_pending = { ...st.summary_pending, failed_at: retry && st.summary_pending?.failed_at ? st.summary_pending.failed_at : now.toISOString() };
+    else delete st.summary_pending;
+    saveState(p, st);
+    if (retry) throw e;
+    const alarm = `⚠️ mcfly ${cfg.project}: сводка не отправлена (${truncate(String(e?.message || e), 300)})${link ? `; дошлю, как появится связь (до ${SUMMARY_RETRY_UNTIL_HOUR}:00)` : ''}, смотрите \`mcfly summary\``;
     try { await tg.sendMessage(cfg.telegram.chat_id, alarm); } catch (e2) { log(`Тревога тоже не отправлена: ${e2?.message || e2}; поставлена в очередь.`); enqueueNotice(p, { text: alarm }, now); }
     throw e;
   }
-  state.last_summary_at = now.toISOString(); saveState(p, state);
+  const fresh = loadState(p); fresh.last_summary_at = now.toISOString(); delete fresh.summary_pending; saveState(p, fresh);
   log(`Сводка отправлена (${html.length} символов${parts.length > 1 ? `, сообщений ${parts.length}` : ''}).`);
   // 0.12.0: ролик — после текста и отдельным сообщением; его сбой сводку не срывает
   const clip = cfg.video?.enabled ? await video(p, cfg, { data, tg, now, replyTo: firstId, log }) : null;

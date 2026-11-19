@@ -723,3 +723,13 @@ test('0.9.0: changeTitle без пункта списка — первая фр�
   assert.equal(changeTitle(p, d).length, 82, '80 символов и кавычки'); assert.match(changeTitle(p, d), /^«длинное описание .*…»$/);
   assert.equal(changeTitle(p, d, undefined, { short: true }).length, 52);
 });
+test('0.18.3: отказ Telegram (не связь) — без пометки досылки и без «дошлю» в тревоге', async () => {
+  const dir = bareProject(); const p = paths(dir);
+  saveState(p, { last_summary_at: '2026-10-01T07:30:00.109Z' });
+  const sent = [];
+  const tg = { sendMessage: async (_c, t, opts = {}) => { sent.push(t); if (opts.html) throw new Error('Telegram sendMessage: Bad Request: message is too long'); } };
+  process.env.TOK = 'x';
+  await assert.rejects(sendSummary(p, { ...cfg, telegram: { chat_id: '1', token_env: 'TOK' } }, { telegram: tg, now: NOW, log: () => {} }));
+  assert.equal(loadState(p).summary_pending, undefined);
+  assert.doesNotMatch(sent.at(-1), /дошлю/);
+});
