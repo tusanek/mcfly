@@ -13,7 +13,7 @@ import { pullAnswers, pollAnswers } from './pull.js';
 import { buildContext, isMcflyProject, hasProduct } from './context.js';
 import { loadQuestions, saveQuestions, addQuestion, expireQuestions, openQuestions } from './questions.js';
 import { branchProgress, commitPaths } from './git.js';
-import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, approveFast, fastPlanIntact, followupBlock, fastKind, writeCategory, priorityOf, markNoSpecs } from './approvals.js';
+import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, approveFast, fastPlanIntact, followupBlock, fastKind, writeCategory, priorityOf, markNoSpecs, proposalSamples } from './approvals.js';
 import { appendMetric, readMetrics, aggregate, formatEvents } from './metrics.js';
 import { createTelegram, extractMessages } from './telegram.js';
 import * as schedule from './schedule.js';
@@ -58,6 +58,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   action list | trust | run <id> [--yes]          действия владельца из раздела actions: список, подтверждение раздела
                                                   (только в терминале), запуск из терминала (итог и в Telegram)
   action prepare|exec <id> --ticket <t>           служебные: их запускает бот после нажатия кнопки
+  samples template                              шаблон «чат Telegram» для картинок образцов сообщений бота → design/samples/telegram-chat.html
   worktree link                                 в своём worktree: ссылки на общие папки основного каталога (worktree.shared, например node_modules)
   finding add --text <t> [--evidence <t>]        находка для доработки самого mcfly (не проекта); владелец решает в боте, передавать ли
   finding list | finding send <Fн> | finding drop <Fн>   список; передать в общий ящик или убрать (только владелец в терминале)
@@ -229,6 +230,8 @@ export async function main(argv) {
         if (hasProduct(p) && !/^##\s+Как это будет выглядеть\s*$/im.test(c.proposal || '')) {
           console.error(`В плане ${c.name} нет раздела «## Как это будет выглядеть». Если изменение меняет то, что человек видит или нажимает (сообщения и кнопки бота — тоже), лид вызывает mcfly:designer, и тот добавляет образцы; если нет — добавьте в proposal.md этот раздел с одной строкой «Снаружи ничего не меняется». Потом запросите одобрение снова.`); return 1;
         }
+        // 0.19.0: образцы владелец смотрит картинками — без них покажутся текстом; не отказ, а напоминание дизайнеру
+        { const samples = proposalSamples(c); if (samples.length && !samples.some((x) => x.images.length)) log('⚠ У образцов нет картинок: владелец увидит их текстом. Добавьте под образцами строки «Картинка: <путь>» (сообщения бота — по шаблону mcfly samples template).'); }
         if (values.followup != null) {
           // 0.17.0: доделка к завершённому изменению — без «Берём»: либо одобряется сразу по признакам плана, либо отказ
           // (тогда это обычное предложение в список). Одобрение молчанием для неё не запрашивается.
@@ -386,6 +389,17 @@ export async function main(argv) {
         return r.status === 'ok' ? 0 : 1;
       }
       break;
+    }
+    case 'samples': {
+      // 0.19.0: шаблон «чат Telegram» для картинок образцов: копия в проект, своя правка не перезаписывается
+      if (sub !== 'template') { console.error('mcfly samples template'); return 1; }
+      const rel = path.join('design', 'samples', 'telegram-chat.html'); const dst = path.join(projectDir, rel);
+      if (fs.existsSync(dst)) { log(`Уже есть: ${rel}`); return 0; }
+      fs.mkdirSync(path.dirname(dst), { recursive: true });
+      fs.copyFileSync(path.join(MCFLY_ROOT, 'templates', 'design', 'telegram-chat.html'), dst);
+      log(`Шаблон: ${rel}`);
+      log('Скопируй его под образец (design/samples/<изменение>/NN.html), впиши текст у метки ТЕКСТ и кнопки у метки КНОПКИ, сними элемент #shot Playwright при ширине 390 — светлая тема и ?theme=dark — в NN-light.png и NN-dark.png, а в proposal.md под образцом добавь строки «Картинка: <путь>».');
+      return 0;
     }
     case 'worktree': {
       if (sub !== 'link') { console.error('mcfly worktree link'); return 1; }

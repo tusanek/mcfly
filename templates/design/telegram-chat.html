@@ -1,0 +1,64 @@
+<!doctype html>
+<!--
+  Шаблон образца сообщения бота (mcfly 0.19.0): так сообщение выглядит в чате Telegram на телефоне.
+  Как пользоваться:
+  1. Скопируй файл под образец: design/samples/<изменение>/NN.html.
+  2. Впиши текст сообщения вместо примера у метки ТЕКСТ (переносы строк сохраняются, <b>жирный</b> и <i>курсив</i> можно)
+     и кнопки у метки КНОПКИ: один <div class="row"> — один ряд, внутри — <span class="btn">Подпись</span>.
+     Кнопок нет — удали блок .kb целиком. Несколько сообщений подряд — повтори блок .msg.
+  3. Сними картинку Playwright (только элемент #shot) в двух темах:
+     NN.html → NN-light.png, NN.html?theme=dark → NN-dark.png, ширина окна 390.
+  4. В proposal.md под образцом: «Картинка: design/samples/<изменение>/NN-light.png» и такая же строка для -dark.
+-->
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390">
+<title>Образец сообщения</title>
+<style>
+  :root {
+    --bg: #8fb37a; --pattern: rgba(255,255,255,.10);
+    --bubble: #ffffff; --text: #000000; --meta: #a0acb6; --link: #168acd;
+    --btn: rgba(0,0,0,.18); --btn-text: #ffffff; --bar: #ffffff; --bar-text: #000000; --bar-sub: #8c99a5;
+  }
+  :root.dark {
+    --bg: #0e1621; --pattern: rgba(255,255,255,.03);
+    --bubble: #182533; --text: #f5f5f5; --meta: #6d7f8f; --link: #6ab3f3;
+    --btn: rgba(255,255,255,.10); --btn-text: #ffffff; --bar: #17212b; --bar-text: #ffffff; --bar-sub: #6d7f8f;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { width: 390px; background: var(--bg); font: 16px/1.35 -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif; color: var(--text); }
+  #shot { width: 390px; background: var(--bg) radial-gradient(var(--pattern) 1.5px, transparent 1.5px) 0 0 / 22px 22px; padding-bottom: 14px; }
+  .bar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--bar); }
+  .ava { width: 38px; height: 38px; border-radius: 50%; background: linear-gradient(#72d5fd, #2a9ef1); color: #fff; font-weight: 600; display: grid; place-items: center; }
+  .name { color: var(--bar-text); font-weight: 600; font-size: 16px; }
+  .sub { color: var(--bar-sub); font-size: 13px; }
+  .msg { margin: 10px 56px 0 10px; }
+  .bubble { background: var(--bubble); border-radius: 16px 16px 16px 4px; padding: 7px 10px 6px 11px; white-space: pre-wrap; word-wrap: break-word; }
+  .bubble a { color: var(--link); text-decoration: none; }
+  .time { float: right; margin: 8px 0 -4px 10px; font-size: 12px; color: var(--meta); }
+  .kb { margin-top: 3px; display: flex; flex-direction: column; gap: 3px; }
+  .row { display: flex; gap: 3px; }
+  .btn { flex: 1; background: var(--btn); color: var(--btn-text); border-radius: 10px; padding: 9px 6px; text-align: center; font-size: 14px; font-weight: 500; backdrop-filter: blur(6px); }
+</style>
+<script>
+  if (new URLSearchParams(location.search).get('theme') === 'dark') document.documentElement.classList.add('dark');
+</script>
+</head>
+<body>
+<div id="shot">
+  <div class="bar"><div class="ava">Б</div><div><div class="name">Бот</div><div class="sub">бот</div></div></div>
+
+  <div class="msg">
+    <!-- ТЕКСТ -->
+    <div class="bubble">Что добавить на завтра?
+Можно голосом.<span class="time">22:30</span></div>
+    <!-- КНОПКИ -->
+    <div class="kb">
+      <div class="row"><span class="btn">Готово</span><span class="btn">Ничего не добавлять</span></div>
+      <div class="row"><span class="btn">Позже</span></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

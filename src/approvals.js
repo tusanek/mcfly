@@ -162,7 +162,12 @@ export function followupBlock(change, cfg, { parentArchived, used = 0, category 
  */
 export function planHash(change) {
   const tasks = readText(path.join(change.dir, 'tasks.md'), '').replace(/^(\s*[-*+] )\[[ xX]\]/gm, '$1[ ]');
-  return crypto.createHash('sha256').update(`${readText(path.join(change.dir, 'proposal.md'), '')}\n---\n${tasks}`).digest('hex').slice(0, 32);
+  // 0.19.0: строки «Картинка:» в отпечаток не входят — картинки к образцам можно дорисовать после одобрения
+  // Вырезаются только настоящие строки картинок: в разделе образцов, вне блока, с путём к PNG/JPG — иначе так можно было бы
+  // дописать в одобренный план что угодно, не вернув его владельцу.
+  const lines = readText(path.join(change.dir, 'proposal.md'), '').split('\n'); const skip = picturesInSamples(lines);
+  const proposal = lines.filter((_, i) => !skip.has(i)).join('\n');
+  return crypto.createHash('sha256').update(`${proposal}\n---\n${tasks}`).digest('hex').slice(0, 32);
 }
 /** Одобрить быстрым путём: решение кода по признакам плана; отпечаток плана сохраняется в метаданных. */
 export function approveFast(change, note = '', now = new Date(), { by = 'fast', followupOf = '' } = {}) {
@@ -250,25 +255,56 @@ const BUTTON_ROW = /^\s*(\[[^\[\]\n]+\]\s*)+$/;
  * в тройных обратных кавычках; строки вида «[Готово] [Отложить]» внутри блока — ряды кнопок. Раздела или блоков нет — пустой список
  * («Снаружи ничего не меняется» — не образец). Подзаголовок без блока — образец из одного заголовка: на экране ничего не появляется.
  */
+/** Строка картинки образца (0.19.0): «Картинка: <путь от корня проекта>». */
+const PICTURE = /^\s*Картинка\s*[:：]\s*(\S.*?)\s*$/;
+/** Путь картинки, который не входит в отпечаток плана: относительный, без «..», PNG/JPG, без пробелов. */
+const PICTURE_PATH = /^(?!\/)(?!.*(^|\/)\.\.(\/|$))[\p{L}\p{N}_.\/-]+\.(png|jpe?g)$/iu;
+/** Номера строк картинок образцов: в разделе «Как это будет выглядеть», вне блока, с допустимым путём. */
+function picturesInSamples(lines) {
+  const out = new Set(); let on = false; let fence = false;
+  lines.forEach((line, i) => {
+    if (!fence && /^##\s/.test(line)) { on = /^##\s+Как это будет выглядеть\s*$/i.test(line.trim()); return; }
+    if (!on) return;
+    if (/^\s*```/.test(line)) { fence = !fence; return; }
+    const m = !fence && PICTURE.exec(line);
+    if (m && PICTURE_PATH.test(m[1].trim())) out.add(i);
+  });
+  return out;
+}
+/** Файл картинки образца (0.19.0): абсолютный путь, если это PNG/JPG внутри проекта и он есть, иначе null. */
+export function sampleImage(projectDir, rel) {
+  // Проверка по настоящим путям (realpath): ссылка внутри проекта на файл снаружи — не картинка
+  try {
+    const root = fs.realpathSync(projectDir); const file = fs.realpathSync(path.resolve(root, String(rel || '')));
+    if (!file.startsWith(root + path.sep) || !/\.(png|jpe?g)$/i.test(file)) return null;
+    return fs.statSync(file).isFile() ? path.resolve(projectDir, String(rel)) : null;
+  } catch { return null; }
+}
 export function proposalSamples(change) {
   const out = []; let on = false; let fence = false; let title = ''; let cur = null;
+  // 0.19.0: картинки перед блоком ждут его (pending, обнуляется на каждом подзаголовке); после блока — к только что закрытому образцу
+  let pending = []; let closed = null;
   for (const line of String(change.proposal || '').split('\n')) {
     if (!fence && /^##\s/.test(line)) { on = /^##\s+Как это будет выглядеть\s*$/i.test(line.trim()); continue; }
     if (!on) continue;
     if (/^\s*```/.test(line)) {
       fence = !fence;
-      if (fence) cur = { title, lines: [] }; else { out.push(cur); cur = null; title = ''; }
+      if (fence) { cur = { title, lines: [], images: pending }; pending = []; } else { out.push(cur); closed = cur; cur = null; title = ''; }
       continue;
     }
     if (fence) { cur.lines.push(line); continue; }
+    // 0.19.0: «Картинка: <путь>» под подзаголовком — картинка образца (вне блока); относится к последнему образцу этого подзаголовка
+    const pic = PICTURE.exec(line);
+    if (pic) { (title || !closed ? pending : closed.images).push(pic[1].trim()); continue; }
     const h = /^###\s+(.+?)\s*$/.exec(line);
     // 0.11.0: подзаголовок без блока — случай, когда пользователь ничего не видит («Пишет кто-то другой — бот молчит»)
-    if (h) { if (title) out.push({ title, lines: [] }); title = h[1]; }
+    if (h) { if (title) out.push({ title, lines: [], images: pending }); pending = []; closed = null; title = h[1]; }
   }
-  if (title) out.push({ title, lines: [] });
+  if (title) out.push({ title, lines: [], images: pending });
   return out.map((x) => ({
     title: x.title,
     text: x.lines.filter((l) => !BUTTON_ROW.test(l)).join('\n').trim(),
     buttons: x.lines.filter((l) => BUTTON_ROW.test(l)).map((l) => [...l.matchAll(/\[([^\[\]\n]+)\]/g)].map((m) => m[1].trim())),
-  })).filter((x) => x.text || x.buttons.length || x.title);
+    images: x.images || [],
+  })).filter((x) => x.text || x.buttons.length || x.title || x.images.length);
 }

@@ -72,6 +72,28 @@ export function createTelegram({ token, fetchImpl = globalThis.fetch, timeoutMs 
       return data.result;
     },
     /**
+     * Картинки образцов (0.19.0): несколько — альбомом (sendMediaGroup, до 10), одна — sendPhoto. Подпись — у первой.
+     */
+    async sendPhotos(chatId, files, { caption = '', uploadTimeoutMs = 60_000 } = {}) {
+      const list = files.slice(0, 10); const method = list.length > 1 ? 'sendMediaGroup' : 'sendPhoto';
+      const form = new FormData(); form.set('chat_id', String(chatId));
+      const blob = (f) => new Blob([fs.readFileSync(f)], { type: /\.png$/i.test(f) ? 'image/png' : 'image/jpeg' });
+      if (method === 'sendPhoto') { form.set('photo', blob(list[0]), path.basename(list[0])); if (caption) form.set('caption', caption); }
+      else {
+        form.set('media', JSON.stringify(list.map((_, i) => ({ type: 'photo', media: `attach://p${i}`, ...(i === 0 && caption ? { caption } : {}) }))));
+        list.forEach((f, i) => form.set(`p${i}`, blob(f), path.basename(f)));
+      }
+      let res;
+      try { res = await fetchImpl(`${base}/${method}`, { method: 'POST', body: form, signal: AbortSignal.timeout(uploadTimeoutMs) }); } catch (e) {
+        if (e?.name === 'TimeoutError' || e?.name === 'AbortError') throw new Error(`Telegram ${method}: нет ответа за ${Math.round(uploadTimeoutMs / 1000)} с`);
+        throw e;
+      }
+      let data;
+      try { data = await res.json(); } catch { throw new Error(`Telegram ${method}: HTTP ${res.status}`); }
+      if (!data?.ok) throw new Error(`Telegram ${method}: ${data?.description || res.status}`);
+      return data.result;
+    },
+    /**
      * Виджет — страница HTML прямо в сообщении (Bot API 10.4, 0.14.0). Пределы размера проверяет сервер; сейчас виджеты принимает
      * только личный чат с ботом. Подпись обязательна по смыслу: её показывают список чатов, уведомления и приложения без виджетов.
      */
