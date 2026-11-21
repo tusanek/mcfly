@@ -26,6 +26,9 @@ test('findBrowser: настройка, затем Chrome, затем новей�
   const pure = { exists, home: '/h', list, realpath: (p) => p, file: () => true };
   assert.equal(findBrowser({ configured: own, ...pure }), own);
   have.add('/x/chrome'); assert.equal(findBrowser({ configured: '/x/chrome', ...pure }), null, 'не в месте установки программ — не доверяем');
+  have.add('/Applications/link/Chromium'); have.add('/Applications/Chromium');
+  assert.equal(findBrowser({ configured: '/Applications/link/Chromium', ...pure, realpath: () => '/h/Library/Caches/ms-playwright/chromium-1217/Chromium' }), null, 'ссылка из /Applications в пользовательский каталог — не доверяем');
+  assert.equal(findBrowser({ configured: '/Applications/Chromium', ...pure, realpath: () => '/Applications/Chromium.app/Contents/MacOS/Chromium' }), '/Applications/Chromium.app/Contents/MacOS/Chromium', 'запускаем настоящий путь');
   assert.equal(findBrowser({ exists, home: '/h', list }), CHROME);
   assert.equal(findBrowser({ exists: (p) => p !== CHROME && exists(p), home: '/h', list }), fresh, 'без Chrome — новейший chromium-*, не headless_shell');
   assert.equal(findBrowser({ configured: '/нет/такого/Chromium', ...pure }), null, 'указанный в настройке, но несуществующий — не подменяем другим');

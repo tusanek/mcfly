@@ -23,7 +23,8 @@ const inside = (dir, p) => p === dir || p.startsWith(dir + path.sep);
  * иначе новейший Chromium из кэша Playwright. null — не найден.
  */
 export function findBrowser({ configured = '', exists = fs.existsSync, home = os.homedir(), list = (d) => fs.readdirSync(d), realpath = fs.realpathSync, file = isFile } = {}) {
-  if (configured) return exists(configured) && file(configured) && trusted(configured, home, realpath) ? configured : null;
+  // настоящий путь (после ссылок) — его и запускаем, чтобы ссылку нельзя было подменить между проверкой и запуском
+  if (configured) return exists(configured) && file(configured) ? trusted(configured, realpath) : null;
   if (exists(CHROME)) return CHROME;
   const cache = path.join(home, 'Library', 'Caches', 'ms-playwright');
   let dirs = []; try { dirs = exists(cache) ? list(cache) : []; } catch { return null; }
@@ -40,13 +41,13 @@ export function findBrowser({ configured = '', exists = fs.existsSync, home = os
 
 /**
  * безопасность: путь из samples.browser — абсолютный, с именем Chrome/Chromium, и настоящий файл (после ссылок) лежит в обычном
- * месте установки программ, а не в проекте или /tmp: иначе агент мог бы подложить свою программу под видом браузера.
+ * системном месте установки программ (/Applications, /usr/bin, /opt/google): иначе агент мог бы подложить свою программу под видом браузера.
  */
-function trusted(p, home, realpath) {
-  if (!path.isAbsolute(p) || !BROWSER_NAME.test(path.basename(p))) return false;
-  let real = ''; try { real = realpath(p); } catch { return false; }
-  return ['/Applications', path.join(home, 'Applications'), path.join(home, 'Library', 'Caches', 'ms-playwright'), '/opt/homebrew', '/usr/local', '/usr/bin', '/opt/google']
-    .some((dir) => real.startsWith(dir + path.sep));
+function trusted(p, realpath) {
+  if (!path.isAbsolute(p) || !BROWSER_NAME.test(path.basename(p))) return null;
+  let real = ''; try { real = realpath(p); } catch { return null; }
+  // только системные места, куда без прав администратора не пишут; кэш Playwright — лишь для поиска по умолчанию
+  return BROWSER_NAME.test(path.basename(real)) && ['/Applications', '/usr/bin', '/opt/google'].some((dir) => real.startsWith(dir + path.sep)) ? real : null;
 }
 
 /** Образцы изменения: NN.html по номеру; dark — null, если образец не знает тёмной темы. */
