@@ -186,6 +186,15 @@ test('0.6.0: prepare — вывод и «Да» с кодом; сбой подг
   assert.match(sent[1].text, /Подготовка «Плохое» не удалась \(завершилась с ошибкой\)/); assert.deepEqual(sent[1].keyboard, []);
 });
 
+test('0.19.1: отказ prepare с причиной строкой «@@ » — спокойное «остановила», не «не удалась»', async () => {
+  const c = withActions({ ev: { title: 'Eval', run: 'echo', prepare: 'echo считаю; echo "@@ оценка выше потолка — проверять нечего"; exit 1' } });
+  const { p } = trustedProject(c);
+  const { sent, send } = recorder();
+  assert.equal((await prepareAction({ p, cfg: c, id: 'ev', send, ticket: ticketFor(p, c, 'ev') })).status, 'stopped');
+  assert.match(sent[0].text, /⏹ Подготовка «Eval» остановила действие — не запускаю/);
+  assert.match(sent[0].text, /оценка выше потолка/); assert.doesNotMatch(sent[0].text, /не удалась|считаю/); assert.deepEqual(sent[0].keyboard, []);
+});
+
 test('0.6.0: resultLines и offerKeyboard', async () => {
   assert.deepEqual(resultLines(['a', '@@ x', 'b', '@@ y']), ['x', 'y']);
   assert.deepEqual(resultLines(['', 'a', 'b']), ['a', 'b']);

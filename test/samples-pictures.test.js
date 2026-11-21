@@ -151,6 +151,18 @@ test('approval request: план с образцами без картинок �
   assert.doesNotMatch(cliRun(['approval', 'request', 'quiet'], quiet).stdout, /нет картинок/);
 });
 
+test('0.19.1: образцы вывода терминала (```console) — без напоминания о картинках', () => {
+  const dir = bareProject();
+  addChange(dir, 'term', { proposal: '## Простыми словами\nП.\n\n## Как это будет выглядеть\nПравка существующего: строка итога.\n### Было\n```console\n$ mcfly x\nГотово\n```\n### Стало\n```bash\n$ mcfly x\nГотово: 3\n```\n' });
+  assert.ok(proposalSamples(listChanges(paths(dir).openspecChanges).find((c) => c.name === 'term')).every((x) => x.terminal));
+  const r = cliRun(['approval', 'request', 'term'], dir);
+  assert.equal(r.status, 0, r.stderr); assert.doesNotMatch(r.stdout, /нет картинок/);
+  // экран рядом с терминалом — напоминание остаётся
+  const mixed = bareProject();
+  addChange(mixed, 'mixed', { proposal: `## Простыми словами\nП.\n\n${BASE.slice(BASE.indexOf('## Как'))}### Терминал\n\`\`\`console\nok\n\`\`\`\n` });
+  assert.match(cliRun(['approval', 'request', 'mixed'], mixed).stdout, /нет картинок/);
+});
+
 // --- итоговое ревью ---
 test('ревью: одинаковые подзаголовки — у каждого образца свои картинки; картинка перед блоком — этому блоку', () => {
   const dir = bareProject();
@@ -168,4 +180,12 @@ test('ревью: альбом ушёл, но часть картинок не �
   const ok = pictured(['01-light.png']);
   const t2 = fakeTg({ failPhotos: true }); await sendSamples(t2, '42', ok.p, cfg, 'pics');
   assert.ok(t2.sent.some((m) => m.kind === 'text' && /Повторы/.test(m.text) && /Telegram не принял картинки: .*PHOTO_INVALID_DIMENSIONS/.test(m.text)));
+});
+
+test('0.19.1: approval request напоминает о заголовках «## Why» и «## What Changes» для openspec', () => {
+  const dir = bareProject();
+  addChange(dir, 'ru', { proposal: '## Простыми словами\nП.\n\n## Зачем\nНадо.\n\n## Как это будет выглядеть\nСнаружи ничего не меняется\n' });
+  assert.match(cliRun(['approval', 'request', 'ru'], dir).stdout, /нет «## Why» и «## What Changes»/);
+  addChange(dir, 'en', { proposal: '## Простыми словами\nП.\n\n## Why\nНадо.\n\n## What Changes\n- x\n\n## Как это будет выглядеть\nСнаружи ничего не меняется\n' });
+  assert.doesNotMatch(cliRun(['approval', 'request', 'en'], dir).stdout, /## Why/);
 });

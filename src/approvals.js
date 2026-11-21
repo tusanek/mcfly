@@ -280,6 +280,8 @@ export function sampleImage(projectDir, rel) {
     return fs.statSync(file).isFile() ? path.resolve(projectDir, String(rel)) : null;
   } catch { return null; }
 }
+/** 0.19.1: образец вывода терминала (блок ```console и т. п.) — картинка ему не нужна. */
+const TERMINAL_FENCE = /^(console|terminal|shell|shell-session|sh|bash|zsh)$/i;
 export function proposalSamples(change) {
   const out = []; let on = false; let fence = false; let title = ''; let cur = null;
   // 0.19.0: картинки перед блоком ждут его (pending, обнуляется на каждом подзаголовке); после блока — к только что закрытому образцу
@@ -287,9 +289,10 @@ export function proposalSamples(change) {
   for (const line of String(change.proposal || '').split('\n')) {
     if (!fence && /^##\s/.test(line)) { on = /^##\s+Как это будет выглядеть\s*$/i.test(line.trim()); continue; }
     if (!on) continue;
-    if (/^\s*```/.test(line)) {
+    const f = /^\s*```\s*([\w-]*)/.exec(line);
+    if (f) {
       fence = !fence;
-      if (fence) { cur = { title, lines: [], images: pending }; pending = []; } else { out.push(cur); closed = cur; cur = null; title = ''; }
+      if (fence) { cur = { title, lines: [], images: pending, terminal: TERMINAL_FENCE.test(f[1]) }; pending = []; } else { out.push(cur); closed = cur; cur = null; title = ''; }
       continue;
     }
     if (fence) { cur.lines.push(line); continue; }
@@ -306,5 +309,6 @@ export function proposalSamples(change) {
     text: x.lines.filter((l) => !BUTTON_ROW.test(l)).join('\n').trim(),
     buttons: x.lines.filter((l) => BUTTON_ROW.test(l)).map((l) => [...l.matchAll(/\[([^\[\]\n]+)\]/g)].map((m) => m[1].trim())),
     images: x.images || [],
+    ...(x.terminal ? { terminal: true } : {}),
   })).filter((x) => x.text || x.buttons.length || x.title || x.images.length);
 }

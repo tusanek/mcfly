@@ -12,9 +12,11 @@ export function upsertSection(existing, section) {
   if (existing.includes(MARK_START) && existing.includes(MARK_END)) return existing.replace(new RegExp(`${MARK_START}[\\s\\S]*?${MARK_END}`), block);
   return (existing.trim() ? existing.trimEnd() + '\n\n' : '') + block + '\n';
 }
+/** 0.19.1: запреты, которые ставил прежний mcfly. Claude Code их не применяет (файлы защищает Edit(...)) и предупреждает о них на каждом claude -p. */
+export const OBSOLETE_DENY = ['Write(./mcfly/config.yaml)', 'Write(./mcfly/.env)', 'Write(./.env)'];
 export function mergeSettings(existing, template) {
   const out = { ...template, ...existing, permissions: { ...(existing.permissions || {}) } }; // значения пользователя главнее шаблона
-  const deny = [...new Set([...(existing.permissions?.deny || []), ...(template.permissions?.deny || [])])];
+  const deny = [...new Set([...(existing.permissions?.deny || []), ...(template.permissions?.deny || [])])].filter((r) => !OBSOLETE_DENY.includes(r));
   const allow = [...new Set([...(existing.permissions?.allow || []), ...(template.permissions?.allow || [])])];
   out.permissions.deny = deny; if (allow.length) out.permissions.allow = allow;
   return out;
