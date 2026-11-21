@@ -49,7 +49,9 @@ export function linkShared({ worktreeDir, mainDir, shared }) {
 }
 
 /** 0.19.3: папки зависимостей, которых нет в worktree (git их не отслеживает) — ищем их в основном каталоге. */
-const DEP_DIRS = new Set(['node_modules', '.venv', 'venv']);
+// 0.19.4: только node_modules. Виртуальное окружение Python ссылкой не подключают: с проектом, установленным для разработки
+// (pip install -e), оно указывает на код основного каталога, и тесты в worktree проверяли бы не его код.
+const DEP_DIRS = new Set(['node_modules']);
 const SKIP_DIRS = new Set(['.git', '.claude', 'mcfly', 'openspec', 'dist', 'build']);
 /**
  * Папки зависимостей основного каталога (до трёх уровней вглубь), которых нет в worktree.shared: в worktree команды их не будет,

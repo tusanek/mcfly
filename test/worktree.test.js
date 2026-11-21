@@ -94,10 +94,10 @@ test('0.19.3: worktree link и doctor называют папки зависим
   fs.mkdirSync(path.join(dir, 'miniapp', 'node_modules', 'deep', 'node_modules'), { recursive: true });
   fs.mkdirSync(path.join(dir, '.venv'), { recursive: true });
   const { unsharedDeps } = await import('../src/worktree.js');
-  assert.deepEqual(unsharedDeps(dir, ['miniapp/node_modules/']), ['.venv', 'guide/node_modules'], 'вложенные node_modules внутри общей папки — не в счёт');
+  assert.deepEqual(unsharedDeps(dir, ['miniapp/node_modules/']), ['guide/node_modules'], 'вложенные node_modules внутри общей папки — не в счёт; .venv не советуем (0.19.4)');
   const r = await quiet(['worktree', 'link', '--project', wt]);
   assert.equal(r.code, 0, r.out); assert.match(r.out, /Подключено: miniapp\/node_modules/);
-  assert.match(r.out, /нет в worktree\.shared: \.venv, guide\/node_modules/); assert.match(r.out, /Нужно от человека/);
+  assert.match(r.out, /нет в worktree\.shared: guide\/node_modules/); assert.match(r.out, /Нужно от человека/);
   const { doctor } = await import('../src/doctor.js');
   assert.ok(doctor({ projectDir: dir, log: () => {} }).some((c) => !c.ok && /guide\/node_modules/.test(c.label)));
   fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), 'project: demo\nworktree:\n  shared: [miniapp/node_modules, guide/node_modules, .venv]\n');
