@@ -47,3 +47,26 @@ export function linkShared({ worktreeDir, mainDir, shared }) {
   }
   return r;
 }
+
+/** 0.19.3: папки зависимостей, которых нет в worktree (git их не отслеживает) — ищем их в основном каталоге. */
+const DEP_DIRS = new Set(['node_modules', '.venv', 'venv']);
+const SKIP_DIRS = new Set(['.git', '.claude', 'mcfly', 'openspec', 'dist', 'build']);
+/**
+ * Папки зависимостей основного каталога (до трёх уровней вглубь), которых нет в worktree.shared: в worktree команды их не будет,
+ * и проверки, которым они нужны, там не запустить. Внутрь найденных папок не спускаемся.
+ */
+export function unsharedDeps(mainDir, shared, depth = 3) {
+  const have = new Set((shared || []).map(clean)); const out = [];
+  const walk = (rel, left) => {
+    let entries = []; try { entries = fs.readdirSync(path.join(mainDir, rel), { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (DEP_DIRS.has(e.name)) { if (!have.has(r)) out.push(r); continue; }
+      if (SKIP_DIRS.has(e.name) || left <= 1) continue;
+      walk(r, left - 1);
+    }
+  };
+  walk('', depth);
+  return out.sort();
+}
