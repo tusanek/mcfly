@@ -1,0 +1,180 @@
+// 0.20.0: снимки образцов командой mcfly — без Playwright MCP и без http-сервера.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs'; import path from 'node:path';
+import { findBrowser, sampleFiles, shootFiles, CHROME } from '../src/shoot.js';
+import { tmpDir } from './helpers.js';
+
+const BROWSER = findBrowser();
+const pngWidth = (file) => fs.readFileSync(file).readUInt32BE(16);
+const DARK_HTML = '<!doctype html><html><head><style>:root.dark{background:#000}</style><script>if(location.search.includes("theme=dark"))document.documentElement.classList.add("dark")</script></head><body style="margin:0"><div id="shot" style="width:390px;height:120px">Образец</div></body></html>';
+const PLAIN_HTML = '<!doctype html><html><body style="margin:0"><p>Экран</p></body></html>';
+function samples(files) {
+  const dir = tmpDir('shoot-'); const at = path.join(dir, 'design', 'samples', 'demo'); fs.mkdirSync(at, { recursive: true });
+  for (const [name, html] of Object.entries(files)) fs.writeFileSync(path.join(at, name), html);
+  return { dir, at };
+}
+
+test('findBrowser: настройка, затем Chrome, затем новейший Chromium Playwright', () => {
+  const cache = '/h/Library/Caches/ms-playwright';
+  const old = `${cache}/chromium-1200/chrome-mac/Chromium.app/Contents/MacOS/Chromium`;
+  const fresh = `${cache}/chromium-1217/chrome-mac-arm64/Chromium.app/Contents/MacOS/Chromium`;
+  const have = new Set(['/x/chrome', CHROME, old, fresh]);
+  const list = (d) => (d === cache ? ['chromium-1200', 'chromium-1217', 'chromium_headless_shell-1217', 'ffmpeg-1011'] : d.endsWith('1200') ? ['chrome-mac'] : ['chrome-mac-arm64']);
+  const exists = (p) => have.has(p) || p === cache;
+  const own = '/Applications/My Chrome.app/Contents/MacOS/Chromium'; have.add(own);
+  const pure = { exists, home: '/h', list, realpath: (p) => p, file: () => true };
+  assert.equal(findBrowser({ configured: own, ...pure }), own);
+  have.add('/x/chrome'); assert.equal(findBrowser({ configured: '/x/chrome', ...pure }), null, 'не в месте установки программ — не доверяем');
+  have.add('/Applications/link/Chromium'); have.add('/Applications/Chromium');
+  assert.equal(findBrowser({ configured: '/Applications/link/Chromium', ...pure, realpath: () => '/h/Library/Caches/ms-playwright/chromium-1217/Chromium' }), null, 'ссылка из /Applications в пользовательский каталог — не доверяем');
+  assert.equal(findBrowser({ configured: '/Applications/Chromium', ...pure, realpath: () => '/Applications/Chromium.app/Contents/MacOS/Chromium' }), '/Applications/Chromium.app/Contents/MacOS/Chromium', 'запускаем настоящий путь');
+  assert.equal(findBrowser({ exists, home: '/h', list }), CHROME);
+  assert.equal(findBrowser({ exists: (p) => p !== CHROME && exists(p), home: '/h', list }), fresh, 'без Chrome — новейший chromium-*, не headless_shell');
+  assert.equal(findBrowser({ configured: '/нет/такого/Chromium', ...pure }), null, 'указанный в настройке, но несуществующий — не подменяем другим');
+  assert.equal(findBrowser({ exists: () => false, home: '/h', list: () => [] }), null);
+});
+
+test('sampleFiles: NN.html по порядку, тёмная — только с theme=dark или .dark; плохое имя и пустой каталог — ошибка', () => {
+  const { dir, at } = samples({ '02.html': PLAIN_HTML, '01.html': DARK_HTML, 'telegram-chat.html': DARK_HTML, '1a.html': PLAIN_HTML });
+  const r = sampleFiles(dir, 'demo');
+  assert.equal(r.error, undefined);
+  assert.deepEqual(r.files, [
+    { html: path.join(at, '01.html'), light: path.join(at, '01-light.png'), dark: path.join(at, '01-dark.png') },
+    { html: path.join(at, '02.html'), light: path.join(at, '02-light.png'), dark: null },
+  ]);
+  assert.match(sampleFiles(dir, '../x').error, /имя изменения/);
+  assert.match(sampleFiles(dir, 'absent').error, /нет образцов/);
+  assert.match(sampleFiles(dir, 'missing-one').error, /нет образцов/);
+});
+
+test('shootFiles: настоящий браузер снимает #shot в 780 точек шириной; onlyMissing не трогает готовые', { skip: !BROWSER && 'нет браузера' }, async () => {
+  const { dir } = samples({ '01.html': DARK_HTML, '02.html': PLAIN_HTML });
+  const { files } = sampleFiles(dir, 'demo');
+  const r = await shootFiles(files, { browser: BROWSER });
+  assert.deepEqual(r.failed, []);
+  assert.deepEqual(r.shot.map((f) => path.basename(f)), ['01-light.png', '01-dark.png', '02-light.png']);
+  assert.equal(pngWidth(files[0].light), 780);
+  assert.notDeepEqual(fs.readFileSync(files[0].light), fs.readFileSync(files[0].dark), 'тёмная тема — другая картинка');
+  const again = await shootFiles(files, { browser: BROWSER, onlyMissing: true });
+  assert.deepEqual(again.shot, []); assert.equal(again.skipped.length, 3);
+});
+
+test('shootFiles: страница, которая не грузится за timeoutMs, — failed, остальные сняты', { skip: !BROWSER && 'нет браузера' }, async () => {
+  const { dir } = samples({ '01.html': PLAIN_HTML, '02.html': '<!doctype html><script>while(true){}</script>' });
+  const { files } = sampleFiles(dir, 'demo');
+  const r = await shootFiles(files, { browser: BROWSER, timeoutMs: 3000 });
+  assert.deepEqual(r.shot.map((f) => path.basename(f)), ['01-light.png']);
+  assert.equal(r.failed.length, 1); assert.match(r.failed[0].file, /02\.html$/); assert.match(r.failed[0].error, /3 с|не загрузил/);
+});
+
+test('shootFiles: браузер не запускается — каждый образец в failed с причиной', async () => {
+  const { dir } = samples({ '01.html': PLAIN_HTML });
+  const r = await shootFiles(sampleFiles(dir, 'demo').files, { browser: '/нет/такого/браузера', timeoutMs: 3000 });
+  assert.deepEqual(r.shot, []); assert.equal(r.failed.length, 1); assert.match(r.failed[0].error, /браузер/);
+});
+
+// --- задача 2: команда, approval request, doctor, настройки ---
+import { spawnSync } from 'node:child_process';
+import { MCFLY_ROOT } from '../src/prompt.js';
+import { bareProject, gitRepo, git, addChange } from './helpers.js';
+const cli = (args, cwd) => spawnSync(process.execPath, [path.join(MCFLY_ROOT, 'bin', 'mcfly'), ...args], { cwd, encoding: 'utf8', env: { ...process.env, MCFLY_PROJECT_DIR: '', MCFLY_RUN_ID: '' } });
+const putSamples = (dir, name, files) => { const at = path.join(dir, 'design', 'samples', name); fs.mkdirSync(at, { recursive: true }); for (const [n, h] of Object.entries(files)) fs.writeFileSync(path.join(at, n), h); return at; };
+
+test('samples shoot: без имени и с плохим именем — код 1; браузер из настройки не найден — код 1 с причиной', () => {
+  const dir = bareProject();
+  const none = cli(['samples', 'shoot'], dir); assert.equal(none.status, 1); assert.match(none.stderr, /mcfly samples shoot <изменение>/);
+  assert.equal(cli(['samples', 'shoot', '../x'], dir).status, 1);
+  putSamples(dir, 'demo', { '01.html': PLAIN_HTML });
+  fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), 'project: demo\nsamples:\n  browser: /нет/такого/Chromium\n');
+  const r = cli(['samples', 'shoot', 'demo'], dir); assert.equal(r.status, 1); assert.match(r.stderr, /браузер не найден/);
+});
+
+test('samples shoot из worktree — картинки в этом worktree, не в основном каталоге', { skip: !BROWSER && 'нет браузера' }, () => {
+  const dir = gitRepo(bareProject()); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', 'p');
+  const wt = path.join(tmpDir('wt-'), 'agent-1'); git(dir, 'worktree', 'add', '-q', '-b', 'worktree-agent-1', wt);
+  const at = putSamples(wt, 'demo', { '01.html': DARK_HTML });
+  const r = cli(['samples', 'shoot', 'demo', '--project', wt], dir);
+  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /Снято: 01-light\.png, 01-dark\.png/); assert.match(r.stdout, /Картинка:/);
+  assert.ok(fs.existsSync(path.join(at, '01-light.png')));
+  assert.ok(!fs.existsSync(path.join(dir, 'design', 'samples', 'demo')), 'в основном каталоге ничего не появилось');
+  const here = cli(['samples', 'shoot', 'demo'], wt); assert.equal(here.status, 0, here.stderr); assert.match(here.stdout, /Снято/);
+});
+
+test('approval request снимает недостающие картинки; без браузера — предупреждение, запрос принят', { skip: !BROWSER && 'нет браузера' }, () => {
+  const dir = bareProject(); addChange(dir, 'demo', { proposal: '## Простыми словами\nП.\n\n## Как это будет выглядеть\n### Ответ\n```\nГотово\n```\n' });
+  const at = putSamples(dir, 'demo', { '01.html': PLAIN_HTML });
+  const r = cli(['approval', 'request', 'demo'], dir);
+  assert.equal(r.status, 0, r.stderr); assert.ok(fs.existsSync(path.join(at, '01-light.png'))); assert.match(r.stdout, /Снято: 01-light\.png/);
+  const mtime = fs.statSync(path.join(at, '01-light.png')).mtimeMs;
+  cli(['approval', 'request', 'demo'], dir); assert.equal(fs.statSync(path.join(at, '01-light.png')).mtimeMs, mtime, 'повтор не переснимает');
+  const dir2 = bareProject(); addChange(dir2, 'demo', { proposal: '## Простыми словами\nП.\n' }); putSamples(dir2, 'demo', { '01.html': PLAIN_HTML });
+  fs.writeFileSync(path.join(dir2, 'mcfly', 'config.yaml'), 'project: demo\nsamples:\n  browser: /нет/такого/Chromium\n');
+  const w = cli(['approval', 'request', 'demo'], dir2); assert.equal(w.status, 0, w.stderr); assert.match(w.stdout, /⚠ Картинки не сняты: браузер не найден/);
+});
+
+test('doctor проверяет браузер для снимков; шаблон настроек разрешает mcfly samples shoot; samples.browser — строка', async () => {
+  const { doctor } = await import('../src/doctor.js'); const { parseConfig } = await import('../src/config.js');
+  const dir = bareProject(); fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), 'project: demo\nsamples:\n  browser: /нет/такого/Chromium\n');
+  assert.ok(doctor({ projectDir: dir, log: () => {} }).some((c) => !c.ok && /браузер для снимков образцов/.test(c.label) && /samples\.browser/.test(c.hint)));
+  assert.throws(() => parseConfig('project: x\nsamples:\n  browser: 5\n'), /samples\.browser/);
+  const settings = JSON.parse(fs.readFileSync(path.join(MCFLY_ROOT, 'templates', 'settings.json'), 'utf8'));
+  assert.ok(settings.permissions.allow.includes('Bash(mcfly samples shoot *)'));
+});
+
+// --- итоговое ревью и проверка безопасности ---
+test('ревью I1: браузер запустился, но молчит — не висим, все образцы в failed', async () => {
+  const fake = path.join(tmpDir('fake-'), 'Chromium'); fs.writeFileSync(fake, '#!/bin/sh\nexec sleep 60\n', { mode: 0o755 });
+  const { dir } = samples({ '01.html': PLAIN_HTML, '02.html': PLAIN_HTML });
+  const t0 = Date.now();
+  const r = await shootFiles(sampleFiles(dir, 'demo').files, { browser: fake, timeoutMs: 1500 });
+  assert.ok(Date.now() - t0 < 8000, `висели ${Date.now() - t0} мс`);
+  assert.equal(r.failed.length, 2); assert.match(r.failed[0].error, /браузер не отвечает/);
+});
+
+test('безопасность: samples.browser — только Chrome или Chromium; --project из другого репозитория — отказ', async () => {
+  const { parseConfig } = await import('../src/config.js');
+  assert.throws(() => parseConfig('project: x\nsamples:\n  browser: /tmp/x/evil.sh\n'), /samples\.browser/);
+  assert.doesNotThrow(() => parseConfig('project: x\nsamples:\n  browser: /opt/Chromium.app/Contents/MacOS/Chromium\n'));
+  const dir = gitRepo(bareProject()); const other = gitRepo(bareProject()); putSamples(other, 'demo', { '01.html': PLAIN_HTML });
+  const r = cli(['samples', 'shoot', 'demo', '--project', other], dir);
+  assert.equal(r.status, 1); assert.match(r.stderr, /другого репозитория/);
+  const plain = bareProject(); const outsideGit = bareProject(); putSamples(outsideGit, 'demo', { '01.html': PLAIN_HTML });
+  assert.match(cli(['samples', 'shoot', 'demo', '--project', outsideGit], plain).stderr, /другого репозитория/, 'оба каталога вне git — тоже отказ, а не «равны»');
+});
+
+test('безопасность: картинка поверх ссылки на чужой файл не пишется; образец-ссылка наружу — не образец', { skip: !BROWSER && 'нет браузера' }, async () => {
+  const { dir, at } = samples({ '01.html': PLAIN_HTML });
+  const victim = path.join(tmpDir('victim-'), 'rc'); fs.writeFileSync(victim, 'МОЁ');
+  fs.symlinkSync(victim, path.join(at, '01-light.png'));
+  const r = await shootFiles(sampleFiles(dir, 'demo').files, { browser: BROWSER });
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'МОЁ'); assert.equal(r.failed.length, 1); assert.match(r.failed[0].error, /ссылк/);
+  const secret = path.join(tmpDir('secret-'), 'key.txt'); fs.writeFileSync(secret, 'SECRET');
+  const { dir: d2, at: at2 } = samples({ '01.html': PLAIN_HTML }); fs.symlinkSync(secret, path.join(at2, '02.html'));
+  assert.deepEqual(sampleFiles(d2, 'demo').files.map((f) => path.basename(f.html)), ['01.html']);
+});
+
+test('безопасность: образец не загружает файлы вне своей папки; путь с # и % снимается', { skip: !BROWSER && 'нет браузера' }, async () => {
+  const outside = samples({ '01.html': PLAIN_HTML }); await shootFiles(sampleFiles(outside.dir, 'demo').files, { browser: BROWSER });
+  const pic = path.join(outside.at, '01-light.png');
+  const html = (src) => `<!doctype html><body style="margin:0"><div id="shot" style="width:390px;height:100px"><img src="${src}" onload="document.getElementById('shot').style.height='300px'"></div></body>`;
+  const { dir, at } = samples({ '01.html': html(`file://${pic}`) });
+  fs.copyFileSync(pic, path.join(at, 'inside.png'));
+  fs.writeFileSync(path.join(at, '02.html'), html('inside.png'));
+  const r = await shootFiles(sampleFiles(dir, 'demo').files, { browser: BROWSER });
+  assert.deepEqual(r.failed, []);
+  assert.equal(fs.readFileSync(path.join(at, '01-light.png')).readUInt32BE(20), 200, 'чужой файл не загрузился — высота осталась 100');
+  assert.equal(fs.readFileSync(path.join(at, '02-light.png')).readUInt32BE(20), 600, 'своя картинка загрузилась');
+  const odd = tmpDir('odd#dir%20-'); const oat = path.join(odd, 'design', 'samples', 'demo'); fs.mkdirSync(oat, { recursive: true }); fs.writeFileSync(path.join(oat, '01.html'), PLAIN_HTML);
+  const o = await shootFiles(sampleFiles(odd, 'demo').files, { browser: BROWSER }); assert.deepEqual(o.failed, []);
+});
+
+test('безопасность: samples.browser на свой скрипт с именем Chromium вне мест установки — не запускается', () => {
+  const fake = path.join(tmpDir('fake-'), 'Chromium'); const marker = path.join(path.dirname(fake), 'ran');
+  fs.writeFileSync(fake, `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 });
+  assert.equal(findBrowser({ configured: fake }), null);
+  const dir = bareProject(); putSamples(dir, 'demo', { '01.html': PLAIN_HTML });
+  fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), `project: demo\nsamples:\n  browser: ${fake}\n`);
+  const r = cli(['samples', 'shoot', 'demo'], dir); assert.equal(r.status, 1); assert.match(r.stderr, /браузер не найден/);
+  assert.ok(!fs.existsSync(marker), 'скрипт не запускался');
+});

@@ -71,6 +71,11 @@ design:
 worktree:
   shared: []                    # например [miniapp/node_modules]
 
+# Снимки образцов (0.20.0): mcfly samples shoot снимает design/samples/<изменение>/NN.html в картинки.
+# Браузер находится сам (Google Chrome, иначе Chromium Playwright); другой — путём ниже, только из /Applications, /usr/bin или /opt/google.
+# samples:
+#   browser: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
 # Действия владельца кнопками в Telegram (0.6.0) — по желанию; см. README «Действия владельца в Telegram»
 # actions:
 #   deploy:

@@ -12,6 +12,7 @@ import { vpnStatus } from './vpn.js';
 import { isTrusted, hasActions } from './actions.js';
 import { mainBranchIssue, OBSOLETE_DENY } from './init.js';
 import { unsharedDeps } from './worktree.js';
+import { findBrowser } from './shoot.js';
 import { labelFor, runLaunchctl } from './schedule.js';
 import { readPower, powerChecks } from './power.js';
 import { videoProblems } from './video.js';
@@ -80,6 +81,11 @@ export function doctor({ projectDir, probe = false, log = console.log, launchctl
   let deny = []; try { deny = JSON.parse(fs.readFileSync(path.join(projectDir, '.claude', 'settings.json'), 'utf8')).permissions?.deny || []; } catch {}
   const stale = deny.filter((r) => OBSOLETE_DENY.includes(r));
   if (stale.length) add(false, `.claude/settings.json: устаревшие запреты ${stale.join(', ')} (Claude Code их не применяет и предупреждает на каждом запуске)`, 'выполните mcfly init — он уберёт их, защиту даёт Edit(...)');
+  if (cfg) {
+    // 0.20.0: картинки образцов снимает mcfly samples shoot — нужен Chrome или Chromium
+    const browser = findBrowser({ configured: cfg.samples.browser });
+    add(browser, `браузер для снимков образцов${browser ? `: ${browser}` : ''}`, 'установите Google Chrome или укажите путь к Chrome/Chromium в samples.browser (mcfly/config.yaml)');
+  }
   if (cfg) {
     // 0.19.3: зависимости, которых не будет в worktree команды: проверки там не запустить
     const u = unsharedDeps(projectDir, cfg.worktree.shared);
