@@ -80,7 +80,7 @@ test('samples shoot: без имени и с плохим именем — ко�
   const none = cli(['samples', 'shoot'], dir); assert.equal(none.status, 1); assert.match(none.stderr, /mcfly samples shoot <изменение>/);
   assert.equal(cli(['samples', 'shoot', '../x'], dir).status, 1);
   putSamples(dir, 'demo', { '01.html': PLAIN_HTML });
-  fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), 'project: demo\nsamples:\n  browser: /нет/такого\n');
+  fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), 'project: demo\nsamples:\n  browser: /нет/такого/Chromium\n');
   const r = cli(['samples', 'shoot', 'demo'], dir); assert.equal(r.status, 1); assert.match(r.stderr, /браузер не найден/);
 });
 
@@ -103,15 +103,60 @@ test('approval request снимает недостающие картинки; �
   const mtime = fs.statSync(path.join(at, '01-light.png')).mtimeMs;
   cli(['approval', 'request', 'demo'], dir); assert.equal(fs.statSync(path.join(at, '01-light.png')).mtimeMs, mtime, 'повтор не переснимает');
   const dir2 = bareProject(); addChange(dir2, 'demo', { proposal: '## Простыми словами\nП.\n' }); putSamples(dir2, 'demo', { '01.html': PLAIN_HTML });
-  fs.writeFileSync(path.join(dir2, 'mcfly', 'config.yaml'), 'project: demo\nsamples:\n  browser: /нет/такого\n');
+  fs.writeFileSync(path.join(dir2, 'mcfly', 'config.yaml'), 'project: demo\nsamples:\n  browser: /нет/такого/Chromium\n');
   const w = cli(['approval', 'request', 'demo'], dir2); assert.equal(w.status, 0, w.stderr); assert.match(w.stdout, /⚠ Картинки не сняты: браузер не найден/);
 });
 
 test('doctor проверяет браузер для снимков; шаблон настроек разрешает mcfly samples shoot; samples.browser — строка', async () => {
   const { doctor } = await import('../src/doctor.js'); const { parseConfig } = await import('../src/config.js');
-  const dir = bareProject(); fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), 'project: demo\nsamples:\n  browser: /нет/такого\n');
+  const dir = bareProject(); fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), 'project: demo\nsamples:\n  browser: /нет/такого/Chromium\n');
   assert.ok(doctor({ projectDir: dir, log: () => {} }).some((c) => !c.ok && /браузер для снимков образцов/.test(c.label) && /samples\.browser/.test(c.hint)));
   assert.throws(() => parseConfig('project: x\nsamples:\n  browser: 5\n'), /samples\.browser/);
   const settings = JSON.parse(fs.readFileSync(path.join(MCFLY_ROOT, 'templates', 'settings.json'), 'utf8'));
   assert.ok(settings.permissions.allow.includes('Bash(mcfly samples shoot *)'));
+});
+
+// --- итоговое ревью и проверка безопасности ---
+test('ревью I1: браузер запустился, но молчит — не висим, все образцы в failed', async () => {
+  const fake = path.join(tmpDir('fake-'), 'Chromium'); fs.writeFileSync(fake, '#!/bin/sh\nexec sleep 60\n', { mode: 0o755 });
+  const { dir } = samples({ '01.html': PLAIN_HTML, '02.html': PLAIN_HTML });
+  const t0 = Date.now();
+  const r = await shootFiles(sampleFiles(dir, 'demo').files, { browser: fake, timeoutMs: 1500 });
+  assert.ok(Date.now() - t0 < 8000, `висели ${Date.now() - t0} мс`);
+  assert.equal(r.failed.length, 2); assert.match(r.failed[0].error, /браузер не отвечает/);
+});
+
+test('безопасность: samples.browser — только Chrome или Chromium; --project из другого репозитория — отказ', async () => {
+  const { parseConfig } = await import('../src/config.js');
+  assert.throws(() => parseConfig('project: x\nsamples:\n  browser: /tmp/x/evil.sh\n'), /samples\.browser/);
+  assert.doesNotThrow(() => parseConfig('project: x\nsamples:\n  browser: /opt/Chromium.app/Contents/MacOS/Chromium\n'));
+  const dir = gitRepo(bareProject()); const other = gitRepo(bareProject()); putSamples(other, 'demo', { '01.html': PLAIN_HTML });
+  const r = cli(['samples', 'shoot', 'demo', '--project', other], dir);
+  assert.equal(r.status, 1); assert.match(r.stderr, /другого репозитория/);
+});
+
+test('безопасность: картинка поверх ссылки на чужой файл не пишется; образец-ссылка наружу — не образец', { skip: !BROWSER && 'нет браузера' }, async () => {
+  const { dir, at } = samples({ '01.html': PLAIN_HTML });
+  const victim = path.join(tmpDir('victim-'), 'rc'); fs.writeFileSync(victim, 'МОЁ');
+  fs.symlinkSync(victim, path.join(at, '01-light.png'));
+  const r = await shootFiles(sampleFiles(dir, 'demo').files, { browser: BROWSER });
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'МОЁ'); assert.equal(r.failed.length, 1); assert.match(r.failed[0].error, /ссылк/);
+  const secret = path.join(tmpDir('secret-'), 'key.txt'); fs.writeFileSync(secret, 'SECRET');
+  const { dir: d2, at: at2 } = samples({ '01.html': PLAIN_HTML }); fs.symlinkSync(secret, path.join(at2, '02.html'));
+  assert.deepEqual(sampleFiles(d2, 'demo').files.map((f) => path.basename(f.html)), ['01.html']);
+});
+
+test('безопасность: образец не загружает файлы вне своей папки; путь с # и % снимается', { skip: !BROWSER && 'нет браузера' }, async () => {
+  const outside = samples({ '01.html': PLAIN_HTML }); await shootFiles(sampleFiles(outside.dir, 'demo').files, { browser: BROWSER });
+  const pic = path.join(outside.at, '01-light.png');
+  const html = (src) => `<!doctype html><body style="margin:0"><div id="shot" style="width:390px;height:100px"><img src="${src}" onload="document.getElementById('shot').style.height='300px'"></div></body>`;
+  const { dir, at } = samples({ '01.html': html(`file://${pic}`) });
+  fs.copyFileSync(pic, path.join(at, 'inside.png'));
+  fs.writeFileSync(path.join(at, '02.html'), html('inside.png'));
+  const r = await shootFiles(sampleFiles(dir, 'demo').files, { browser: BROWSER });
+  assert.deepEqual(r.failed, []);
+  assert.equal(fs.readFileSync(path.join(at, '01-light.png')).readUInt32BE(20), 200, 'чужой файл не загрузился — высота осталась 100');
+  assert.equal(fs.readFileSync(path.join(at, '02-light.png')).readUInt32BE(20), 600, 'своя картинка загрузилась');
+  const odd = tmpDir('odd#dir%20-'); const oat = path.join(odd, 'design', 'samples', 'demo'); fs.mkdirSync(oat, { recursive: true }); fs.writeFileSync(path.join(oat, '01.html'), PLAIN_HTML);
+  const o = await shootFiles(sampleFiles(odd, 'demo').files, { browser: BROWSER }); assert.deepEqual(o.failed, []);
 });

@@ -1,7 +1,9 @@
+import path from 'node:path';
 import YAML from 'yaml';
 import { readText } from './util.js';
 import { actionErrors } from './action-config.js';
 import { sharedErrors } from './worktree.js';
+import { BROWSER_NAME } from './shoot.js';
 
 export const DEFAULT_CONFIG = {
   project: 'project',
@@ -100,6 +102,7 @@ export function validate(cfg) {
   if (!(Array.isArray(limits.run_choices) && limits.run_choices.length <= 4 && limits.run_choices.every((x) => Number.isInteger(x) && x >= 1 && x <= MAX_RUN_CHANGES))) errors.push(`limits.run_choices: до четырёх целых чисел от 1 до ${MAX_RUN_CHANGES}, например [1, 3, 5]; [] — бот не спрашивает, сколько брать`);
   errors.push(...sharedErrors(cfg.worktree?.shared));
   if (typeof cfg.samples?.browser !== 'string') errors.push('samples.browser: путь к Chrome или Chromium строкой; пусто — найти самому');
+  else if (cfg.samples.browser && !BROWSER_NAME.test(path.basename(cfg.samples.browser))) errors.push(`samples.browser: «${cfg.samples.browser}» — не Chrome и не Chromium (нужен исполняемый файл, например …/Google Chrome.app/Contents/MacOS/Google Chrome)`);
   const skills = cfg.design?.skills;
   if (!Array.isArray(skills) || skills.some((x) => typeof x !== 'string' || !/^[\w:.-]+$/.test(x))) errors.push('design.skills: список названий навыков, например [impeccable]');
   if (typeof cfg.findings?.enabled !== 'boolean') errors.push('findings.enabled: true или false');

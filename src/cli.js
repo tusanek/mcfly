@@ -422,6 +422,8 @@ export async function main(argv) {
         if (!rest[0]) { console.error('mcfly samples shoot <изменение> [--project <каталог>]'); return 1; }
         const { sampleFiles } = await import('./shoot.js');
         const base = hereDir(values, projectDir);
+        // безопасность: --project только этого же репозитория — иначе настройки (samples.browser) пришли бы из чужого каталога
+        if (gitCommon(base) !== gitCommon(process.cwd())) { console.error(`--project ${values.project}: каталог другого репозитория — снимаю только в своём проекте или его worktree`); return 1; }
         const list = sampleFiles(base, rest[0]); if (list.error) { console.error(list.error); return 1; }
         const r = await shootSamples(cfg, list.files, { onlyMissing: false });
         if (r.error) { console.error(r.error); return 1; }
@@ -547,6 +549,11 @@ function hereDir(values, projectDir) {
   const start = values.project ? path.resolve(values.project) : process.cwd();
   const r = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: start, encoding: 'utf8' });
   return r.status === 0 ? fs.realpathSync(r.stdout.trim()) : (values.project ? start : projectDir);
+}
+
+function gitCommon(dir) {
+  const r = spawnSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: dir, encoding: 'utf8' });
+  try { return r.status === 0 ? fs.realpathSync(r.stdout.trim()) : ''; } catch { return ''; }
 }
 
 /** 0.20.0: снять образцы браузером из настроек; { error } — браузер не найден. */
