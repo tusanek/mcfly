@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { paths } from './state.js';
@@ -9,7 +10,7 @@ import { MCFLY_ROOT } from './prompt.js';
 import { cleanEnv } from './claude.js';
 import { vpnStatus } from './vpn.js';
 import { isTrusted, hasActions } from './actions.js';
-import { mainBranchIssue } from './init.js';
+import { mainBranchIssue, OBSOLETE_DENY } from './init.js';
 import { labelFor, runLaunchctl } from './schedule.js';
 import { readPower, powerChecks } from './power.js';
 import { videoProblems } from './video.js';
@@ -74,6 +75,10 @@ export function doctor({ projectDir, probe = false, log = console.log, launchctl
   }
   add(exists(path.join(projectDir, 'openspec', 'config.yaml')), 'openspec/ инициализирован', 'openspec init --tools claude');
   add(exists(path.join(projectDir, '.git')), 'git-репозиторий проекта', 'git init');
+  // 0.19.1: прежний шаблон ставил запреты Write(...) — Claude Code их не применяет и печатает предупреждение первым в stderr каждого claude -p
+  let deny = []; try { deny = JSON.parse(fs.readFileSync(path.join(projectDir, '.claude', 'settings.json'), 'utf8')).permissions?.deny || []; } catch {}
+  const stale = deny.filter((r) => OBSOLETE_DENY.includes(r));
+  if (stale.length) add(false, `.claude/settings.json: устаревшие запреты ${stale.join(', ')} (Claude Code их не применяет и предупреждает на каждом запуске)`, 'выполните mcfly init — он уберёт их, защиту даёт Edit(...)');
   const branch = mainBranchIssue(projectDir);
   if (exists(path.join(projectDir, '.git'))) add(!branch, 'ветка main в проекте', branch.replace(/^В проекте нет ветки main — /, ''));
   for (const c of checks) log(c.label.startsWith('·') ? `  ${c.label}` : `${c.ok ? '✓' : '✗'} ${c.label}${c.ok || !c.hint ? '' : ' — ' + c.hint}`);

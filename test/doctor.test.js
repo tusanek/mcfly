@@ -34,3 +34,13 @@ test('doctor проверяет VPN-сервис из run.vpn_service', () => {
   fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), `project: demo\nrun:\n  vpn_service: Опечатка\n  scutil_bin: ${vpn.script}\n`);
   assert.ok(doctor({ projectDir: dir, log: () => {} }).some((c) => !c.ok && /VPN «Опечатка»/.test(c.label)));
 });
+
+test('doctor предупреждает об устаревших запретах Write(...) в .claude/settings.json', () => {
+  const dir = bareProject();
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  const file = path.join(dir, '.claude', 'settings.json');
+  fs.writeFileSync(file, JSON.stringify({ permissions: { deny: ['Edit(./.env)', 'Write(./.env)'] } }));
+  assert.ok(doctor({ projectDir: dir, log: () => {} }).some((c) => !c.ok && /Write/.test(c.label) && /mcfly init/.test(c.hint)));
+  fs.writeFileSync(file, JSON.stringify({ permissions: { deny: ['Edit(./.env)'] } }));
+  assert.ok(!doctor({ projectDir: dir, log: () => {} }).some((c) => !c.ok && /Write/.test(c.label)));
+});

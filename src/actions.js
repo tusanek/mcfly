@@ -292,6 +292,11 @@ export async function prepareAction({ p, cfg, id, send, ticket = null, now = () 
   const vpn = await vpnFailure(cfg, a);
   if (vpn) { await deliver(p, send, { text: `❌ <b>${escHtml(a.title)}</b>: ${escHtml(vpn)} — без VPN сервер недоступен`, keyboard: [] }, now()); return { status: 'vpn' }; }
   const r = await runCommand(a.prepare, { cwd: p.projectDir, timeoutMs });
+  // 0.19.1: ненулевой код со строками «@@ » — отказ подготовки с причиной (например, «оценка выше потолка»), а не поломка
+  if (r.code !== 0 && !r.timedOut && r.lines.some((l) => l.startsWith('@@ '))) {
+    await deliver(p, send, { text: `⏹ Подготовка «${escHtml(a.title)}» остановила действие — не запускаю.\n${pre(truncate(resultLines(r.lines).join('\n'), RESULT_MAX))}`, keyboard: [] }, now());
+    return { status: 'stopped' };
+  }
   if (r.code !== 0 || r.timedOut) {
     const why = r.timedOut ? `шла дольше ${Math.round(timeoutMs / 60000)} мин` : 'завершилась с ошибкой';
     await deliver(p, send, { text: `❌ Подготовка «${escHtml(a.title)}» не удалась (${why}) — действие не запускаю.\n${pre(truncate(r.lines.filter((l) => l.trim()).slice(-TAIL_LINES).join('\n'), RESULT_MAX))}`, keyboard: [] }, now());
