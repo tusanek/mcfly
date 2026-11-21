@@ -436,7 +436,7 @@ export async function main(argv) {
       fs.mkdirSync(path.dirname(dst), { recursive: true });
       fs.copyFileSync(path.join(MCFLY_ROOT, 'templates', 'design', 'telegram-chat.html'), dst);
       log(`Шаблон: ${rel}`);
-      log('Скопируй его под образец (design/samples/<изменение>/NN.html), впиши текст у метки ТЕКСТ и кнопки у метки КНОПКИ, сними элемент #shot Playwright при ширине 390 — светлая тема и ?theme=dark — в NN-light.png и NN-dark.png, а в proposal.md под образцом добавь строки «Картинка: <путь>».');
+      log('Скопируй его под образец (design/samples/<изменение>/NN.html), впиши текст у метки ТЕКСТ и кнопки у метки КНОПКИ, сними картинки командой mcfly samples shoot <изменение> (NN-light.png и NN-dark.png), а в proposal.md под образцом добавь строки «Картинка: <путь>».');
       return 0;
     }
     case 'worktree': {
