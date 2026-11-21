@@ -67,3 +67,51 @@ test('shootFiles: браузер не запускается — каждый о
   const r = await shootFiles(sampleFiles(dir, 'demo').files, { browser: '/нет/такого/браузера', timeoutMs: 3000 });
   assert.deepEqual(r.shot, []); assert.equal(r.failed.length, 1); assert.match(r.failed[0].error, /браузер/);
 });
+
+// --- задача 2: команда, approval request, doctor, настройки ---
+import { spawnSync } from 'node:child_process';
+import { MCFLY_ROOT } from '../src/prompt.js';
+import { bareProject, gitRepo, git, addChange } from './helpers.js';
+const cli = (args, cwd) => spawnSync(process.execPath, [path.join(MCFLY_ROOT, 'bin', 'mcfly'), ...args], { cwd, encoding: 'utf8', env: { ...process.env, MCFLY_PROJECT_DIR: '', MCFLY_RUN_ID: '' } });
+const putSamples = (dir, name, files) => { const at = path.join(dir, 'design', 'samples', name); fs.mkdirSync(at, { recursive: true }); for (const [n, h] of Object.entries(files)) fs.writeFileSync(path.join(at, n), h); return at; };
+
+test('samples shoot: без имени и с плохим именем — код 1; браузер из настройки не найден — код 1 с причиной', () => {
+  const dir = bareProject();
+  const none = cli(['samples', 'shoot'], dir); assert.equal(none.status, 1); assert.match(none.stderr, /mcfly samples shoot <изменение>/);
+  assert.equal(cli(['samples', 'shoot', '../x'], dir).status, 1);
+  putSamples(dir, 'demo', { '01.html': PLAIN_HTML });
+  fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), 'project: demo\nsamples:\n  browser: /нет/такого\n');
+  const r = cli(['samples', 'shoot', 'demo'], dir); assert.equal(r.status, 1); assert.match(r.stderr, /браузер не найден/);
+});
+
+test('samples shoot из worktree — картинки в этом worktree, не в основном каталоге', { skip: !BROWSER && 'нет браузера' }, () => {
+  const dir = gitRepo(bareProject()); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', 'p');
+  const wt = path.join(tmpDir('wt-'), 'agent-1'); git(dir, 'worktree', 'add', '-q', '-b', 'worktree-agent-1', wt);
+  const at = putSamples(wt, 'demo', { '01.html': DARK_HTML });
+  const r = cli(['samples', 'shoot', 'demo', '--project', wt], dir);
+  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /Снято: 01-light\.png, 01-dark\.png/); assert.match(r.stdout, /Картинка:/);
+  assert.ok(fs.existsSync(path.join(at, '01-light.png')));
+  assert.ok(!fs.existsSync(path.join(dir, 'design', 'samples', 'demo')), 'в основном каталоге ничего не появилось');
+  const here = cli(['samples', 'shoot', 'demo'], wt); assert.equal(here.status, 0, here.stderr); assert.match(here.stdout, /Снято/);
+});
+
+test('approval request снимает недостающие картинки; без браузера — предупреждение, запрос принят', { skip: !BROWSER && 'нет браузера' }, () => {
+  const dir = bareProject(); addChange(dir, 'demo', { proposal: '## Простыми словами\nП.\n\n## Как это будет выглядеть\n### Ответ\n```\nГотово\n```\n' });
+  const at = putSamples(dir, 'demo', { '01.html': PLAIN_HTML });
+  const r = cli(['approval', 'request', 'demo'], dir);
+  assert.equal(r.status, 0, r.stderr); assert.ok(fs.existsSync(path.join(at, '01-light.png'))); assert.match(r.stdout, /Снято: 01-light\.png/);
+  const mtime = fs.statSync(path.join(at, '01-light.png')).mtimeMs;
+  cli(['approval', 'request', 'demo'], dir); assert.equal(fs.statSync(path.join(at, '01-light.png')).mtimeMs, mtime, 'повтор не переснимает');
+  const dir2 = bareProject(); addChange(dir2, 'demo', { proposal: '## Простыми словами\nП.\n' }); putSamples(dir2, 'demo', { '01.html': PLAIN_HTML });
+  fs.writeFileSync(path.join(dir2, 'mcfly', 'config.yaml'), 'project: demo\nsamples:\n  browser: /нет/такого\n');
+  const w = cli(['approval', 'request', 'demo'], dir2); assert.equal(w.status, 0, w.stderr); assert.match(w.stdout, /⚠ Картинки не сняты: браузер не найден/);
+});
+
+test('doctor проверяет браузер для снимков; шаблон настроек разрешает mcfly samples shoot; samples.browser — строка', async () => {
+  const { doctor } = await import('../src/doctor.js'); const { parseConfig } = await import('../src/config.js');
+  const dir = bareProject(); fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), 'project: demo\nsamples:\n  browser: /нет/такого\n');
+  assert.ok(doctor({ projectDir: dir, log: () => {} }).some((c) => !c.ok && /браузер для снимков образцов/.test(c.label) && /samples\.browser/.test(c.hint)));
+  assert.throws(() => parseConfig('project: x\nsamples:\n  browser: 5\n'), /samples\.browser/);
+  const settings = JSON.parse(fs.readFileSync(path.join(MCFLY_ROOT, 'templates', 'settings.json'), 'utf8'));
+  assert.ok(settings.permissions.allow.includes('Bash(mcfly samples shoot *)'));
+});

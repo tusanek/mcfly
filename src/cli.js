@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { spawnSync } from 'node:child_process';
 import { loadIdeas, saveIdeas, addIdea, findIdea, transitionIdea, closeIdeaByChange, planIdeaPart, markFirst, isArchived, IDEA_STATUS_RU } from './ideas.js';
 import YAML from 'yaml';
 import { paths, loadState, saveState } from './state.js';
@@ -59,6 +60,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
                                                   (только в терминале), запуск из терминала (итог и в Telegram)
   action prepare|exec <id> --ticket <t>           служебные: их запускает бот после нажатия кнопки
   samples template                              шаблон «чат Telegram» для картинок образцов сообщений бота → design/samples/telegram-chat.html
+  samples shoot <изменение> [--project <каталог>]   снять картинки образцов design/samples/<изменение>/NN.html → NN-light.png, NN-dark.png
   worktree link                                 в своём worktree: ссылки на общие папки основного каталога (worktree.shared, например node_modules)
   finding add --text <t> [--evidence <t>]        находка для доработки самого mcfly (не проекта); владелец решает в боте, передавать ли
   finding list | finding send <Fн> | finding drop <Fн>   список; передать в общий ящик или убрать (только владелец в терминале)
@@ -230,6 +232,16 @@ export async function main(argv) {
         if (hasProduct(p) && !/^##\s+Как это будет выглядеть\s*$/im.test(c.proposal || '')) {
           console.error(`В плане ${c.name} нет раздела «## Как это будет выглядеть». Если изменение меняет то, что человек видит или нажимает (сообщения и кнопки бота — тоже), лид вызывает mcfly:designer, и тот добавляет образцы; если нет — добавьте в proposal.md этот раздел с одной строкой «Снаружи ничего не меняется». Потом запросите одобрение снова.`); return 1;
         }
+        // 0.20.0: HTML-образцы без картинок — снимаем сами (только недостающие); сбой — предупреждение, не отказ
+        { const { sampleFiles } = await import('./shoot.js'); const list = sampleFiles(projectDir, c.name);
+          if (!list.error) {
+            const r = await shootSamples(cfg, list.files, { onlyMissing: true });
+            if (r.error) log(`⚠ Картинки не сняты: ${r.error}`);
+            else {
+              if (r.shot.length) log(`Снято: ${r.shot.map((f) => path.basename(f)).join(', ')} — допишите в proposal.md строки «Картинка: <путь>», если их нет.`);
+              for (const f of r.failed) log(`⚠ Картинка не снята (${path.basename(f.file)}): ${f.error}`);
+            }
+          } }
         // 0.19.0: образцы владелец смотрит картинками — без них покажутся текстом; не отказ, а напоминание дизайнеру
         // 0.19.1: образцам вывода терминала (```console) картинка не нужна — о них не напоминаем
         { const samples = proposalSamples(c); if (samples.some((x) => !x.terminal) && !samples.some((x) => x.images.length)) log('⚠ У образцов нет картинок: владелец увидит их текстом. Добавьте под образцами строки «Картинка: <путь>» (сообщения бота — по шаблону mcfly samples template). Образец вывода в терминале — блок ```console, ему картинка не нужна.'); }
@@ -405,8 +417,20 @@ export async function main(argv) {
       break;
     }
     case 'samples': {
+      if (sub === 'shoot') {
+        // 0.20.0: картинки образцов снимает сам mcfly (Chrome без окна) — в каталоге, где работает агент (его worktree)
+        if (!rest[0]) { console.error('mcfly samples shoot <изменение> [--project <каталог>]'); return 1; }
+        const { sampleFiles } = await import('./shoot.js');
+        const base = hereDir(values, projectDir);
+        const list = sampleFiles(base, rest[0]); if (list.error) { console.error(list.error); return 1; }
+        const r = await shootSamples(cfg, list.files, { onlyMissing: false });
+        if (r.error) { console.error(r.error); return 1; }
+        if (r.shot.length) log(`Снято: ${r.shot.map((f) => path.basename(f)).join(', ')}. В proposal.md под каждым образцом — строки «Картинка: ${path.relative(base, path.dirname(r.shot[0]))}/<файл>».`);
+        for (const f of r.failed) console.error(`Не снято ${path.basename(f.file)}: ${f.error}`);
+        return r.failed.length ? 1 : 0;
+      }
       // 0.19.0: шаблон «чат Telegram» для картинок образцов: копия в проект, своя правка не перезаписывается
-      if (sub !== 'template') { console.error('mcfly samples template'); return 1; }
+      if (sub !== 'template') { console.error('mcfly samples template | shoot <изменение>'); return 1; }
       const rel = path.join('design', 'samples', 'telegram-chat.html'); const dst = path.join(projectDir, rel);
       if (fs.existsSync(dst)) { log(`Уже есть: ${rel}`); return 0; }
       fs.mkdirSync(path.dirname(dst), { recursive: true });
@@ -516,4 +540,19 @@ export async function main(argv) {
     }
   }
   console.error(`Неизвестная команда: ${[cmd, sub].filter(Boolean).join(' ')}\n`); log(HELP); return 1;
+}
+
+/** 0.20.0: каталог, где работает вызвавший: --project или git-корень текущего каталога (worktree агента), а не MCFLY_PROJECT_DIR. */
+function hereDir(values, projectDir) {
+  const start = values.project ? path.resolve(values.project) : process.cwd();
+  const r = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: start, encoding: 'utf8' });
+  return r.status === 0 ? fs.realpathSync(r.stdout.trim()) : (values.project ? start : projectDir);
+}
+
+/** 0.20.0: снять образцы браузером из настроек; { error } — браузер не найден. */
+async function shootSamples(cfg, files, { onlyMissing }) {
+  const { findBrowser, shootFiles } = await import('./shoot.js');
+  const browser = findBrowser({ configured: cfg.samples.browser });
+  if (!browser) return { error: `браузер не найден${cfg.samples.browser ? ` (samples.browser: ${cfg.samples.browser})` : ' — нужен Google Chrome или Chromium Playwright; путь можно задать в samples.browser'}` };
+  return shootFiles(files, { browser, onlyMissing });
 }
