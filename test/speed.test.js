@@ -134,7 +134,7 @@ test('approval request --idea: небольшой пункт без видимо
 test('без ideas.fast_sizes план по пункту ждёт кнопки, как раньше', () => {
   const dir = bareProject(); const p = paths(dir); takeIdeas(p, ['S']); addChange(dir, 'quiet', { proposal: QUIET });
   const a = cli(['approval', 'request', 'quiet', '--idea', 'I1'], dir);
-  assert.match(a.stdout, /^(⚠ .*\n)?Одобрение запрошено: quiet\. Человек увидит его в утренней сводке\.\n$/);
+  assert.match(a.stdout, /^(⚠ .*\n)?Одобрение запрошено: quiet\. Человек увидит его в утренней сводке\.( Дельт спецификаций нет — mcfly поставил skip_specs: true; поведение не меняйте\.)?\n$/);
   assert.equal(listChanges(p.openspecChanges)[0].mcfly.approval, 'pending');
 });
 test('итог прогона называет одобренное быстрым путём; цепочка при быстром пути считает взятые пункты работой', () => {

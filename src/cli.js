@@ -261,12 +261,19 @@ export async function main(argv) {
           const found = ids.map((id) => [id, findIdea(idata, id)]);
           // 0.18.8: --part — план одной части большого пункта: годится и уже спланированный (по прошлой части) пункт
           const okStatus = values.part ? ['taken', 'planned'] : ['taken'];
-          const bad = found.find(([, it]) => !it || !okStatus.includes(it.status));
+          // 0.19.2: повторный запрос того же плана (например, после правки образцов) — пункт уже спланирован этим же изменением
+          const same = (it) => it?.status === 'planned' && (it.change === c.name || (it.parts || []).includes(c.name));
+          if (found.length && found.every(([, it]) => same(it))) {
+            const st = c.mcfly.approval;
+            if (st === 'rejected') { console.error(`${c.name} отклонён владельцем — повторно не запрашивается; решение по нему — в сессии владельца.`); return 1; }
+            if (st === 'approved') { log(`${c.name} уже одобрен (${c.mcfly.by || 'владелец'}) — повторный запрос не нужен: образцы и картинки бот берёт из proposal.md в момент показа.`); return 0; }
+          }
+          const bad = found.find(([, it]) => !it || !(okStatus.includes(it.status) || same(it)));
           if (!ids.length || bad) {
             const hint = bad?.[1]?.status === 'planned' ? ` — если это следующая часть большого пункта, добавьте --part: mcfly approval request ${c.name} --idea ${bad[0]} --part` : '';
             console.error(`${bad ? bad[0] : '(номер не указан)'} не взят владельцем (статус: ${bad?.[1] ? IDEA_STATUS_RU[bad[1].status] || bad[1].status : 'нет такого'})${hint}`); return 1;
           }
-          for (const [, it] of found) { if (values.part) planIdeaPart(idata, it.id, c.name, now); else transitionIdea(idata, it.id, 'planned', { actor: 'team', change: c.name, now }); }
+          for (const [, it] of found) { if (same(it)) continue; if (values.part) planIdeaPart(idata, it.id, c.name, now); else transitionIdea(idata, it.id, 'planned', { actor: 'team', change: c.name, now }); }
           saveIdeas(p, idata); items = found.map(([, it]) => it); ideas = items.map((it) => it.id); idea = ideas[0];
         }
         // 0.16.0: пункт, который владелец поднял «вперёд», — его план первым в очереди, если приоритет не задан явно
@@ -274,13 +281,15 @@ export async function main(argv) {
         requestApproval(c, { category, priority, now, idea, ideas }); appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_proposed', value: 1, change: c.name });
         // 0.16.0, быстрый путь: небольшой взятый пункт без видимых изменений одобряется сразу — по признакам плана, а не по слову команды
         const block = items.length ? fastTrackBlock(c, items, cfg, category) : 'план не по взятому пункту';
+        const noSpecs = items.length ? markNoSpecs(c) : false; // 0.19.2: план по пункту «снаружи ничего не меняется» без дельт
+        const noSpecsNote = noSpecs ? ' Дельт спецификаций нет — mcfly поставил skip_specs: true; поведение не меняйте.' : '';
         if (!block) {
           approveFast(c, `быстрый путь: ${ideas.join(', ')} — ${[...new Set(items.map((it) => it.size))].join('/')}, ${items.every((it) => it.revert_of) ? 'возврат по кнопке владельца' : fastKind(c) === 'edit' ? 'правка существующего' : 'снаружи ничего не меняется'}`, now);
           appendMetric(p, { type: 'event', at: now.toISOString(), run_id: runIdEnv, key: 'changes_fast', value: 1, change: c.name });
           appendText(p.answers, `\n## ${fmtLocal(now)} — ${c.name} одобрено сразу после «Берём» (быстрый путь, ${ideas.join(', ')})\n`);
-          log(`Одобрено сразу: ${c.name} (быстрый путь). Реализуйте его в этом же прогоне, если лимит изменений не исчерпан.`); return 0;
+          log(`Одобрено сразу: ${c.name} (быстрый путь). Реализуйте его в этом же прогоне, если лимит изменений не исчерпан.${noSpecsNote}`); return 0;
         }
-        log(`Одобрение запрошено: ${c.name}. Человек увидит его в утренней сводке.${items.length && cfg.ideas.fast_sizes.length ? ` Ждёт кнопки владельца: ${block}.` : ''}`); return 0; }
+        log(`Одобрение запрошено: ${c.name}. Человек увидит его в утренней сводке.${items.length && cfg.ideas.fast_sizes.length ? ` Ждёт кнопки владельца: ${block}.` : ''}${noSpecsNote}`); return 0; }
       // Решение человека сразу в истории; во время прогона HEAD под агентами не двигаем — метаданные закоммитит прогон.
       const commitMeta = (message) => {
         if (exists(p.lock)) { log('Не закоммичено: идёт прогон, метаданные одобрения закоммитит он.'); return 0; }

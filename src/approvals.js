@@ -193,12 +193,15 @@ export function hasDeltas(change) {
   return fs.readdirSync(dir, { withFileTypes: true }).some((d) => d.isDirectory() && fs.existsSync(path.join(dir, d.name, 'spec.md')));
 }
 /**
- * Доделка-уборка без дельт (0.18.5): openspec validate --strict требует дельту или skip_specs: true, а роли пропускать дельты
+ * Доделка-уборка без дельт (0.18.5), с 0.19.2 и план по взятому пункту со строкой «Снаружи ничего не меняется»: openspec validate --strict требует дельту или skip_specs: true, а роли пропускать дельты
  * без одобрения запрещено. Ставит mcfly, а не роль, и только доделке «снаружи ничего не меняется» без дельт: это решение кода
  * по признакам плана, как и само одобрение доделки. true — пометка поставлена.
  */
 export function markNoSpecs(change) {
-  if (change.mcfly.by !== 'followup' || fastKind(change) !== 'quiet' || hasDeltas(change)) return false;
+  // 0.19.2: и план по взятому пункту (mcfly.idea), если в разделе образцов явно сказано «Снаружи ничего не меняется» —
+  // тесты, рефакторинг; одобряет его по-прежнему владелец или быстрый путь, ревьюер сверяет дифф с пометкой
+  const quietIdea = Boolean(change.mcfly.idea) && /^\s*Снаружи ничего не меняется/im.test(samplesSection(change));
+  if ((change.mcfly.by !== 'followup' && !quietIdea) || fastKind(change) !== 'quiet' || hasDeltas(change)) return false;
   const meta = { ...change.meta, skip_specs: true };
   writeText(path.join(change.dir, '.openspec.yaml'), YAML.stringify(meta)); change.meta = meta;
   return true;
