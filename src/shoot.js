@@ -22,8 +22,8 @@ const inside = (dir, p) => p === dir || p.startsWith(dir + path.sep);
  * Браузер для снимков: samples.browser из настроек (если указан, то только он), иначе Google Chrome,
  * иначе новейший Chromium из кэша Playwright. null — не найден.
  */
-export function findBrowser({ configured = '', exists = fs.existsSync, home = os.homedir(), list = (d) => fs.readdirSync(d) } = {}) {
-  if (configured) return exists(configured) && (exists === fs.existsSync ? isFile(configured) : true) ? configured : null;
+export function findBrowser({ configured = '', exists = fs.existsSync, home = os.homedir(), list = (d) => fs.readdirSync(d), realpath = fs.realpathSync, file = isFile } = {}) {
+  if (configured) return exists(configured) && file(configured) && trusted(configured, home, realpath) ? configured : null;
   if (exists(CHROME)) return CHROME;
   const cache = path.join(home, 'Library', 'Caches', 'ms-playwright');
   let dirs = []; try { dirs = exists(cache) ? list(cache) : []; } catch { return null; }
@@ -36,6 +36,17 @@ export function findBrowser({ configured = '', exists = fs.existsSync, home = os
     }
   }
   return null;
+}
+
+/**
+ * безопасность: путь из samples.browser — абсолютный, с именем Chrome/Chromium, и настоящий файл (после ссылок) лежит в обычном
+ * месте установки программ, а не в проекте или /tmp: иначе агент мог бы подложить свою программу под видом браузера.
+ */
+function trusted(p, home, realpath) {
+  if (!path.isAbsolute(p) || !BROWSER_NAME.test(path.basename(p))) return false;
+  let real = ''; try { real = realpath(p); } catch { return false; }
+  return ['/Applications', path.join(home, 'Applications'), path.join(home, 'Library', 'Caches', 'ms-playwright'), '/opt/homebrew', '/usr/local', '/usr/bin', '/opt/google']
+    .some((dir) => real.startsWith(dir + path.sep));
 }
 
 /** Образцы изменения: NN.html по номеру; dark — null, если образец не знает тёмной темы. */
@@ -59,7 +70,9 @@ export function sampleFiles(baseDir, change) {
 function launch(browser) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-shot-'));
   const proc = spawn(browser, ['--headless', '--remote-debugging-pipe', '--no-first-run', '--no-default-browser-check', '--disable-gpu',
-    '--hide-scrollbars', `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
+    '--hide-scrollbars',
+    // безопасность: сеть закрыта на уровне браузера (имена не находятся), новые окна не открываются — вдобавок к перехвату запросов
+    '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost', '--block-new-web-contents', `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
   let id = 0; let buf = ''; let dead = null;
   const waiting = new Map(); const listeners = new Set();
   const fail = (why) => { dead = dead || why; for (const [, w] of waiting) w.reject(new Error(dead)); waiting.clear(); };

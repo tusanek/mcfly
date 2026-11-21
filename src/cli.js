@@ -423,7 +423,8 @@ export async function main(argv) {
         const { sampleFiles } = await import('./shoot.js');
         const base = hereDir(values, projectDir);
         // безопасность: --project только этого же репозитория — иначе настройки (samples.browser) пришли бы из чужого каталога
-        if (gitCommon(base) !== gitCommon(process.cwd())) { console.error(`--project ${values.project}: каталог другого репозитория — снимаю только в своём проекте или его worktree`); return 1; }
+        const mine = gitCommon(process.cwd());
+        if (values.project ? (!mine || gitCommon(base) !== mine) : (mine && gitCommon(base) !== mine)) { console.error(`--project ${values.project}: каталог другого репозитория — снимаю только в своём проекте или его worktree`); return 1; }
         const list = sampleFiles(base, rest[0]); if (list.error) { console.error(list.error); return 1; }
         const r = await shootSamples(cfg, list.files, { onlyMissing: false });
         if (r.error) { console.error(r.error); return 1; }

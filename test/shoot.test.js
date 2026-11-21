@@ -22,10 +22,13 @@ test('findBrowser: настройка, затем Chrome, затем новей�
   const have = new Set(['/x/chrome', CHROME, old, fresh]);
   const list = (d) => (d === cache ? ['chromium-1200', 'chromium-1217', 'chromium_headless_shell-1217', 'ffmpeg-1011'] : d.endsWith('1200') ? ['chrome-mac'] : ['chrome-mac-arm64']);
   const exists = (p) => have.has(p) || p === cache;
-  assert.equal(findBrowser({ configured: '/x/chrome', exists, home: '/h', list }), '/x/chrome');
+  const own = '/Applications/My Chrome.app/Contents/MacOS/Chromium'; have.add(own);
+  const pure = { exists, home: '/h', list, realpath: (p) => p, file: () => true };
+  assert.equal(findBrowser({ configured: own, ...pure }), own);
+  have.add('/x/chrome'); assert.equal(findBrowser({ configured: '/x/chrome', ...pure }), null, 'не в месте установки программ — не доверяем');
   assert.equal(findBrowser({ exists, home: '/h', list }), CHROME);
   assert.equal(findBrowser({ exists: (p) => p !== CHROME && exists(p), home: '/h', list }), fresh, 'без Chrome — новейший chromium-*, не headless_shell');
-  assert.equal(findBrowser({ configured: '/нет/такого', exists, home: '/h', list }), null, 'указанный в настройке, но несуществующий — не подменяем другим');
+  assert.equal(findBrowser({ configured: '/нет/такого/Chromium', ...pure }), null, 'указанный в настройке, но несуществующий — не подменяем другим');
   assert.equal(findBrowser({ exists: () => false, home: '/h', list: () => [] }), null);
 });
 
@@ -133,6 +136,8 @@ test('безопасность: samples.browser — только Chrome или C
   const dir = gitRepo(bareProject()); const other = gitRepo(bareProject()); putSamples(other, 'demo', { '01.html': PLAIN_HTML });
   const r = cli(['samples', 'shoot', 'demo', '--project', other], dir);
   assert.equal(r.status, 1); assert.match(r.stderr, /другого репозитория/);
+  const plain = bareProject(); const outsideGit = bareProject(); putSamples(outsideGit, 'demo', { '01.html': PLAIN_HTML });
+  assert.match(cli(['samples', 'shoot', 'demo', '--project', outsideGit], plain).stderr, /другого репозитория/, 'оба каталога вне git — тоже отказ, а не «равны»');
 });
 
 test('безопасность: картинка поверх ссылки на чужой файл не пишется; образец-ссылка наружу — не образец', { skip: !BROWSER && 'нет браузера' }, async () => {
@@ -159,4 +164,14 @@ test('безопасность: образец не загружает файл�
   assert.equal(fs.readFileSync(path.join(at, '02-light.png')).readUInt32BE(20), 600, 'своя картинка загрузилась');
   const odd = tmpDir('odd#dir%20-'); const oat = path.join(odd, 'design', 'samples', 'demo'); fs.mkdirSync(oat, { recursive: true }); fs.writeFileSync(path.join(oat, '01.html'), PLAIN_HTML);
   const o = await shootFiles(sampleFiles(odd, 'demo').files, { browser: BROWSER }); assert.deepEqual(o.failed, []);
+});
+
+test('безопасность: samples.browser на свой скрипт с именем Chromium вне мест установки — не запускается', () => {
+  const fake = path.join(tmpDir('fake-'), 'Chromium'); const marker = path.join(path.dirname(fake), 'ran');
+  fs.writeFileSync(fake, `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 });
+  assert.equal(findBrowser({ configured: fake }), null);
+  const dir = bareProject(); putSamples(dir, 'demo', { '01.html': PLAIN_HTML });
+  fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), `project: demo\nsamples:\n  browser: ${fake}\n`);
+  const r = cli(['samples', 'shoot', 'demo'], dir); assert.equal(r.status, 1); assert.match(r.stderr, /браузер не найден/);
+  assert.ok(!fs.existsSync(marker), 'скрипт не запускался');
 });
