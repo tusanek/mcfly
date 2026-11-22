@@ -50,8 +50,8 @@ function trusted(p, realpath) {
   return BROWSER_NAME.test(path.basename(real)) && ['/Applications', '/usr/bin', '/opt/google'].some((dir) => real.startsWith(dir + path.sep)) ? real : null;
 }
 
-/** Образцы изменения: NN.html по номеру; dark — null, если образец не знает тёмной темы. */
-export function sampleFiles(baseDir, change) {
+/** Образцы изменения: NN.html по номеру; dark — null, если образец не знает тёмной темы или тёмная не нужна (dark: false, 0.20.1). */
+export function sampleFiles(baseDir, change, { dark = true } = {}) {
   if (!NAME.test(String(change || ''))) return { error: `плохое имя изменения «${change || ''}»: латиница, цифры, дефис`, files: [] };
   const dir = path.join(baseDir, 'design', 'samples', change);
   let names = []; try { names = fs.readdirSync(dir); } catch {}
@@ -61,10 +61,21 @@ export function sampleFiles(baseDir, change) {
   const own = (n) => { try { return inside(real, fs.realpathSync(path.join(dir, n))); } catch { return false; } };
   const files = names.filter((n) => SAMPLE.test(n) && own(n)).sort((a, b) => Number(SAMPLE.exec(a)[1]) - Number(SAMPLE.exec(b)[1])).map((n) => {
     const html = path.join(dir, n); const base = n.replace(/\.html$/, '');
-    return { html, light: path.join(dir, `${base}-light.png`), dark: DARK.test(fs.readFileSync(html, 'utf8')) ? path.join(dir, `${base}-dark.png`) : null };
+    return { html, light: path.join(dir, `${base}-light.png`), dark: dark && DARK.test(fs.readFileSync(html, 'utf8')) ? path.join(dir, `${base}-dark.png`) : null };
   });
   if (!files.length) return { error: `нет образцов: в design/samples/${change}/ нет файлов NN.html`, files: [] };
   return { files };
+}
+
+/**
+ * 0.20.1: план уже ссылается на картинки («Картинка: <путь>», абсолютные пути в refs) — снимать только их: дизайнер удалил тёмную
+ * по просьбе владельца, и запрос одобрения не должен снимать её снова. Ссылок нет — снимать всё.
+ */
+export function keepReferenced(files, refs) {
+  if (!refs.length) return files;
+  const want = new Set(refs.map((r) => path.resolve(r)));
+  const pick = (f) => (f && want.has(path.resolve(f)) ? f : null);
+  return files.map((f) => ({ ...f, light: pick(f.light), dark: pick(f.dark) })).filter((f) => f.light || f.dark);
 }
 
 /** Chrome без окна с каналом отладки; send(method, params, sessionId) → result, close() — закрыть и убрать профиль. */
@@ -165,7 +176,7 @@ export async function shootFiles(files, { browser, timeoutMs = 20000, onlyMissin
   const res = { shot: [], skipped: [], failed: [] };
   const jobs = [];
   for (const f of files) {
-    for (const [out, query] of [[f.light, ''], ...(f.dark ? [[f.dark, '?theme=dark']] : [])]) {
+    for (const [out, query] of [[f.light, ''], [f.dark, '?theme=dark']].filter(([o]) => o)) {
       if (onlyMissing && fs.existsSync(out)) res.skipped.push(out); else jobs.push({ html: f.html, out, query });
     }
   }

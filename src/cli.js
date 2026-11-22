@@ -60,7 +60,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
                                                   (только в терминале), запуск из терминала (итог и в Telegram)
   action prepare|exec <id> --ticket <t>           служебные: их запускает бот после нажатия кнопки
   samples template                              шаблон «чат Telegram» для картинок образцов сообщений бота → design/samples/telegram-chat.html
-  samples shoot <изменение> [--project <каталог>]   снять картинки образцов design/samples/<изменение>/NN.html → NN-light.png, NN-dark.png
+  samples shoot <изменение> [--light] [--project <каталог>]   снять картинки образцов design/samples/<изменение>/NN.html → NN-light.png, NN-dark.png (--light или samples.dark: false — без тёмной)
   worktree link                                 в своём worktree: ссылки на общие папки основного каталога (worktree.shared, например node_modules)
   finding add --text <t> [--evidence <t>]        находка для доработки самого mcfly (не проекта); владелец решает в боте, передавать ли
   finding list | finding send <Fн> | finding drop <Fн>   список; передать в общий ящик или убрать (только владелец в терминале)
@@ -77,7 +77,7 @@ export const runExitCode = (status) => (['ok', 'dry-run', 'missed', 'locked'].in
 
 export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
-    project: { type: 'string' }, mode: { type: 'string' }, changes: { type: 'string' }, 'dry-run': { type: 'boolean' }, send: { type: 'boolean' }, weekly: { type: 'boolean' }, director: { type: 'string' }, list: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
+    project: { type: 'string' }, mode: { type: 'string' }, changes: { type: 'string' }, 'dry-run': { type: 'boolean' }, light: { type: 'boolean' }, send: { type: 'boolean' }, weekly: { type: 'boolean' }, director: { type: 'string' }, list: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
     change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, retry: { type: 'boolean' }, part: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, followup: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
@@ -233,9 +233,12 @@ export async function main(argv) {
           console.error(`В плане ${c.name} нет раздела «## Как это будет выглядеть». Если изменение меняет то, что человек видит или нажимает (сообщения и кнопки бота — тоже), лид вызывает mcfly:designer, и тот добавляет образцы; если нет — добавьте в proposal.md этот раздел с одной строкой «Снаружи ничего не меняется». Потом запросите одобрение снова.`); return 1;
         }
         // 0.20.0: HTML-образцы без картинок — снимаем сами (только недостающие); сбой — предупреждение, не отказ
-        { const { sampleFiles } = await import('./shoot.js'); const list = sampleFiles(projectDir, c.name);
-          if (!list.error) {
-            const r = await shootSamples(cfg, list.files, { onlyMissing: true });
+        // 0.20.1: без тёмной при samples.dark: false; план уже ссылается на картинки — доснимаем только их
+        { const { sampleFiles, keepReferenced } = await import('./shoot.js'); const list = sampleFiles(projectDir, c.name, { dark: cfg.samples.dark });
+          const refs = proposalSamples(c).flatMap((x) => x.images).map((img) => path.resolve(projectDir, img));
+          const files = list.error ? [] : keepReferenced(list.files, refs);
+          if (files.length) {
+            const r = await shootSamples(cfg, files, { onlyMissing: true });
             if (r.error) log(`⚠ Картинки не сняты: ${r.error}`);
             else {
               if (r.shot.length) log(`Снято: ${r.shot.map((f) => path.basename(f)).join(', ')} — допишите в proposal.md строки «Картинка: <путь>», если их нет.`);
@@ -419,13 +422,14 @@ export async function main(argv) {
     case 'samples': {
       if (sub === 'shoot') {
         // 0.20.0: картинки образцов снимает сам mcfly (Chrome без окна) — в каталоге, где работает агент (его worktree)
-        if (!rest[0]) { console.error('mcfly samples shoot <изменение> [--project <каталог>]'); return 1; }
+        if (!rest[0]) { console.error('mcfly samples shoot <изменение> [--light] [--project <каталог>]'); return 1; }
         const { sampleFiles } = await import('./shoot.js');
         const base = hereDir(values, projectDir);
         // безопасность: --project только этого же репозитория — иначе настройки (samples.browser) пришли бы из чужого каталога
         const mine = gitCommon(process.cwd());
         if (values.project ? (!mine || gitCommon(base) !== mine) : (mine && gitCommon(base) !== mine)) { console.error(`--project ${values.project}: каталог другого репозитория — снимаю только в своём проекте или его worktree`); return 1; }
-        const list = sampleFiles(base, rest[0]); if (list.error) { console.error(list.error); return 1; }
+        // 0.20.1: --light или samples.dark: false — только светлая тема
+        const list = sampleFiles(base, rest[0], { dark: cfg.samples.dark && !values.light }); if (list.error) { console.error(list.error); return 1; }
         const r = await shootSamples(cfg, list.files, { onlyMissing: false });
         if (r.error) { console.error(r.error); return 1; }
         if (r.shot.length) log(`Снято: ${r.shot.map((f) => path.basename(f)).join(', ')}. В proposal.md под каждым образцом — строки «Картинка: ${path.relative(base, path.dirname(r.shot[0]))}/<файл>».`);
