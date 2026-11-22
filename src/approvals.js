@@ -206,6 +206,15 @@ export function markNoSpecs(change) {
   writeText(path.join(change.dir, '.openspec.yaml'), YAML.stringify(meta)); change.meta = meta;
   return true;
 }
+/**
+ * 0.20.2: правка видимого, которую mcfly одобряет без владельца (быстрый путь, доделка), обязана нести дельту спецификаций:
+ * иначе после слияния openspec validate --strict и архивация падают, а skip_specs для видимого ставить нельзя — спецификации
+ * разошлись бы с продуктом. Текст отказа; пустая строка — дельта есть или правки видимого нет.
+ */
+export function visibleNoDeltas(change) {
+  if (fastKind(change) !== 'edit' || hasDeltas(change)) return '';
+  return `${change.name}: план меняет видимое, а дельт спецификаций нет — после слияния openspec validate --strict и архивация не пройдут. Добавьте openspec/changes/${change.name}/specs/<область>/spec.md с разделом «## MODIFIED Requirements» (требование целиком, с новым текстом) и запросите одобрение снова. Если снаружи ничего не меняется — уберите образцы и оставьте в «## Как это будет выглядеть» строку «Снаружи ничего не меняется».`;
+}
 /** Кем одобрено без владельца: fast — быстрый путь после «Берём», followup — доделка без «Берём» (0.17.0). */
 export const FAST_BY = ['fast', 'followup'];
 export const isFastApproved = (change) => change.mcfly.approval === 'approved' && FAST_BY.includes(change.mcfly.by);

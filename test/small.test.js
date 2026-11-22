@@ -30,6 +30,8 @@ function takeIdeas(p, sizes) {
   saveIdeas(p, data); return data;
 }
 const archive = (dir, name, opts) => { const from = addChange(dir, name, opts); const to = path.join(dir, 'openspec', 'changes', 'archive', `2026-11-18-${name}`); fs.mkdirSync(path.dirname(to), { recursive: true }); fs.renameSync(from, to); return to; };
+// 0.20.2: правка видимого без владельца — только с дельтой спецификаций
+const withDelta = (at) => { fs.mkdirSync(path.join(at, 'specs', 'bot'), { recursive: true }); fs.writeFileSync(path.join(at, 'specs', 'bot', 'spec.md'), '## MODIFIED Requirements\n'); return at; };
 const byName = (p) => Object.fromEntries(listChanges(p.openspecChanges).map((c) => [c.name, c]));
 
 test('настройки: правка видимого и доделки по умолчанию выключены; шаблон нового проекта их включает', () => {
@@ -92,7 +94,7 @@ test('approval request --followup: одобряется сразу до пред
 });
 test('approval request --idea: правка существующего по пункту S одобряется сразу, новое видимое ждёт кнопки', () => {
   const dir = bareProject(); const p = paths(dir); fs.writeFileSync(p.config, CONFIG); takeIdeas(p, ['S', 'S']);
-  addChange(dir, 'edit', { proposal: EDIT }); addChange(dir, 'newui', { proposal: NEWUI });
+  withDelta(addChange(dir, 'edit', { proposal: EDIT })); addChange(dir, 'newui', { proposal: NEWUI });
   assert.match(cli(['approval', 'request', 'edit', '--idea', 'I1'], dir, inRun).stdout, /Одобрено сразу: edit/);
   assert.match(cli(['approval', 'request', 'newui', '--idea', 'I2'], dir, inRun).stdout, /Ждёт кнопки владельца: изменение меняет то, что человек видит/);
   assert.equal(byName(p).edit.mcfly.fast_kind, 'edit'); assert.match(byName(p).edit.mcfly.note, /правка существующего/);
@@ -158,7 +160,7 @@ test('0.18.5: доделка-уборка без дельт — skip_specs ст�
   addChange(dir, 'tidy', { proposal: QUIET });
   const withSpec = addChange(dir, 'tidy-spec', { proposal: QUIET });
   fs.mkdirSync(path.join(withSpec, 'specs', 'area'), { recursive: true }); fs.writeFileSync(path.join(withSpec, 'specs', 'area', 'spec.md'), '## MODIFIED Requirements\n');
-  addChange(dir, 'hint', { proposal: EDIT });
+  withDelta(addChange(dir, 'hint', { proposal: EDIT }));
   const meta = (n) => YAML.parse(fs.readFileSync(path.join(dir, 'openspec', 'changes', n, '.openspec.yaml'), 'utf8'));
   const r = cli(['approval', 'request', 'tidy', '--followup', 'parent'], dir, inRun);
   assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /skip_specs: true/);
@@ -167,7 +169,7 @@ test('0.18.5: доделка-уборка без дельт — skip_specs ст�
   assert.equal(cli(['approval', 'request', 'tidy-spec', '--followup', 'parent'], dir, inRun).status, 0);
   assert.equal(meta('tidy-spec').skip_specs, undefined, 'дельты есть — пометка не нужна');
   assert.equal(cli(['approval', 'request', 'hint', '--followup', 'parent'], dir, inRun).status, 0);
-  assert.equal(meta('hint').skip_specs, undefined, 'правка видимого — без пропуска дельт');
+  assert.equal(meta('hint').skip_specs, undefined, 'правка видимого — без пропуска дельт (0.20.2: без дельты её не одобрят вовсе)');
   const own = addChange(dir, 'owned', { proposal: QUIET }); approveFast(byName(p).owned, 'быстрый путь', new Date());
   const { markNoSpecs } = await import('../src/approvals.js');
   assert.equal(markNoSpecs(byName(p).owned), false, 'быстрый путь по пункту владельца — не доделка'); assert.ok(own);
