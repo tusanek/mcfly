@@ -35,8 +35,9 @@ export const DEFAULT_CONFIG = {
   design: { skills: [] },
   // Общие папки в worktree команды (0.18.0), например ['miniapp/node_modules']: ставятся в основном каталоге, разработчик подключает ссылками (mcfly worktree link)
   worktree: { shared: [] },
-  // Снимки образцов (0.20.0): browser — путь к Chrome или Chromium; пусто — Google Chrome, иначе Chromium из кэша Playwright
-  samples: { browser: '' },
+  // Снимки образцов (0.20.0): browser — путь к Chrome или Chromium; пусто — Google Chrome, иначе Chromium из кэша Playwright;
+  // dark (0.20.1): false — снимать только светлую тему (экономия)
+  samples: { browser: '', dark: true },
   // Находки для доработки самого mcfly (0.11.0): агенты и сессии регистрируют, владелец одобряет в боте, одобренное — в общий ящик inbox
   findings: { enabled: true, inbox: '~/mcfly-inbox.md' },
   // Сводка коротким роликом с голосом (0.12.0): после текста сводки, отдельным сообщением; pronounce — { слово: как прочитать }
@@ -101,6 +102,7 @@ export function validate(cfg) {
   if (!(Number.isInteger(limits.max_changes_night) && limits.max_changes_night >= 0)) errors.push('limits.max_changes_night: целое число от 0 (0 — как max_changes_per_run)');
   if (!(Array.isArray(limits.run_choices) && limits.run_choices.length <= 4 && limits.run_choices.every((x) => Number.isInteger(x) && x >= 1 && x <= MAX_RUN_CHANGES))) errors.push(`limits.run_choices: до четырёх целых чисел от 1 до ${MAX_RUN_CHANGES}, например [1, 3, 5]; [] — бот не спрашивает, сколько брать`);
   errors.push(...sharedErrors(cfg.worktree?.shared));
+  if (typeof cfg.samples?.dark !== 'boolean') errors.push('samples.dark: true или false (false — снимать только светлую тему)');
   if (typeof cfg.samples?.browser !== 'string') errors.push('samples.browser: путь к Chrome или Chromium строкой; пусто — найти самому');
   else if (cfg.samples.browser && !BROWSER_NAME.test(path.basename(cfg.samples.browser))) errors.push(`samples.browser: «${cfg.samples.browser}» — не Chrome и не Chromium (нужен исполняемый файл, например …/Google Chrome.app/Contents/MacOS/Google Chrome)`);
   const skills = cfg.design?.skills;
