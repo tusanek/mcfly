@@ -14,7 +14,7 @@ import { pullAnswers, pollAnswers } from './pull.js';
 import { buildContext, isMcflyProject, hasProduct } from './context.js';
 import { loadQuestions, saveQuestions, addQuestion, expireQuestions, openQuestions } from './questions.js';
 import { branchProgress, commitPaths } from './git.js';
-import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, approveFast, fastPlanIntact, followupBlock, fastKind, writeCategory, priorityOf, markNoSpecs, proposalSamples } from './approvals.js';
+import { listChanges, requestApproval, setApproval, pendingApprovals, setPause, clearPause, moveFirst, firstPriority, fastTrackBlock, isFastApproved, holdApproval, approveFast, fastPlanIntact, followupBlock, fastKind, writeCategory, priorityOf, markNoSpecs, proposalSamples, visibleNoDeltas } from './approvals.js';
 import { appendMetric, readMetrics, aggregate, formatEvents } from './metrics.js';
 import { createTelegram, extractMessages } from './telegram.js';
 import * as schedule from './schedule.js';
@@ -260,6 +260,7 @@ export async function main(argv) {
           const used = runIdEnv ? readMetrics(p).filter((m) => m.type === 'event' && m.key === 'changes_followup' && m.run_id === runIdEnv).length : 0;
           const block = followupBlock(c, cfg, { parentArchived: /^[a-z0-9][a-z0-9-]*$/.test(parent) && isArchived(p.openspecChanges, parent), used, category });
           if (block) { console.error(`Доделка ${c.name} не принята: ${block}. Удалите черновик изменения и оформите предложением — mcfly ideas add --source team …: владелец решит кнопкой «Берём».`); return 1; }
+          { const nd = visibleNoDeltas(c); if (nd) { console.error(nd); return 1; } } // 0.20.2
           writeCategory(c, category);
           approveFast(c, `доделка к ${parent}${fastKind(c) === 'edit' ? ', правка существующего' : ', снаружи ничего не меняется'}`, now, { by: 'followup', followupOf: parent });
           const noSpecs = markNoSpecs(c); // 0.18.5: уборка без дельт проходит openspec validate --strict
@@ -288,6 +289,8 @@ export async function main(argv) {
             const hint = bad?.[1]?.status === 'planned' ? ` — если это следующая часть большого пункта, добавьте --part: mcfly approval request ${c.name} --idea ${bad[0]} --part` : '';
             console.error(`${bad ? bad[0] : '(номер не указан)'} не взят владельцем (статус: ${bad?.[1] ? IDEA_STATUS_RU[bad[1].status] || bad[1].status : 'нет такого'})${hint}`); return 1;
           }
+          // 0.20.2: план пройдёт быстрым путём — правка видимого без дельт отклоняется до того, как пункт станет «спланировано»
+          { const nd = fastTrackBlock(c, found.map(([, it]) => it), cfg, category) ? '' : visibleNoDeltas(c); if (nd) { console.error(nd); return 1; } }
           for (const [, it] of found) { if (same(it)) continue; if (values.part) planIdeaPart(idata, it.id, c.name, now); else transitionIdea(idata, it.id, 'planned', { actor: 'team', change: c.name, now }); }
           saveIdeas(p, idata); items = found.map(([, it]) => it); ideas = items.map((it) => it.id); idea = ideas[0];
         }
