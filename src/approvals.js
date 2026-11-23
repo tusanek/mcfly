@@ -324,3 +324,34 @@ export function proposalSamples(change) {
     ...(x.terminal ? { terminal: true } : {}),
   })).filter((x) => x.text || x.buttons.length || x.title || x.images.length);
 }
+
+const DEP_LINE = /после|поверх|зависит|требует|строится на/i;
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Имена других изменений из others, на которые план change ссылается строкой с «после», «поверх», «зависит», «требует». */
+export function dependsOn(change, others) {
+  const text = `${change.proposal || ''}\n${readText(path.join(change.dir, 'tasks.md'), '')}`.split('\n').filter((l) => DEP_LINE.test(l)).join('\n');
+  if (!text) return [];
+  return others.filter((o) => o.name !== change.name && new RegExp(`(^|[^a-z0-9-])${esc(o.name)}([^a-z0-9-]|$)`, 'i').test(text)).map((o) => o.name);
+}
+
+/**
+ * 0.21.0 (F30, F35): порядок одобренных изменений с учётом зависимостей из их планов. Сначала по приоритету, но изменение, план которого
+ * делается «после» другого одобренного, встаёт за ним; зависимость от ещё не одобренного — blockedBy (брать нельзя, пока его не одобрят
+ * и не сольют). Цикл — остаток по приоритету, как раньше. Возвращает [{ change, after, blockedBy }].
+ */
+export function dependencyOrder(work, all) {
+  const workNames = new Set(work.map((c) => c.name));
+  const info = new Map(work.map((c) => {
+    const deps = dependsOn(c, all);
+    return [c.name, { change: c, after: deps.filter((d) => workNames.has(d)), blockedBy: deps.filter((d) => !workNames.has(d) && all.find((x) => x.name === d)?.mcfly.approval !== 'approved') }];
+  }));
+  const out = []; const placed = new Set(); const visiting = new Set();
+  const place = (name) => {
+    if (placed.has(name) || visiting.has(name)) return;
+    visiting.add(name);
+    for (const d of info.get(name).after) place(d);
+    visiting.delete(name); placed.add(name); out.push(info.get(name));
+  };
+  for (const c of work) place(c.name);
+  return out;
+}

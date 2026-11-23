@@ -29,8 +29,15 @@ const SIZE_RANK = { L: 3, M: 2, S: 1 };
  */
 export function closedItems(p, archived, ideas) {
   const out = [];
+  const byIdea = new Map(); // 0.21.0 (F32): пункт списка, закрытый несколькими изменениями, — одна строка и одна сцена
   for (const c of archived) {
     const idea = c.mcfly?.idea ? ideas.find((x) => String(x.id) === String(c.mcfly.idea)) : null;
+    const seen = idea ? byIdea.get(String(idea.id)) : null;
+    if (seen) {
+      const s2 = seen.sample ? null : (proposalSamples(c).find((x) => x.text) || proposalSamples(c).find((x) => x.buttons.length) || null);
+      if (s2) { seen.sample = { text: s2.text, buttons: s2.buttons }; seen.weight += 1; seen.notable = seen.notable || (idea.source !== 'owner-note' && !FIX_LIKE.test(seen.title)); }
+      continue;
+    }
     const named = idea ? String(idea.title || '') : '';
     // Без пункта списка название — первая фраза описания: пользу из того же описания не повторяем
     const own1 = changeTitle(p, c).replace(/^«|»$/g, '');
@@ -43,6 +50,7 @@ export function closedItems(p, archived, ideas) {
     const note = idea?.source === 'owner-note';
     out.push({ title, benefit: String(idea?.benefit || (named ? proposalExcerpt(c, 200) : '') || '').replace(/`/g, '').replace(/\s+/g, ' ').trim(), sample: sample ? { text: sample.text, buttons: sample.buttons } : null,
       weight: (own ? 10 : 0) + (SIZE_RANK[idea?.size] || 1) + (sample ? 1 : 0), notable: !note && !FIX_LIKE.test(title) && !!(sample || own) });
+    if (idea) byIdea.set(String(idea.id), out.at(-1));
   }
   return out;
 }
