@@ -108,6 +108,11 @@ test('0.22.0: run.allow и stand.command действуют только пос�
   assert.equal(commandsTrusted(dir, { ...cfg, run: { ...cfg.run, extra_args: ['--dangerously-skip-permissions'] } }), false);
   assert.equal(commandsTrusted(dir, { ...cfg, run: { ...cfg.run, permission_mode: 'bypassPermissions' } }), false);
   assert.equal(commandsTrusted(dir, { ...DEFAULT_CONFIG, run: { ...DEFAULT_CONFIG.run, permission_mode: 'acceptEdits' } }), true);
+  const odd = { ...DEFAULT_CONFIG, run: { ...DEFAULT_CONFIG.run, claude_bin: '/tmp/x/claude' } };
+  assert.equal(commandsTrusted(dir, odd), false);
+  const { withTrustedBins, untrustedRun } = await import('../src/trust.js');
+  assert.equal(withTrustedBins(dir, odd).run.claude_bin, '', 'чужую программу не подменяем настоящим claude');
+  assert.deepEqual(untrustedRun({ ...odd.run, extra_args: ['--x'], permission_mode: 'bypassPermissions' }), { ...odd.run, claude_bin: '', extra_args: [], permission_mode: 'auto' });
   delete process.env.MCFLY_TRUST_FILE;
 });
 

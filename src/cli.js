@@ -123,7 +123,9 @@ export async function main(argv) {
   }
   if (!isMcflyProject(p)) { console.error(`Это не проект mcfly: нет ${p.config}. Выполните mcfly init.`); return 1; }
   loadEnv(projectDir);
-  const cfg = loadConfig(p.config);
+  // 0.22.0: программы из config.yaml (claude_bin, scutil_bin) и роль лида — только подтверждённые владельцем (mcfly trust)
+  const { withTrustedBins } = await import('./trust.js');
+  const rawCfg = loadConfig(p.config); const cfg = cmd === 'trust' ? rawCfg : withTrustedBins(projectDir, rawCfg);
   const now = new Date();
   const runIdEnv = process.env.MCFLY_RUN_ID || '';
   switch (cmd) {

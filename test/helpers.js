@@ -1,7 +1,11 @@
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import YAML from 'yaml';
-import { DEFAULT_CONFIG } from '../src/config.js';
+import { DEFAULT_CONFIG, parseConfig } from '../src/config.js';
+import { trustCommands } from '../src/trust.js';
+// 0.22.0: свой claude_bin действует только после mcfly trust — тестовый проект подтверждаем в своём файле подтверждений
+process.env.MCFLY_TRUST_FILE ||= path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-trust-')), 'trusted.json');
+export const trustProject = (dir) => trustCommands(dir, parseConfig(fs.readFileSync(path.join(dir, 'mcfly', 'config.yaml'), 'utf8')));
 export const cfg = { ...DEFAULT_CONFIG, project: 'demo' };
 export function tmpDir(prefix = 'mcfly-test-') { return fs.mkdtempSync(path.join(os.tmpdir(), prefix)); }
 /** Пустой проект mcfly без вызова init (init тестируется отдельно). */
@@ -44,6 +48,7 @@ export function fakeClaude(dir, { lines = [], stderr = '', exitCode = 0 } = {}) 
   const err = stderr ? `printf '%s\\n' ${JSON.stringify(stderr)} >&2\n` : '';
   fs.writeFileSync(script, `#!/bin/sh\nenv > "${envFile}"\ncat "${out}"\n${err}exit ${exitCode}\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), `project: demo\nrun:\n  claude_bin: ${script}\n  max_minutes: 1\n`);
+  trustProject(dir);
   return { script, envFile };
 }
 /** Поддельный claude, который на каждой следующей попытке отвечает по-своему: attempts — [{ lines, stderr, exitCode }]. */
@@ -60,6 +65,7 @@ export function fakeClaudeSeq(dir, attempts, { config = '' } = {}) {
   body += 'exit 0\n';
   fs.writeFileSync(script, body, { mode: 0o755 });
   fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), `project: demo\nrun:\n  claude_bin: ${script}\n  max_minutes: 120\n${config}`);
+  trustProject(dir);
   return { script, calls: () => Number(fs.readFileSync(counter, 'utf8').trim() || 0) };
 }
 export function addChange(dir, name, { tasks = '- [ ] первая\n- [x] нулевая\n', proposal = '# Proposal\n\nЗачем: тест.\n', meta = { schema: 'spec-driven' } } = {}) {
