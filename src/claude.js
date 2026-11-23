@@ -54,7 +54,8 @@ export function cleanEnv(env) {
 }
 
 // Нет доступа к API: 403 «Request not allowed» Anthropic отдаёт запросам из неподдерживаемого региона (упал VPN), остальное — сеть.
-const NETWORK_RE = /Request not allowed|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|getaddrinfo|Unable to connect to API|fetch failed/i;
+// 0.21.0 (F25): «spawn claude ENOENT» — claude на миг пропал (Claude Code обновлял себя ночью): повтор, как при обрыве сети.
+const NETWORK_RE = /spawn \S+ ENOENT|Request not allowed|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|getaddrinfo|Unable to connect to API|fetch failed/i;
 const LIMIT_RE = /usage limit|session limit|weekly limit|rate limit|limit reached|hit your [^.]*limit|too many requests|\b429\b|quota/i;
 
 /** Маскирует токены Anthropic, ботов Telegram, OAuth Яндекса и ключи вида sk-… (LiteLLM): журнал событий, result.json и progress.md коммитятся. */

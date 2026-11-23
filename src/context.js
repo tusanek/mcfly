@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { readText, fmtShort, exists, truncate } from './util.js';
 import { loadQuestions, openQuestions } from './questions.js';
-import { listChanges, pendingApprovals, approvedWithWork, pausedChanges, priorityOf } from './approvals.js';
+import { listChanges, pendingApprovals, approvedWithWork, pausedChanges, priorityOf, dependencyOrder } from './approvals.js';
 import { branchProgress, teamWorktrees } from './git.js';
 import { autoDefault } from './config.js';
 import { activeDayHandoff, validateHandoff, pruneHandoff } from './shift-files.js';
@@ -45,10 +45,13 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false, now 
   L.push(`Категории эскалации: ${Object.entries(cfg.escalation.categories).map(([k, v]) => `${k} (${v.label}${v.auto_default === false ? ', без ответа по умолчанию' : ''})`).join('; ')}.`);
   const changes = listChanges(p.openspecChanges);
   const work = approvedWithWork(changes);
+  // 0.21.0 (F30, F35): порядок — по приоритету с учётом строк «после <изменение>» в планах
+  const ordered = dependencyOrder(work, changes);
   L.push('', `Одобренные изменения с открытыми задачами (${work.length}):`);
-  for (const c of work) {
+  for (const { change: c, after, blockedBy } of ordered) {
     const onBranch = branchProgress(p.projectDir, c.name);
-    L.push(`- ${c.name} (приоритет ${priorityOf(c)}): ${c.tasksDone} сделано / ${c.tasksOpen} открыто${onBranch ? `; на ветке change/${c.name}: ${onBranch.done} сделано / ${onBranch.open} открыто` : ''}`);
+    const deps = [after.length ? `после ${after.join(', ')}` : '', blockedBy.length ? `НЕ БРАТЬ: план требует ещё не одобренного ${blockedBy.join(', ')}` : ''].filter(Boolean).join('; ');
+    L.push(`- ${c.name} (приоритет ${priorityOf(c)}): ${c.tasksDone} сделано / ${c.tasksOpen} открыто${onBranch ? `; на ветке change/${c.name}: ${onBranch.done} сделано / ${onBranch.open} открыто` : ''}${deps ? ` — ${deps}` : ''}`);
   }
   const pend = pendingApprovals(changes);
   L.push('', `Ожидают одобрения (${pend.length}):`);

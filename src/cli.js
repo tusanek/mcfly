@@ -93,7 +93,11 @@ export async function main(argv) {
   const log = (...a) => console.log(...a);
   if (!cmd || values.help) { log(HELP); return 0; }
   if (cmd === 'init') { init({ projectDir, name: values.name, withTracker: !!values['with-tracker'], log }); return 0; }
-  if (cmd === 'context') { if (!isMcflyProject(p)) return 0; loadEnv(projectDir); log(buildContext(p, loadConfig(p.config))); return 0; }
+  if (cmd === 'context') {
+    if (!isMcflyProject(p)) return 0; loadEnv(projectDir);
+    const cfg = loadConfig(p.config); const runLimit = Number(process.env.MCFLY_MAX_CHANGES); // в прогоне — его лимит (F37)
+    log(buildContext(p, cfg, Number.isInteger(runLimit) && runLimit > 0 ? { limit: runLimit } : {})); return 0;
+  }
   if (cmd === 'doctor') { doctor({ projectDir, probe: !!values.probe, log }); return 0; }
   if (cmd === 'shift') {
     const { shiftStart, shiftMerge, shiftWrite, mainCheckout } = await import('./shift-git.js');
@@ -451,11 +455,10 @@ export async function main(argv) {
     }
     case 'worktree': {
       if (sub !== 'link') { console.error('mcfly worktree link'); return 1; }
-      const { linkShared, unsharedDeps } = await import('./worktree.js');
+      const { linkShared, unsharedDeps, pythonTestHint } = await import('./worktree.js');
       const shared = cfg.worktree.shared;
       // 0.19.3: папки зависимостей основного каталога, которых нет в worktree.shared, — в worktree их не будет; настройку правит владелец
       const unshared = () => { const u = unsharedDeps(projectDir, shared); if (u.length) log(`⚠ В основном каталоге есть папки зависимостей, которых нет в worktree.shared: ${u.join(', ')} — в worktree их не будет. Нужно от человека: добавить нужные в worktree.shared (mcfly/config.yaml); до этого — передай лиду, какие проверки не запустились.`); };
-      if (!shared.length) { log('Общих папок нет (worktree.shared пуст) — подключать нечего.'); unshared(); return 0; }
       // 0.18.1: «где я» — --project или текущий каталог, но не MCFLY_PROJECT_DIR: runner кладёт туда основной каталог,
       // и из worktree агента команда отвечала «это основной каталог». --project с основным каталогом из worktree — тоже текущий.
       const { projectRoot } = await import('./shift-git.js');
@@ -464,6 +467,8 @@ export async function main(argv) {
       let mainDir = fs.realpathSync(projectRoot(top));
       if (top === mainDir && cwd !== mainDir && fs.realpathSync(projectRoot(cwd)) === mainDir) top = cwd;
       if (top === mainDir) { log('Это основной каталог проекта: общие папки здесь свои, ссылки не нужны. В worktree запускай из его каталога или с --project <каталог worktree>.'); return 0; }
+      { const hint = pythonTestHint(mainDir, top); if (hint) log(hint); }
+      if (!shared.length) { log('Общих папок нет (worktree.shared пуст) — подключать нечего.'); unshared(); return 0; }
       const r = linkShared({ worktreeDir: top, mainDir, shared });
       if (r.linked.length) log(`Подключено: ${r.linked.join(', ')}`);
       if (r.present.length) log(`Уже есть: ${r.present.join(', ')}`);
