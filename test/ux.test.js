@@ -13,7 +13,7 @@ import { sendSamples, ideasView, statsView, helpView } from '../src/overview.js'
 import { callbackText } from '../src/telegram.js';
 import { parseMessage, applyMessages } from '../src/answers.js';
 import { loadIdeas, saveIdeas, addIdea, transitionIdea } from '../src/ideas.js';
-import { cfg, bareProject, addChange, tmpDir } from './helpers.js';
+import { cfg, bareProject, addChange, tmpDir, trustProject } from './helpers.js';
 
 const PROPOSAL = `# Proposal
 
@@ -156,6 +156,7 @@ test('0.10.0: design.skills — список названий; doctor прове
   const claude = path.join(tmpDir('ux-claude-'), 'claude.sh');
   fs.writeFileSync(claude, '#!/bin/sh\ncase "$1" in --version) echo 9.9.9 ;; auth) echo \'{"loggedIn": true}\' ;; esac\n', { mode: 0o755 });
   fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), `project: demo\nrun:\n  claude_bin: ${claude}\ndesign:\n  skills: [no-such-skill-xyz, local-skill, "plug:skill"]\n`);
+  trustProject(dir);
   fs.mkdirSync(path.join(dir, '.claude', 'skills', 'local-skill'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.claude', 'skills', 'local-skill', 'SKILL.md'), '---\nname: local-skill\n---\n');
   const checks = doctor({ projectDir: dir, log: () => {} });

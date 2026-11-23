@@ -24,6 +24,8 @@ import { tickGoals } from './goals.js';
 import { pendingFindings } from './findings.js';
 import { ideasView, ideasKeyboard } from './overview.js';
 import { dirtyFiles, teamWorktrees, branchProgress, changedTrackedFiles } from './git.js';
+import { standStop } from './stand.js';
+import { commandsTrusted, UNTRUSTED_COMMANDS, untrustedRun, binsUntrusted } from './trust.js';
 import { ensureDir, writeJson, appendText, readJson, readText, runId as makeRunId, fmtLocal, fmtShort, fmtDuration, pad2, truncate } from './util.js';
 
 /** Команда процесса по pid (ps) или null, если узнать не удалось. */
@@ -352,6 +354,11 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
       return { status: 'missed', id };
     }
   }
+  // 0.22.0: своя программа claude или scutil из config.yaml без подтверждения владельца — прогон не запускаем
+  if (binsUntrusted(projectDir, cfg)) {
+    if (!dryRun) recordRun(p, { id, mode, slot, started_at: now.toISOString(), ended_at: now.toISOString(), status: 'error', note: UNTRUSTED_COMMANDS });
+    log(`⚠ ${UNTRUSTED_COMMANDS}`); return { status: 'error', id };
+  }
   // Лок старше лимита прогона с запасом — брошенный: runner убивает claude по таймауту, живой прогон столько не держит лок.
   if (!acquireLock(p, { maxAgeMs: (cfg.run.max_minutes + 30) * 60_000, id })) {
     // Запись без коммита: коммитит идущий прогон. В сводке слот будет «не запущен (шёл другой прогон)», а не «Mac спал».
@@ -380,12 +387,16 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     // 0.16.0: сколько изменений берёт этот прогон — число из запуска (--changes, кнопка в боте), ночной или дневной предел
     const limit = maxChanges(cfg, mode, changes);
     const prompt = buildLeadPrompt({ cfg, p, runId: id, mode, deadline, context: buildContext(p, cfg, { handoff: true, limit }), nightHandoff, limit });
-    const args = buildClaudeArgs({ prompt, cfg, pluginDir: MCFLY_ROOT });
+    // 0.22.0: run.allow — только подтверждённые владельцем (mcfly trust): config.yaml агент может поправить
+    const trusted = commandsTrusted(projectDir, cfg);
+    // без подтверждения — ни run.allow, ни extra_args, ни режима без проверок
+    const runCfg = trusted ? cfg : { ...cfg, run: untrustedRun(cfg.run) };
+    const args = buildClaudeArgs({ prompt, cfg: runCfg, pluginDir: MCFLY_ROOT, allow: trusted ? cfg.run.allow : [] });
     if (dryRun) {
       // Сухой прогон не оставляет следов в mcfly/runs: промпт кладём в logs (вне git).
       const dryPath = path.join(p.logs, `dry-run-${id}.prompt.md`);
       fs.writeFileSync(dryPath, prompt);
-      log(`[dry-run] ${cfg.run.claude_bin} ${args.slice(0, -1).join(' ')} "<промпт ${prompt.length} символов, сохранён в ${path.relative(projectDir, dryPath)}>"`);
+      log(`[dry-run] ${runCfg.run.claude_bin} ${args.slice(0, -1).join(' ')} "<промпт ${prompt.length} символов, сохранён в ${path.relative(projectDir, dryPath)}>"`);
       return { status: 'dry-run', id, prompt, promptPath: dryPath };
     }
     const runDir = ensureDir(path.join(p.runs, id));
@@ -401,6 +412,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const stdoutLines = lineSplitter((line) => { watch?.line(line); const rl = rateLimitInfo(line); if (rl) usage = rl; if (permissionDenial(line)) denials += 1; const s = summarizeEvent(line); if (s) event(s); });
     const stderrLines = lineSplitter((line) => event(`⚠ ${maskSecrets(line).trim().slice(0, 300)}`));
     const started = new Date();
+    if (!trusted) { event(`⚠ ${UNTRUSTED_COMMANDS}`); log(`⚠ ${UNTRUSTED_COMMANDS}`); }
     log(`Прогон ${id} (${mode}${slot ? ', слот ' + slot : ''}) запущен, лимит ${cfg.run.max_minutes} мин, изменений не больше ${limit}.`);
     // Нет доступа к API (упал VPN или сеть) — claude падает за секунды, работы не сделано: ждём и повторяем в пределах лимита прогона.
     const runDeadline = started.getTime() + cfg.run.max_minutes * 60_000;
@@ -410,7 +422,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     let result, parsed, attempts = 0, costUsd = null, turns = null, shortRetry = '';
     const vpnNotes = [];
     const checkVpn = async () => {
-      const v = await ensureVpn(cfg.run.vpn_service, { scutil: cfg.run.scutil_bin, sleep });
+      const v = await ensureVpn(cfg.run.vpn_service, { scutil: runCfg.run.scutil_bin, sleep });
       if (v.message) { event(`🔌 ${v.message}`); vpnNotes.push(v.message); }
       return v;
     };
@@ -419,7 +431,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
       attempts += 1;
       beforeAttempt?.(attempts);
       watch = apiRetryWatch({ stallMs: cfg.run.api_stall_minutes * 60_000, spanMs: cfg.run.api_retry_span_minutes * 60_000, ...apiWatch });
-      result = await runProcess({ bin: cfg.run.claude_bin, args, cwd: projectDir, env, timeoutMs: Math.max(60_000, runDeadline - Date.now()),
+      result = await runProcess({ bin: runCfg.run.claude_bin, args, cwd: projectDir, env, timeoutMs: Math.max(60_000, runDeadline - Date.now()),
         onStdout: (chunk) => { logStream.write(chunk); stdoutLines.push(chunk); }, onStderr: (chunk) => { logStream.write(chunk); stderrLines.push(chunk); },
         watchdog: { check: watch.check, intervalMs: apiWatch.intervalMs ?? 30_000 } });
       stdoutLines.flush(); stderrLines.flush();
@@ -439,6 +451,8 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
       event(`↻ нет доступа к API (${parsed.errorText.split('\n')[0].slice(0, 120)}), повтор ${reconnected ? 'сразу' : `через ${cfg.run.network_retry_minutes} мин`} (попытка ${attempts + 1} из ${cfg.run.network_retries + 1})`);
       if (!reconnected) await sleep(retryMs);
     }
+    // 0.22.0: стенд, который команда забыла остановить, не живёт после прогона
+    if (standStop({ logsDir: p.logs }).stopped) event('🧹 стенд остановлен после прогона');
     logStream.end(); eventsStream.end();
     const fallback = writeFallbackSummary({ projectDir, runDir, id, started, resultText: parsed.resultText || parsed.errorText });
     const validate = runOpenspecValidate(projectDir, { paused: pausedNames(p) });

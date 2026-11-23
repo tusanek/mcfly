@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import path from 'node:path';
 import { doctor } from '../src/doctor.js';
-import { bareProject, tmpDir, fakeScutil } from './helpers.js';
+import { bareProject, tmpDir, fakeScutil, trustProject } from './helpers.js';
 
 /** Проект, у которого в конфигурации свой claude и свой агент лида. */
 function projectWithOwnClaude() {
@@ -16,6 +16,7 @@ case "$1" in
 esac
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), `project: demo\nrun:\n  claude_bin: ${script}\n  lead_agent: team:boss\n`);
+  trustProject(dir);
   return dir;
 }
 test('doctor проверяет claude из run.claude_bin и агента из run.lead_agent', () => {
@@ -30,8 +31,10 @@ test('doctor проверяет VPN-сервис из run.vpn_service', () => {
   const vpn = fakeScutil({ service: 'Sota Connect' });
   const dir = bareProject();
   fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), `project: demo\nrun:\n  vpn_service: Sota Connect\n  scutil_bin: ${vpn.script}\n`);
+  trustProject(dir);
   assert.ok(doctor({ projectDir: dir, log: () => {} }).some((c) => c.ok && /VPN «Sota Connect»: Connected/.test(c.label)));
   fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), `project: demo\nrun:\n  vpn_service: Опечатка\n  scutil_bin: ${vpn.script}\n`);
+  trustProject(dir);
   assert.ok(doctor({ projectDir: dir, log: () => {} }).some((c) => !c.ok && /VPN «Опечатка»/.test(c.label)));
 });
 
@@ -43,4 +46,13 @@ test('doctor предупреждает об устаревших запрета
   assert.ok(doctor({ projectDir: dir, log: () => {} }).some((c) => !c.ok && /Write/.test(c.label) && /mcfly init/.test(c.hint)));
   fs.writeFileSync(file, JSON.stringify({ permissions: { deny: ['Edit(./.env)'] } }));
   assert.ok(!doctor({ projectDir: dir, log: () => {} }).some((c) => !c.ok && /Write/.test(c.label)));
+});
+
+test('0.22.0: doctor не запускает неподтверждённый claude_bin и говорит про mcfly trust', () => {
+  const dir = bareProject(); const mark = path.join(tmpDir(), 'ran'); const script = path.join(tmpDir(), 'claude.sh');
+  fs.writeFileSync(script, `#!/bin/sh\ntouch "${mark}"\necho 1.0\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), `project: demo\nrun:\n  claude_bin: ${script}\n`);
+  const checks = doctor({ projectDir: dir, probe: false, log: () => {} });
+  assert.equal(fs.existsSync(mark), false);
+  assert.ok(checks.some((c) => !c.ok && /mcfly trust/.test(c.hint)));
 });

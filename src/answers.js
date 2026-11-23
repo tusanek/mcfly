@@ -8,6 +8,7 @@ import { loadIdeas, saveIdeas, addIdea, transitionIdea, findIdea, markFirst, clo
 import path from 'node:path';
 import { loadFindings, saveFindings, addFinding, decideFinding, newFindings } from './findings.js';
 import { parseReminder, addReminder, cancelReminder, snoozeReminder, whenText } from './reminders.js';
+import { dwellerRequest } from './dweller.js';
 
 export function parseMessage(text) {
   const t = String(text || '').trim();
@@ -46,6 +47,8 @@ export function parseMessage(text) {
   if (view) return { type: 'view', view };
   // «предложения 2» — страница списка (кнопка «Ещё ▸», il:2)
   if ((m = /^(?:\/ideas|предложения|идеи) (\d+)$/.exec(commandText(t)))) return { type: 'view', view: 'ideas', page: Number(m[1]) };
+  // 0.23.0 (F28): «проживи [что посмотреть]» — просьба к жителю пройти весь продукт в ближайший прогон
+  if ((m = /^\/?(?:проживи|dweller)(?:@\w+)?(?:\s+([\s\S]*))?$/iu.exec(t.replace(/^[^\p{L}\p{N}/]+/u, '')))) return { type: 'dweller', text: (m[1] || '').trim() };
   // «▶️ Запусти» — кнопка внизу чата, /run — меню команд.
   if (/^\/?(?:run|запусти|запуск)(?:@\w+)?(?:\s|$)/i.test(t.replace(/^[^\p{L}\p{N}/]+/u, ''))) {
     // 0.16.0: «запусти 3» — сколько изменений взять за прогон (кнопки rn:3)
@@ -106,6 +109,12 @@ export function applyMessages(p, messages, { now = new Date(), by = 'human', onR
         ideasDirty = true;
         appendText(p.answers, `\n## ${stamp} — ${take ? 'взято' : 'не сейчас'} ${idea.id}\n${take ? idea.title : (parsed.note || '(без причины)')}\n`);
         acks.push(take ? `✅ ${idea.id} взято — план пришлёт ближайший прогон` : `⏸ ${idea.id} отложено — обсудим в сессии`);
+        break;
+      }
+      case 'dweller': {
+        dwellerRequest(p, parsed.text, now);
+        appendText(p.answers, `\n## ${stamp} — проживи\n${parsed.text || '(весь продукт)'}\n`);
+        acks.push('🏠 Записал: ближайший прогон проживёт продукт как вы и пришлёт отчёт с пожеланиями');
         break;
       }
       case 'idea': {

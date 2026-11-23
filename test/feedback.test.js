@@ -11,7 +11,7 @@ import { sendSummary } from '../src/summary.js';
 import { paths, saveState } from '../src/state.js';
 import { listChanges } from '../src/approvals.js';
 import { loadQuestions, addQuestion, saveQuestions } from '../src/questions.js';
-import { cfg, bareProject, fakeClaudeSeq, addChange, tmpDir } from './helpers.js';
+import { cfg, bareProject, fakeClaudeSeq, addChange, tmpDir, trustProject } from './helpers.js';
 
 const resultEvent = (over = {}) => ({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, total_cost_usd: 0.1, session_id: 's', result: 'готово', ...over });
 const tgCfg = { ...cfg, telegram: { chat_id: '42', token_env: 'MCFLY_TEST_TG' } };
@@ -122,6 +122,7 @@ test('0.5.8: зависший claude прерывается сторожем, п
   const bin = tmpDir('fake-claude-hang-'); const script = path.join(bin, 'claude.sh');
   fs.writeFileSync(script, `#!/bin/sh\nprintf '%s\\n' '{"type":"system","subtype":"api_retry","attempt":1,"error":"unknown"}'\nexec sleep 30\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(dir, 'mcfly', 'config.yaml'), `project: demo\nrun:\n  claude_bin: ${script}\n  max_minutes: 5\n  network_retries: 1\n  network_retry_minutes: 1\n  min_retry_minutes: 0\n`);
+  trustProject(dir);
   const notes = []; const waits = []; const t0 = Date.now();
   const r = await run({ projectDir: dir, mode: 'day', log: () => {}, sleep: async (ms) => { waits.push(ms); }, notify: async (t) => { notes.push(t); }, apiWatch: { stallMs: 300, intervalMs: 50 } });
   assert.ok(Date.now() - t0 < 15_000, 'не ждал лимита прогона');

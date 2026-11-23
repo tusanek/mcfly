@@ -23,6 +23,10 @@ run:
   claude_bin: claude
   lead_agent: "mcfly:lead"
   extra_args: []
+  # Команды проекта, которые проверка разрешений отклоняет, а команде они нужны (0.22.0), например сборка в рабочей копии.
+  # Только узкие правила: Bash(<команда с подкомандой> …); Bash(*) и Bash(npm *) не принимаются.
+  # Действует только после подтверждения владельцем в терминале: mcfly trust.
+  # allow: ["Bash(npm run build --prefix *)"]
 
 escalation:
   answer_deadline_hours: 24     # потом действует ответ по умолчанию
@@ -77,6 +81,17 @@ worktree:
 # samples:
 #   browser: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 #   dark: false
+
+# Житель (0.23.0): проходит весь продукт как владелец раз в every_runs удачных прогонов; 0 — только по просьбе «проживи» в боте.
+# dweller:
+#   every_runs: 6
+
+# Стенд для сверки вида (0.22.0): команда запускает локальный сервер проекта, порт — в переменной $PORT.
+# Агенты поднимают его командой mcfly stand start и гасят mcfly stand stop; после прогона mcfly гасит сам.
+# Действует (как и run.allow) только после подтверждения владельцем в терминале: mcfly trust.
+# stand:
+#   command: "npm run dev --prefix web -- --port $PORT"
+#   port: 8791
 
 # Действия владельца кнопками в Telegram (0.6.0) — по желанию; см. README «Действия владельца в Telegram»
 # actions:

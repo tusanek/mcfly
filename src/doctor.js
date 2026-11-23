@@ -16,6 +16,7 @@ import { findBrowser } from './shoot.js';
 import { labelFor, runLaunchctl } from './schedule.js';
 import { readPower, powerChecks } from './power.js';
 import { videoProblems } from './video.js';
+import { commandsTrusted, withTrustedBins, UNTRUSTED_COMMANDS } from './trust.js';
 
 function ver(bin, args = ['--version']) { const r = spawnSync(bin, args, { encoding: 'utf8' }); return r.status === 0 ? String(r.stdout || r.stderr).trim().split('\n')[0] : null; }
 
@@ -28,8 +29,10 @@ export function doctor({ projectDir, probe = false, log = console.log, launchctl
   try { cfg = loadConfig(p.config); add(true, 'конфигурация валидна'); } catch (e) { add(false, 'конфигурация валидна', e.message); }
   const node = ver('node', ['-v']); add(node, `node ${node || ''}`);
   // Проверяем тот claude и того лида, с которыми пойдёт прогон (run.claude_bin, run.lead_agent), а не значения по умолчанию.
+  // 0.22.0: свою программу из config.yaml без подтверждения владельца не запускаем даже для проверки версии
+  if (cfg && !commandsTrusted(projectDir, cfg)) { add(false, 'свои настройки запуска подтверждены', UNTRUSTED_COMMANDS); cfg = withTrustedBins(projectDir, cfg); }
   const bin = cfg?.run.claude_bin || 'claude'; const agent = cfg?.run.lead_agent || 'mcfly:lead';
-  const claude = ver(bin); add(claude, `claude ${claude || ''}`, 'установите Claude Code CLI');
+  const claude = cfg && !cfg.run.claude_bin ? '' : ver(bin); add(claude, `claude ${claude || ''}`, 'установите Claude Code CLI');
   if (claude) {
     const r = spawnSync(bin, ['auth', 'status'], { env: cleanEnv(process.env), encoding: 'utf8' });
     let loggedIn = false; try { loggedIn = !!JSON.parse(r.stdout || '{}').loggedIn; } catch {}

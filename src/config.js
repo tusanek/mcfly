@@ -8,7 +8,7 @@ import { BROWSER_NAME } from './shoot.js';
 export const DEFAULT_CONFIG = {
   project: 'project',
   schedule: { slots: ['00:00', '04:00'], tolerance_minutes: 30, summary_at: '08:00', answers_every_minutes: 10, weekly_day: 7, weekly_at: '19:00', weekly_list: 'widget' },
-  run: { max_minutes: 180, permission_mode: 'auto', model: '', max_budget_usd: 0, claude_bin: 'claude', lead_agent: 'mcfly:lead', extra_args: [], network_retries: 6, network_retry_minutes: 10, min_retry_minutes: 30, api_stall_minutes: 10, api_retry_span_minutes: 20, chain_max_weekly: 0.7, chain_max_five_hour: 0.9, chain_max_runs: 8, vpn_service: '', scutil_bin: 'scutil', telegram_start: true },
+  run: { max_minutes: 180, permission_mode: 'auto', model: '', max_budget_usd: 0, claude_bin: 'claude', lead_agent: 'mcfly:lead', extra_args: [], network_retries: 6, network_retry_minutes: 10, min_retry_minutes: 30, api_stall_minutes: 10, api_retry_span_minutes: 20, chain_max_weekly: 0.7, chain_max_five_hour: 0.9, chain_max_runs: 8, vpn_service: '', scutil_bin: 'scutil', telegram_start: true, allow: [] }, // allow (0.22.0): разрешённые команды проекта для команды, например ['Bash(npm run build --prefix *)']
   escalation: {
     answer_deadline_hours: 24,
     approval_deadline_hours: 24,
@@ -38,11 +38,18 @@ export const DEFAULT_CONFIG = {
   // Снимки образцов (0.20.0): browser — путь к Chrome или Chromium; пусто — Google Chrome, иначе Chromium из кэша Playwright;
   // dark (0.20.1): false — снимать только светлую тему (экономия)
   samples: { browser: '', dark: true },
+  // Стенд для сверки вида (0.22.0): command — запуск локального сервера (порт в $PORT), mcfly stand start|stop
+  stand: { command: '', port: 8791, ready_seconds: 20 },
+  // Житель (0.23.0): проходит весь продукт как владелец раз в every_runs удачных прогонов; 0 — только по просьбе («проживи» в боте)
+  dweller: { every_runs: 0 },
   // Находки для доработки самого mcfly (0.11.0): агенты и сессии регистрируют, владелец одобряет в боте, одобренное — в общий ящик inbox
   findings: { enabled: true, inbox: '~/mcfly-inbox.md' },
   // Сводка коротким роликом с голосом (0.12.0): после текста сводки, отдельным сообщением; pronounce — { слово: как прочитать }
   video: { enabled: false, voice: 'eugene', voice_speed: 1.1, max_seconds: 60, weekly_max_seconds: 120, timeout_minutes: 15, director: 'review', director_minutes: 8, viewer_model: 'claude-haiku-5-5', pronounce: {} },
 };
+
+const ALLOW_DENY = new Set(['sh', 'bash', 'zsh', 'fish', 'dash', 'env', 'eval', 'exec', 'xargs', 'sudo', 'su', 'nohup', 'timeout', 'time', 'command', 'nice',
+  'python', 'python3', 'node', 'ruby', 'perl', 'php', 'deno', 'bun', 'npx', 'bunx', 'pnpx', 'osascript', 'curl', 'wget', 'ssh', 'scp', 'rm', 'mv', 'dd', 'chmod', 'chown', 'git', 'launchctl', 'crontab', 'mcfly']);
 
 /** Потолок числа изменений за один прогон, заданного при запуске (флаг --changes, кнопка в боте). */
 export const MAX_RUN_CHANGES = 20;
@@ -102,6 +109,16 @@ export function validate(cfg) {
   if (!(Number.isInteger(limits.max_changes_night) && limits.max_changes_night >= 0)) errors.push('limits.max_changes_night: целое число от 0 (0 — как max_changes_per_run)');
   if (!(Array.isArray(limits.run_choices) && limits.run_choices.length <= 4 && limits.run_choices.every((x) => Number.isInteger(x) && x >= 1 && x <= MAX_RUN_CHANGES))) errors.push(`limits.run_choices: до четырёх целых чисел от 1 до ${MAX_RUN_CHANGES}, например [1, 3, 5]; [] — бот не спрашивает, сколько брать`);
   errors.push(...sharedErrors(cfg.worktree?.shared));
+  { const a = cfg.run.allow; if (!Array.isArray(a)) errors.push('run.allow: список правил вида Bash(<команда> *)');
+    else for (const r of a) { const m = /^Bash\((.+)\)$/.exec(typeof r === 'string' ? r.trim() : '');
+      // слишком широкое правило (Bash(*), Bash(npm *)) снимало бы проверку разрешений почти со всего
+      const words = m ? m[1].split('*')[0].trim().split(/\s+/).filter(Boolean) : [];
+      // слишком широкое правило или оболочка и интерпретатор (sh, node -e, python -c…) — снимало бы проверку почти со всего
+      if (!m || words.length < 2 || /[;&|`$<>\n]/.test(m[1]) || ALLOW_DENY.has(path.basename(words[0]))) errors.push(`run.allow: «${r}» — нужно узкое правило Bash(<команда с подкомандой> …) без оболочек и интерпретаторов, например Bash(npm run build --prefix *)`); } }
+  if (!(Number.isInteger(cfg.dweller?.every_runs) && cfg.dweller.every_runs >= 0)) errors.push('dweller.every_runs: целое число от 0 (0 — только по просьбе владельца)');
+  if (typeof cfg.stand?.command !== 'string') errors.push('stand.command: команда запуска стенда строкой');
+  if (!(Number.isInteger(cfg.stand?.port) && cfg.stand.port > 1023 && cfg.stand.port < 65536)) errors.push('stand.port: номер порта от 1024 до 65535');
+  if (!(cfg.stand?.ready_seconds > 0)) errors.push('stand.ready_seconds: должно быть больше 0');
   if (typeof cfg.samples?.dark !== 'boolean') errors.push('samples.dark: true или false (false — снимать только светлую тему)');
   if (typeof cfg.samples?.browser !== 'string') errors.push('samples.browser: путь к Chrome или Chromium строкой; пусто — найти самому');
   else if (cfg.samples.browser && !BROWSER_NAME.test(path.basename(cfg.samples.browser))) errors.push(`samples.browser: «${cfg.samples.browser}» — не Chrome и не Chromium (нужен исполняемый файл, например …/Google Chrome.app/Contents/MacOS/Google Chrome)`);
