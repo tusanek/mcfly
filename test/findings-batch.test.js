@@ -68,3 +68,28 @@ test('F30/F35: одобренные — по зависимостям из пл�
   assert.deepEqual(order[2].blockedBy, ['context-menu']);
   assert.deepEqual(order[3], { ...order[3], after: [], blockedBy: [] });
 });
+
+test('F20: run.allow — узкие правила идут в claude по одному, широкие отклоняются', async () => {
+  const { parseConfig } = await import('../src/config.js');
+  const { buildClaudeArgs } = await import('../src/claude.js');
+  const cfg = parseConfig('project: x\nrun:\n  allow: ["Bash(npm run build --prefix *)"]\n');
+  const args = buildClaudeArgs({ prompt: 'P', cfg });
+  assert.ok(args.includes('--allowedTools=Bash(npm run build --prefix *)'));
+  assert.equal(args.at(-1), 'P');
+  for (const bad of ['Bash(*)', 'Bash(npm *)', 'Edit(*)', 'Bash']) assert.throws(() => parseConfig(`project: x\nrun:\n  allow: ["${bad}"]\n`), /run\.allow/);
+});
+
+test('F40: mcfly stand — запуск сервера, адрес, остановка; без настройки — понятный отказ', async () => {
+  const { DEFAULT_CONFIG } = await import('../src/config.js');
+  const { standStart, standStop } = await import('../src/stand.js');
+  const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-stand-'));
+  assert.match((await standStart({ cfg: DEFAULT_CONFIG, dir: logsDir, logsDir })).error, /stand\.command/);
+  const port = 20000 + Math.floor(Math.random() * 20000);
+  const cfg = { ...DEFAULT_CONFIG, stand: { command: `exec node -e "require('http').createServer((q,s)=>s.end('ok')).listen(process.env.PORT)"`, port, ready_seconds: 10 } };
+  const r = await standStart({ cfg, dir: logsDir, logsDir });
+  assert.equal(r.url, `http://localhost:${port}/`, r.error);
+  assert.equal(await (await fetch(r.url)).text(), 'ok');
+  assert.match((await standStart({ cfg, dir: logsDir, logsDir })).error, /уже запущен/);
+  assert.equal(standStop({ logsDir }).stopped, true);
+  assert.equal(standStop({ logsDir }).stopped, false);
+});

@@ -60,6 +60,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
                                                   (только в терминале), запуск из терминала (итог и в Telegram)
   action prepare|exec <id> --ticket <t>           служебные: их запускает бот после нажатия кнопки
   samples template                              шаблон «чат Telegram» для картинок образцов сообщений бота → design/samples/telegram-chat.html
+  stand start [--project <каталог>] | stop     стенд для сверки вида: сервер из stand.command (порт stand.port), остановка
   samples shoot <изменение> [--light] [--project <каталог>]   снять картинки образцов design/samples/<изменение>/NN.html → NN-light.png, NN-dark.png (--light или samples.dark: false — без тёмной)
   worktree link                                 в своём worktree: ссылки на общие папки основного каталога (worktree.shared, например node_modules)
   finding add --text <t> [--evidence <t>]        находка для доработки самого mcfly (не проекта); владелец решает в боте, передавать ли
@@ -451,6 +452,21 @@ export async function main(argv) {
       fs.copyFileSync(path.join(MCFLY_ROOT, 'templates', 'design', 'telegram-chat.html'), dst);
       log(`Шаблон: ${rel}`);
       log('Скопируй его под образец (design/samples/<изменение>/NN.html), впиши текст у метки ТЕКСТ и кнопки у метки КНОПКИ, сними картинки командой mcfly samples shoot <изменение> (NN-light.png и NN-dark.png), а в proposal.md под образцом добавь строки «Картинка: <путь>».');
+      return 0;
+    }
+    case 'stand': {
+      // 0.22.0 (F40): стенд для сверки вида — сервер из stand.command, запускает mcfly (субагенту фоновый запуск отклоняют)
+      const { standStart, standStop } = await import('./stand.js');
+      const { mainCheckout } = await import('./shift-git.js');
+      const base = hereDir(values, projectDir);
+      const mine = gitCommon(process.cwd());
+      if (values.project ? (!mine || gitCommon(base) !== mine) : (mine && gitCommon(base) !== mine)) { console.error(`--project ${values.project}: каталог другого репозитория — стенд только из своего проекта или его worktree`); return 1; }
+      const logsDir = paths(mainCheckout(base)).logs;
+      if (sub === 'stop') { const r = standStop({ logsDir }); log(r.stopped ? `Стенд остановлен (процесс ${r.pid}).` : 'Стенд не был запущен.'); return 0; }
+      if (sub !== 'start') { console.error('mcfly stand start [--project <каталог>] | stop'); return 1; }
+      const r = await standStart({ cfg, dir: base, logsDir });
+      if (r.error) { console.error(r.error); return 1; }
+      log(`Стенд: ${r.url} (код из ${base}, журнал ${r.log}). Открывай в Playwright этот адрес; закончил — mcfly stand stop.`);
       return 0;
     }
     case 'worktree': {

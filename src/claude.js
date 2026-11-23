@@ -6,6 +6,8 @@ export function buildClaudeArgs({ prompt, cfg, pluginDir }) {
   if (cfg.run.lead_agent) args.push('--agent', cfg.run.lead_agent);
   if (cfg.run.model) args.push('--model', cfg.run.model);
   if (cfg.run.max_budget_usd > 0) args.push('--max-budget-usd', String(cfg.run.max_budget_usd));
+  // 0.22.0 (F20): разрешённые команды проекта — по одному правилу через «=», чтобы список не съел промпт
+  for (const r of cfg.run.allow || []) args.push(`--allowedTools=${r}`);
   args.push(...(cfg.run.extra_args || []));
   args.push(prompt);
   return args;

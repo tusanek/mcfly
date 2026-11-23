@@ -7,6 +7,9 @@
       "Bash(mcfly metric add *)",
       "Bash(mcfly question add *)",
       "Bash(mcfly samples shoot *)",
+      "Bash(mcfly stand start)",
+      "Bash(mcfly stand start --project *)",
+      "Bash(mcfly stand stop)",
       "Bash(mcfly worktree link)",
       "Bash(mcfly worktree link --project *)"
     ],

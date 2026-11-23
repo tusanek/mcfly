@@ -24,6 +24,7 @@ import { tickGoals } from './goals.js';
 import { pendingFindings } from './findings.js';
 import { ideasView, ideasKeyboard } from './overview.js';
 import { dirtyFiles, teamWorktrees, branchProgress, changedTrackedFiles } from './git.js';
+import { standStop } from './stand.js';
 import { ensureDir, writeJson, appendText, readJson, readText, runId as makeRunId, fmtLocal, fmtShort, fmtDuration, pad2, truncate } from './util.js';
 
 /** Команда процесса по pid (ps) или null, если узнать не удалось. */
@@ -439,6 +440,8 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
       event(`↻ нет доступа к API (${parsed.errorText.split('\n')[0].slice(0, 120)}), повтор ${reconnected ? 'сразу' : `через ${cfg.run.network_retry_minutes} мин`} (попытка ${attempts + 1} из ${cfg.run.network_retries + 1})`);
       if (!reconnected) await sleep(retryMs);
     }
+    // 0.22.0: стенд, который команда забыла остановить, не живёт после прогона
+    if (standStop({ logsDir: p.logs }).stopped) event('🧹 стенд остановлен после прогона');
     logStream.end(); eventsStream.end();
     const fallback = writeFallbackSummary({ projectDir, runDir, id, started, resultText: parsed.resultText || parsed.errorText });
     const validate = runOpenspecValidate(projectDir, { paused: pausedNames(p) });
