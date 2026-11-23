@@ -462,15 +462,15 @@ export async function main(argv) {
       // 0.22.0: подтверждение run.allow и stand.command — только живой терминал владельца, агент без TTY подтвердить не может
       const { trustedCommands, hasCommands, commandsTrusted, trustCommands } = await import('./trust.js');
       const t = trustedCommands(cfg);
-      if (!hasCommands(cfg)) { log('Подтверждать нечего: run.allow и stand.command пусты.'); return 0; }
-      log(`Разрешённые команды прогона (run.allow):${t.allow.length ? `\n${t.allow.map((r) => `  ${r}`).join('\n')}` : ' нет'}\nКоманда стенда (stand.command): ${t.stand || 'нет'}\nДополнительные флаги claude (run.extra_args): ${t.extra_args.join(' ') || 'нет'}${t.mode ? `\nРежим разрешений без проверок: ${t.mode}` : ''}`);
+      if (!hasCommands(cfg)) { log('Подтверждать нечего: run.allow, stand.command и run.extra_args пусты, режим и программы — стандартные.'); return 0; }
+      log(`Разрешённые команды прогона (run.allow):${t.allow.length ? `\n${t.allow.map((r) => `  ${r}`).join('\n')}` : ' нет'}\nКоманда стенда (stand.command): ${t.stand || 'нет'}\nДополнительные флаги claude (run.extra_args): ${t.extra_args.join(' ') || 'нет'}${t.mode ? `\nРежим разрешений без проверок: ${t.mode}` : ''}${Object.keys(t.bins).length ? `\n⚠ Свои программы и роль вместо стандартных — проверьте пути:\n${Object.entries(t.bins).map(([k, v]) => `  run.${k}: ${k === 'lead_agent' ? v : path.resolve(projectDir, v)}${k !== 'lead_agent' && path.resolve(projectDir, v).startsWith(path.resolve(projectDir) + path.sep) ? ' (внутри проекта — агенты могут его поменять)' : ''}`).join('\n')}` : ''}`);
       if (commandsTrusted(projectDir, cfg)) { log('Уже подтверждено.'); return 0; }
       if (!(process.stdin.isTTY && process.stdout.isTTY)) { console.error('mcfly trust — только в терминале владельца (нужен интерактивный ввод).'); return 1; }
       const { createInterface } = await import('node:readline/promises');
       const rl = createInterface({ input: process.stdin, output: process.stdout });
       const answer = (await rl.question('\nПодтвердить? Напишите «да»: ')).trim().toLowerCase(); rl.close();
       if (answer !== 'да') { log('Не подтверждено — настройки не действуют.'); return 1; }
-      trustCommands(projectDir, cfg, now); log('Подтверждено. Любая правка run.allow или stand.command снова выключит их до mcfly trust.'); return 0;
+      trustCommands(projectDir, cfg, now); log('Подтверждено. Любая правка этих настроек (run.allow, stand.command, run.extra_args, режим, программы, роль лида) снова выключит их до mcfly trust.'); return 0;
     }
     case 'dweller': {
       // 0.23.0 (F28): житель — просьба владельца и отметка о сделанном проходе (лид после mcfly:dweller)
