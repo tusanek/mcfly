@@ -12,6 +12,8 @@
 - chain.js - цепочка прогонов: запас лимитов подписки, решение о следующем прогоне, автоодобрение.
 - vpn.js - проверка и включение системного VPN macOS.
 - stand.js - стенд для сверки вида: `mcfly stand start|stop`, сервер из stand.command.
+- trust.js - подтверждение владельцем run.allow и stand.command (`mcfly trust`).
+- dweller.js - житель: когда звать (просьба владельца, dweller.every_runs), шаг промпта лида, `mcfly dweller`.
 
 ## Telegram
 - telegram.js - клиент бота: отправка частями, кнопки, разбор сообщений.

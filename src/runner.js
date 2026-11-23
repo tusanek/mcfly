@@ -25,6 +25,7 @@ import { pendingFindings } from './findings.js';
 import { ideasView, ideasKeyboard } from './overview.js';
 import { dirtyFiles, teamWorktrees, branchProgress, changedTrackedFiles } from './git.js';
 import { standStop } from './stand.js';
+import { commandsTrusted, UNTRUSTED_COMMANDS } from './trust.js';
 import { ensureDir, writeJson, appendText, readJson, readText, runId as makeRunId, fmtLocal, fmtShort, fmtDuration, pad2, truncate } from './util.js';
 
 /** Команда процесса по pid (ps) или null, если узнать не удалось. */
@@ -381,7 +382,9 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     // 0.16.0: сколько изменений берёт этот прогон — число из запуска (--changes, кнопка в боте), ночной или дневной предел
     const limit = maxChanges(cfg, mode, changes);
     const prompt = buildLeadPrompt({ cfg, p, runId: id, mode, deadline, context: buildContext(p, cfg, { handoff: true, limit }), nightHandoff, limit });
-    const args = buildClaudeArgs({ prompt, cfg, pluginDir: MCFLY_ROOT });
+    // 0.22.0: run.allow — только подтверждённые владельцем (mcfly trust): config.yaml агент может поправить
+    const trusted = commandsTrusted(projectDir, cfg);
+    const args = buildClaudeArgs({ prompt, cfg, pluginDir: MCFLY_ROOT, allow: trusted ? cfg.run.allow : [] });
     if (dryRun) {
       // Сухой прогон не оставляет следов в mcfly/runs: промпт кладём в logs (вне git).
       const dryPath = path.join(p.logs, `dry-run-${id}.prompt.md`);
@@ -402,6 +405,7 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const stdoutLines = lineSplitter((line) => { watch?.line(line); const rl = rateLimitInfo(line); if (rl) usage = rl; if (permissionDenial(line)) denials += 1; const s = summarizeEvent(line); if (s) event(s); });
     const stderrLines = lineSplitter((line) => event(`⚠ ${maskSecrets(line).trim().slice(0, 300)}`));
     const started = new Date();
+    if (!trusted) { event(`⚠ ${UNTRUSTED_COMMANDS}`); log(`⚠ ${UNTRUSTED_COMMANDS}`); }
     log(`Прогон ${id} (${mode}${slot ? ', слот ' + slot : ''}) запущен, лимит ${cfg.run.max_minutes} мин, изменений не больше ${limit}.`);
     // Нет доступа к API (упал VPN или сеть) — claude падает за секунды, работы не сделано: ждём и повторяем в пределах лимита прогона.
     const runDeadline = started.getTime() + cfg.run.max_minutes * 60_000;

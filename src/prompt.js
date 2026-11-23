@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { hasProduct } from './context.js';
+import { dwellerDue, dwellerStep } from './dweller.js';
 import { fileURLToPath } from 'node:url';
 import { readText, fmtLocal } from './util.js';
 
@@ -56,7 +57,7 @@ export function buildLeadPrompt({ cfg, p, runId, mode, deadline, context, nightH
   const front = renderTemplate(ideasOn ? IDEAS_FRONT : LEGACY_FRONT, { MAX_CHANGES: limit, PLAN_AHEAD: ahead, PLAN_IDLE: Math.max(ahead, limit), DESIGN: hasProduct(p) ? DESIGN_STEP : '',
     FAST_PLAN: fast ? renderTemplate(FAST_PLAN, fast) : SLOW_PLAN, FAST_AFTER: fast ? FAST_AFTER : '' });
   return renderTemplate(tpl, {
-    WORK_FRONT: front, FOLLOWUPS_STEP: followups, IDEAS_STEP: ideasOn ? ideasStep(cfg.ideas) : '', UX_STEP: hasProduct(p) ? UX_STEP : '',
+    WORK_FRONT: front, FOLLOWUPS_STEP: followups, DWELLER_STEP: dwellerStep(dwellerDue(p, cfg), `mcfly/runs/${runId}`), IDEAS_STEP: ideasOn ? ideasStep(cfg.ideas) : '', UX_STEP: hasProduct(p) ? UX_STEP : '',
     RUN_ID: runId, MODE: mode, PROJECT: cfg.project, PROJECT_DIR: p.projectDir, MAX_MINUTES: cfg.run.max_minutes, DEADLINE: fmtLocal(deadline),
     MAX_CHANGES: limit, MAX_TASKS: cfg.limits.max_tasks_per_change, CONTEXT: context, RUN_DIR: `mcfly/runs/${runId}`, NIGHT_HANDOFF: nightHandoff,
   });

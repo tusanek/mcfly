@@ -40,11 +40,16 @@ export const DEFAULT_CONFIG = {
   samples: { browser: '', dark: true },
   // Стенд для сверки вида (0.22.0): command — запуск локального сервера (порт в $PORT), mcfly stand start|stop
   stand: { command: '', port: 8791, ready_seconds: 20 },
+  // Житель (0.23.0): проходит весь продукт как владелец раз в every_runs удачных прогонов; 0 — только по просьбе («проживи» в боте)
+  dweller: { every_runs: 0 },
   // Находки для доработки самого mcfly (0.11.0): агенты и сессии регистрируют, владелец одобряет в боте, одобренное — в общий ящик inbox
   findings: { enabled: true, inbox: '~/mcfly-inbox.md' },
   // Сводка коротким роликом с голосом (0.12.0): после текста сводки, отдельным сообщением; pronounce — { слово: как прочитать }
   video: { enabled: false, voice: 'eugene', voice_speed: 1.1, max_seconds: 60, weekly_max_seconds: 120, timeout_minutes: 15, director: 'review', director_minutes: 8, viewer_model: 'claude-haiku-5-5', pronounce: {} },
 };
+
+const ALLOW_DENY = new Set(['sh', 'bash', 'zsh', 'fish', 'dash', 'env', 'eval', 'exec', 'xargs', 'sudo', 'su', 'nohup', 'timeout', 'time', 'command', 'nice',
+  'python', 'python3', 'node', 'ruby', 'perl', 'php', 'deno', 'bun', 'npx', 'bunx', 'pnpx', 'osascript', 'curl', 'wget', 'ssh', 'scp', 'rm', 'mv', 'dd', 'chmod', 'chown', 'git', 'launchctl', 'crontab', 'mcfly']);
 
 /** Потолок числа изменений за один прогон, заданного при запуске (флаг --changes, кнопка в боте). */
 export const MAX_RUN_CHANGES = 20;
@@ -107,7 +112,10 @@ export function validate(cfg) {
   { const a = cfg.run.allow; if (!Array.isArray(a)) errors.push('run.allow: список правил вида Bash(<команда> *)');
     else for (const r of a) { const m = /^Bash\((.+)\)$/.exec(typeof r === 'string' ? r.trim() : '');
       // слишком широкое правило (Bash(*), Bash(npm *)) снимало бы проверку разрешений почти со всего
-      if (!m || m[1].split('*')[0].trim().split(/\s+/).filter(Boolean).length < 2) errors.push(`run.allow: «${r}» — нужно правило Bash(<команда с подкомандой> …), например Bash(npm run build --prefix *)`); } }
+      const words = m ? m[1].split('*')[0].trim().split(/\s+/).filter(Boolean) : [];
+      // слишком широкое правило или оболочка и интерпретатор (sh, node -e, python -c…) — снимало бы проверку почти со всего
+      if (!m || words.length < 2 || /[;&|`$<>\n]/.test(m[1]) || ALLOW_DENY.has(path.basename(words[0]))) errors.push(`run.allow: «${r}» — нужно узкое правило Bash(<команда с подкомандой> …) без оболочек и интерпретаторов, например Bash(npm run build --prefix *)`); } }
+  if (!(Number.isInteger(cfg.dweller?.every_runs) && cfg.dweller.every_runs >= 0)) errors.push('dweller.every_runs: целое число от 0 (0 — только по просьбе владельца)');
   if (typeof cfg.stand?.command !== 'string') errors.push('stand.command: команда запуска стенда строкой');
   if (!(Number.isInteger(cfg.stand?.port) && cfg.stand.port > 1023 && cfg.stand.port < 65536)) errors.push('stand.port: номер порта от 1024 до 65535');
   if (!(cfg.stand?.ready_seconds > 0)) errors.push('stand.ready_seconds: должно быть больше 0');

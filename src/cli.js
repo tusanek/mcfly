@@ -60,6 +60,8 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
                                                   (только в терминале), запуск из терминала (итог и в Telegram)
   action prepare|exec <id> --ticket <t>           служебные: их запускает бот после нажатия кнопки
   samples template                              шаблон «чат Telegram» для картинок образцов сообщений бота → design/samples/telegram-chat.html
+  trust                                         подтвердить run.allow и stand.command (только в терминале владельца)
+  dweller request [--text …] | done | status    житель: пройти весь продукт как владелец в ближайший прогон
   stand start [--project <каталог>] | stop     стенд для сверки вида: сервер из stand.command (порт stand.port), остановка
   samples shoot <изменение> [--light] [--project <каталог>]   снять картинки образцов design/samples/<изменение>/NN.html → NN-light.png, NN-dark.png (--light или samples.dark: false — без тёмной)
   worktree link                                 в своём worktree: ссылки на общие папки основного каталога (worktree.shared, например node_modules)
@@ -454,6 +456,28 @@ export async function main(argv) {
       log('Скопируй его под образец (design/samples/<изменение>/NN.html), впиши текст у метки ТЕКСТ и кнопки у метки КНОПКИ, сними картинки командой mcfly samples shoot <изменение> (NN-light.png и NN-dark.png), а в proposal.md под образцом добавь строки «Картинка: <путь>».');
       return 0;
     }
+    case 'trust': {
+      // 0.22.0: подтверждение run.allow и stand.command — только живой терминал владельца, агент без TTY подтвердить не может
+      const { trustedCommands, hasCommands, commandsTrusted, trustCommands } = await import('./trust.js');
+      const t = trustedCommands(cfg);
+      if (!hasCommands(cfg)) { log('Подтверждать нечего: run.allow и stand.command пусты.'); return 0; }
+      log(`Разрешённые команды прогона (run.allow):${t.allow.length ? `\n${t.allow.map((r) => `  ${r}`).join('\n')}` : ' нет'}\nКоманда стенда (stand.command): ${t.stand || 'нет'}`);
+      if (commandsTrusted(projectDir, cfg)) { log('Уже подтверждено.'); return 0; }
+      if (!(process.stdin.isTTY && process.stdout.isTTY)) { console.error('mcfly trust — только в терминале владельца (нужен интерактивный ввод).'); return 1; }
+      const { createInterface } = await import('node:readline/promises');
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const answer = (await rl.question('\nПодтвердить? Напишите «да»: ')).trim().toLowerCase(); rl.close();
+      if (answer !== 'да') { log('Не подтверждено — настройки не действуют.'); return 1; }
+      trustCommands(projectDir, cfg, now); log('Подтверждено. Любая правка run.allow или stand.command снова выключит их до mcfly trust.'); return 0;
+    }
+    case 'dweller': {
+      // 0.23.0 (F28): житель — просьба владельца и отметка о сделанном проходе (лид после mcfly:dweller)
+      const { dwellerRequest, dwellerDone, dwellerDue } = await import('./dweller.js');
+      if (sub === 'request') { dwellerRequest(p, values.text || '', now); log('Ближайший прогон проживёт продукт (mcfly:dweller).'); return 0; }
+      if (sub === 'done') { dwellerDone(p, now); log('Проход жителя отмечен.'); return 0; }
+      if (sub === 'status' || !sub) { const d = dwellerDue(p, cfg); log(d ? `Житель нужен: ${d.why === 'owner' ? 'просьба владельца' : `${d.runs} удачных прогонов с прошлого прохода`}.` : 'Житель пока не нужен.'); return 0; }
+      console.error('mcfly dweller request [--text "что посмотреть"] | done | status'); return 1;
+    }
     case 'stand': {
       // 0.22.0 (F40): стенд для сверки вида — сервер из stand.command, запускает mcfly (субагенту фоновый запуск отклоняют)
       const { standStart, standStop } = await import('./stand.js');
@@ -461,10 +485,14 @@ export async function main(argv) {
       const base = hereDir(values, projectDir);
       const mine = gitCommon(process.cwd());
       if (values.project ? (!mine || gitCommon(base) !== mine) : (mine && gitCommon(base) !== mine)) { console.error(`--project ${values.project}: каталог другого репозитория — стенд только из своего проекта или его worktree`); return 1; }
-      const logsDir = paths(mainCheckout(base)).logs;
+      const main = mainCheckout(base); const logsDir = paths(main).logs;
+      // команда стенда — из config.yaml основного каталога и только подтверждённая владельцем (mcfly trust)
+      const mcfg = loadConfig(paths(main).config);
+      const { commandsTrusted, UNTRUSTED_COMMANDS } = await import('./trust.js');
+      if (sub === 'start' && !commandsTrusted(main, mcfg)) { console.error(UNTRUSTED_COMMANDS); return 1; }
       if (sub === 'stop') { const r = standStop({ logsDir }); log(r.stopped ? `Стенд остановлен (процесс ${r.pid}).` : 'Стенд не был запущен.'); return 0; }
       if (sub !== 'start') { console.error('mcfly stand start [--project <каталог>] | stop'); return 1; }
-      const r = await standStart({ cfg, dir: base, logsDir });
+      const r = await standStart({ cfg: mcfg, dir: base, logsDir });
       if (r.error) { console.error(r.error); return 1; }
       log(`Стенд: ${r.url} (код из ${base}, журнал ${r.log}). Открывай в Playwright этот адрес; закончил — mcfly stand stop.`);
       return 0;

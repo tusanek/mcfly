@@ -10,6 +10,7 @@
       "Bash(mcfly stand start)",
       "Bash(mcfly stand start --project *)",
       "Bash(mcfly stand stop)",
+      "Bash(mcfly dweller done)",
       "Bash(mcfly worktree link)",
       "Bash(mcfly worktree link --project *)"
     ],
@@ -21,6 +22,7 @@
       "Bash(scp *)",
       "Bash(launchctl *)",
       "Bash(mcfly action *)",
+      "Bash(mcfly trust*)",
       "Read(./mcfly/.env)",
       "Edit(./mcfly/config.yaml)",
       "Edit(./mcfly/.env)",
