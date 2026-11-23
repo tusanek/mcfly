@@ -25,7 +25,7 @@ import { pendingFindings } from './findings.js';
 import { ideasView, ideasKeyboard } from './overview.js';
 import { dirtyFiles, teamWorktrees, branchProgress, changedTrackedFiles } from './git.js';
 import { standStop } from './stand.js';
-import { commandsTrusted, UNTRUSTED_COMMANDS } from './trust.js';
+import { commandsTrusted, UNTRUSTED_COMMANDS, RISKY_MODES, SAFE_MODE } from './trust.js';
 import { ensureDir, writeJson, appendText, readJson, readText, runId as makeRunId, fmtLocal, fmtShort, fmtDuration, pad2, truncate } from './util.js';
 
 /** Команда процесса по pid (ps) или null, если узнать не удалось. */
@@ -384,7 +384,9 @@ export async function run({ projectDir, mode = 'day', dryRun = false, now = new 
     const prompt = buildLeadPrompt({ cfg, p, runId: id, mode, deadline, context: buildContext(p, cfg, { handoff: true, limit }), nightHandoff, limit });
     // 0.22.0: run.allow — только подтверждённые владельцем (mcfly trust): config.yaml агент может поправить
     const trusted = commandsTrusted(projectDir, cfg);
-    const args = buildClaudeArgs({ prompt, cfg, pluginDir: MCFLY_ROOT, allow: trusted ? cfg.run.allow : [] });
+    // без подтверждения — ни run.allow, ни extra_args, ни режима без проверок
+    const runCfg = trusted ? cfg : { ...cfg, run: { ...cfg.run, extra_args: [], permission_mode: RISKY_MODES.includes(cfg.run.permission_mode) ? SAFE_MODE : cfg.run.permission_mode } };
+    const args = buildClaudeArgs({ prompt, cfg: runCfg, pluginDir: MCFLY_ROOT, allow: trusted ? cfg.run.allow : [] });
     if (dryRun) {
       // Сухой прогон не оставляет следов в mcfly/runs: промпт кладём в logs (вне git).
       const dryPath = path.join(p.logs, `dry-run-${id}.prompt.md`);

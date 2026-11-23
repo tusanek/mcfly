@@ -9,10 +9,14 @@ import { trustFile } from './actions.js';
  * настройки действуют, только если их сумма совпадает с подтверждённой владельцем командой mcfly trust (только в терминале).
  * Файл подтверждений — тот же, что у действий, вне проекта; ключ — «<каталог>#commands».
  */
-export const trustedCommands = (cfg) => ({ allow: [...(cfg.run?.allow || [])], stand: String(cfg.stand?.command || '') });
+// Режимы без проверки разрешений и лишние флаги claude тоже снимают защиту — подтверждаются вместе с командами.
+export const RISKY_MODES = ['bypassPermissions', 'dontAsk'];
+export const SAFE_MODE = 'auto';
+export const trustedCommands = (cfg) => ({ allow: [...(cfg.run?.allow || [])], stand: String(cfg.stand?.command || ''),
+  extra_args: [...(cfg.run?.extra_args || [])], mode: RISKY_MODES.includes(cfg.run?.permission_mode) ? cfg.run.permission_mode : '' });
 const digest = (cfg) => crypto.createHash('sha256').update(JSON.stringify(trustedCommands(cfg))).digest('hex');
 const key = (projectDir) => `${path.resolve(projectDir)}#commands`;
-export const hasCommands = (cfg) => { const t = trustedCommands(cfg); return t.allow.length > 0 || !!t.stand; };
+export const hasCommands = (cfg) => { const t = trustedCommands(cfg); return t.allow.length > 0 || !!t.stand || t.extra_args.length > 0 || !!t.mode; };
 export function commandsTrusted(projectDir, cfg) {
   if (!hasCommands(cfg)) return true;
   return readJson(trustFile(), {})?.[key(projectDir)]?.digest === digest(cfg);
@@ -23,4 +27,4 @@ export function trustCommands(projectDir, cfg, now = new Date()) {
   all[key(projectDir)] = { digest: digest(cfg), at: now.toISOString(), ...trustedCommands(cfg) };
   writeJson(file, all);
 }
-export const UNTRUSTED_COMMANDS = 'run.allow и stand.command в mcfly/config.yaml изменены и не подтверждены владельцем — не действуют. Проверьте и подтвердите в терминале: mcfly trust';
+export const UNTRUSTED_COMMANDS = 'run.allow, stand.command, run.extra_args или режим разрешений без проверок в mcfly/config.yaml изменены и не подтверждены владельцем — не действуют (режим — auto). Проверьте и подтвердите в терминале: mcfly trust';
