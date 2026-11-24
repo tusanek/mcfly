@@ -76,7 +76,8 @@ export function unsharedDeps(mainDir, shared, depth = 3) {
 /**
  * 0.21.0 (F19, F34): проект на Python — готовая команда тестов из worktree. Окружение (.venv) стоит в основном каталоге, пакет там
  * поставлен в режиме редактирования: без PYTHONPATH на src копии тесты молча проверяют код основного каталога, а pytest по пути копии
- * из основного каталога падает на conftest (ImportPathMismatchError). env -C — одна команда без cd. Не Python-проект — ''.
+ * из основного каталога падает на conftest (ImportPathMismatchError). 0.23.3 (F43): из основного каталога и с PYTHONPATH на копию
+ * pytest берёт код основного каталога (pythonpath в настройках проекта сильнее) — команда только с env -C копии. Не Python-проект — ''.
  */
 export function pythonTestHint(mainDir, worktreeDir) {
   const has = (dir, f) => fs.existsSync(path.join(dir, f));
@@ -84,5 +85,5 @@ export function pythonTestHint(mainDir, worktreeDir) {
   const venv = ['.venv', 'venv'].find((v) => has(mainDir, `${v}/bin/python`));
   const py = venv ? path.join(mainDir, venv, 'bin', 'python') : 'python3';
   const src = has(worktreeDir, 'src') ? path.join(worktreeDir, 'src') : worktreeDir;
-  return `Тесты Python из этой копии — одной командой: env -C ${worktreeDir} PYTHONPATH=${src} ${py} -m pytest [путь к тестам] (без PYTHONPATH тесты проверят код основного каталога; pytest по пути копии из основного каталога падает на conftest).`;
+  return `Тесты Python из этой копии — одной командой: env -C ${worktreeDir} PYTHONPATH=${src} ${py} -m pytest [путь к тестам] (без PYTHONPATH тесты проверят код основного каталога; из основного каталога даже с PYTHONPATH на копию pytest берёт код основного каталога — запускай только из копии, и падение здесь — падение кода копии).`;
 }
