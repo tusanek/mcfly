@@ -46,6 +46,7 @@ test('F19/F34: подсказка тестов Python из worktree — толь
   fs.writeFileSync(path.join(main, '.venv', 'bin', 'python'), ''); fs.mkdirSync(path.join(wt, 'src'));
   const h = pythonTestHint(main, wt);
   assert.ok(h.includes(`env -C ${wt} PYTHONPATH=${path.join(wt, 'src')} ${path.join(main, '.venv', 'bin', 'python')} -m pytest`), h);
+  assert.match(h, /падение здесь — падение кода копии/, 'F43: падение в копии — не окружение');
 });
 
 test('F30/F35: одобренные — по зависимостям из планов; зависимость от неодобренного — «не брать»', async () => {
