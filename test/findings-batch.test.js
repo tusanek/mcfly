@@ -90,9 +90,50 @@ test('F40: mcfly stand — запуск сервера, адрес, остано
   const r = await standStart({ cfg, dir: logsDir, logsDir });
   assert.equal(r.url, `http://localhost:${port}/`, r.error);
   assert.equal(await (await fetch(r.url)).text(), 'ok');
-  assert.match((await standStart({ cfg, dir: logsDir, logsDir })).error, /уже запущен/);
-  assert.equal(standStop({ logsDir }).stopped, true);
-  assert.equal(standStop({ logsDir }).stopped, false);
+  const again = await standStart({ cfg, dir: logsDir, logsDir });
+  assert.equal(again.already, true, 'повторный start из того же каталога не перезапускает стенд');
+  assert.equal(again.url, r.url);
+  assert.equal(standStop({ logsDir, dir: logsDir }).stopped, true);
+  assert.equal(standStop({ logsDir, dir: logsDir }).stopped, false);
+});
+
+test('F44: стенд свой у каждого каталога — свой порт, stop гасит только свой, после прогона гасятся все', async () => {
+  const { DEFAULT_CONFIG } = await import('../src/config.js');
+  const { standStart, standStop, standStopAll, standList } = await import('../src/stand.js');
+  const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-stand-'));
+  const a = fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-stand-a-'));
+  const b = fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-stand-b-'));
+  fs.writeFileSync(path.join(a, 'name'), 'A'); fs.writeFileSync(path.join(b, 'name'), 'B');
+  const port = 20000 + Math.floor(Math.random() * 20000);
+  const cfg = { ...DEFAULT_CONFIG, stand: { command: `exec node -e "const n=require('fs').readFileSync('name','utf8');require('http').createServer((q,s)=>s.end(n)).listen(process.env.PORT)"`, port, ready_seconds: 10 } };
+  const ra = await standStart({ cfg, dir: a, logsDir });
+  const rb = await standStart({ cfg, dir: b, logsDir });
+  assert.ok(ra.url && rb.url, ra.error || rb.error);
+  assert.notEqual(ra.port, rb.port, 'у второго каталога свой порт');
+  assert.equal(await (await fetch(ra.url)).text(), 'A', 'стенд раздаёт код своего каталога');
+  assert.equal(await (await fetch(rb.url)).text(), 'B');
+  assert.deepEqual(standList({ logsDir }).map((s) => s.dir).sort(), [a, b].sort());
+  const sb = standStop({ logsDir, dir: b });
+  assert.equal(sb.stopped, true);
+  assert.deepEqual(sb.others.map((s) => s.dir), [a], 'стенд соседа не тронут и назван');
+  assert.equal(await (await fetch(ra.url)).text(), 'A', 'сосед продолжает отвечать');
+  assert.equal(standStop({ logsDir, dir: b }).stopped, false);
+  await standStart({ cfg, dir: b, logsDir });
+  assert.equal(standStopAll({ logsDir }), 2);
+  assert.deepEqual(standList({ logsDir }), []);
+});
+
+test('F44: команда, которая не слушает $PORT, на занятом основном порту — понятная подсказка', async () => {
+  const { DEFAULT_CONFIG } = await import('../src/config.js');
+  const { standStart, standStopAll } = await import('../src/stand.js');
+  const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-stand-'));
+  const a = fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-stand-a-'));
+  const b = fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-stand-b-'));
+  const port = 20000 + Math.floor(Math.random() * 20000);
+  const cfg = { ...DEFAULT_CONFIG, stand: { command: `exec node -e "require('http').createServer((q,s)=>s.end('x')).listen(${port})"`, port, ready_seconds: 2 } };
+  assert.ok((await standStart({ cfg, dir: a, logsDir })).url);
+  assert.match((await standStart({ cfg, dir: b, logsDir })).error, /\$PORT/);
+  standStopAll({ logsDir });
 });
 
 test('0.22.0: run.allow и stand.command действуют только после mcfly trust; правка снимает подтверждение', async () => {
@@ -120,10 +161,12 @@ test('0.22.0: run.allow и stand.command действуют только пос�
 test('0.22.0: чужой процесс с номером из файла стенда не гасится', async () => {
   const { standStop } = await import('../src/stand.js');
   const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-stand-'));
+  const { standStopAll } = await import('../src/stand.js');
   fs.writeFileSync(path.join(logsDir, 'stand.pid'), JSON.stringify({ pid: process.pid, started: 'другое время' }));
-  assert.equal(standStop({ logsDir }).stopped, false);
+  assert.equal(standStopAll({ logsDir }), 0);
   fs.writeFileSync(path.join(logsDir, 'stand.pid'), String(process.pid)); // старый формат — тоже не трогаем
-  assert.equal(standStop({ logsDir }).stopped, false);
+  assert.equal(standStopAll({ logsDir }), 0);
+  assert.equal(standStop({ logsDir, dir: logsDir }).stopped, false);
 });
 
 test('F28: житель — по просьбе владельца или раз в every_runs удачных прогонов; done обнуляет отсчёт', async () => {
