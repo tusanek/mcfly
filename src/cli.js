@@ -40,7 +40,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
             [--how <t>] [--ref <t>] [--needs-owner <t>] [--new-arguments <t>] [--differs <t>]   добавить предложение;
             похожее на заведённое (team, research) — отказ, если это другое: --differs "чем отличается"
   ideas set <Iн> proposed|taken|rejected|done [--note <t>]   решение владельца в сессии (в прогоне запрещено)
-  ideas done <Iн> --change <имя>                  закрыть взятый пункт по изменению из архива (можно в прогоне)
+  ideas done <Iн,…> --change <имя>                закрыть взятый пункт по изменению из архива (можно в прогоне)
   ideas first <Iн>                                взятый пункт — первым в очереди на план (в прогоне запрещено)
   question list | question expire
   approval request <изменение> [--category <c>] [--priority <n>] [--idea <Iн,…>] [--followup <родитель>] [--part]
@@ -205,9 +205,16 @@ export async function main(argv) {
       if (sub === 'done') {
         // 0.15.5: закрыть взятый пункт по изменению из архива — можно и команде в прогоне: доказательство — само изменение
         if (!values.change) { console.error('Нужно завершённое изменение: mcfly ideas done <Iн> --change <имя>'); return 1; }
-        const r = closeIdeaByChange(data, rest[0], values.change, p.openspecChanges, now);
-        if (!r.idea || r.error) { console.error(`${rest[0] || '(номер не указан)'}: ${r.error}`); return 1; }
-        saveIdeas(p, data); log(`${r.idea.id}: сделано (${r.idea.change})`); return 0;
+        // 0.23.8 (F48): несколько пунктов через запятую, как у approval request --idea; ошибка в одном — не сохраняется ничего
+        const ids = [...new Set(String(rest[0] || '').split(',').map((x) => x.trim().toUpperCase()).filter(Boolean))];
+        if (!ids.length) { console.error('(номер не указан): такого предложения нет'); return 1; }
+        const closed = [];
+        for (const id of ids) {
+          const r = closeIdeaByChange(data, id, values.change, p.openspecChanges, now);
+          if (!r.idea || r.error) { console.error(`${id}: ${r.error}${ids.length > 1 ? ' — ни один пункт не закрыт' : ''}`); return 1; }
+          closed.push(r.idea);
+        }
+        saveIdeas(p, data); for (const x of closed) log(`${x.id}: сделано (${x.change})`); return 0;
       }
       if (sub === 'first') {
         // 0.16.0: порядок очереди — решение владельца, в прогоне команды запрещено
