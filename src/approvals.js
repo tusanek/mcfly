@@ -325,7 +325,8 @@ export function proposalSamples(change) {
   })).filter((x) => x.text || x.buttons.length || x.title || x.images.length);
 }
 
-const DEP_LINE = /после|поверх|зависит|требует|строится на/i;
+// F50: слово-маркер целиком — «последовательно» и «послезавтра» зависимостью не считаются
+const DEP_LINE = /(?<![а-яё])(после|поверх|зависит|требует|строится на)(?![а-яё])/i;
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /** Имена других изменений из others, на которые план change ссылается строкой с «после», «поверх», «зависит», «требует». */
 export function dependsOn(change, others) {
@@ -337,7 +338,8 @@ export function dependsOn(change, others) {
 /**
  * 0.21.0 (F30, F35): порядок одобренных изменений с учётом зависимостей из их планов. Сначала по приоритету, но изменение, план которого
  * делается «после» другого одобренного, встаёт за ним; зависимость от ещё не одобренного — blockedBy (брать нельзя, пока его не одобрят
- * и не сольют). Цикл — остаток по приоритету, как раньше. Возвращает [{ change, after, blockedBy }].
+ * и не сольют). Цикл — остаток по приоритету, как раньше. 0.23.9 (F50): два плана «после» друг друга — направления нет: связь уходит
+ * из after в mutual («не параллельно»), порядок — по приоритету. Возвращает [{ change, after, blockedBy, mutual }].
  */
 export function dependencyOrder(work, all) {
   const workNames = new Set(work.map((c) => c.name));
@@ -345,6 +347,10 @@ export function dependencyOrder(work, all) {
     const deps = dependsOn(c, all);
     return [c.name, { change: c, after: deps.filter((d) => workNames.has(d)), blockedBy: deps.filter((d) => !workNames.has(d) && all.find((x) => x.name === d)?.mcfly.approval !== 'approved') }];
   }));
+  for (const [name, x] of info) {
+    x.mutual = x.after.filter((d) => info.get(d).after.includes(name));
+  }
+  for (const x of info.values()) x.after = x.after.filter((d) => !x.mutual.includes(d));
   const out = []; const placed = new Set(); const visiting = new Set();
   const place = (name) => {
     if (placed.has(name) || visiting.has(name)) return;
