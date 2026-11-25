@@ -184,6 +184,17 @@ test('0.15.5 ideas done --change: команда в прогоне закрыв�
   assert.equal(ideasOf(dir)[1].status, 'taken');
 });
 
+test('0.23.8 ideas done I1,I2: несколько пунктов через запятую, как у approval request --idea; ошибка в одном — не закрыт ни один (F48)', () => {
+  const dir = projectWithTaken(3); addChange155(dir, 'pair'); archive(dir, 'pair');
+  const inRun = { MCFLY_RUN_ID: '20261125-0200' };
+  let r = cli155(['ideas', 'done', 'I1,I9', '--change', 'pair'], dir, inRun);
+  assert.equal(r.status, 1); assert.match(r.stderr, /I9: такого предложения нет/);
+  assert.deepEqual(ideasOf(dir).map((x) => x.status), ['taken', 'taken', 'taken']);
+  r = cli155(['ideas', 'done', 'I1, i2,I1', '--change', 'pair'], dir, inRun);
+  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /I1: сделано \(pair\)/); assert.match(r.stdout, /I2: сделано \(pair\)/);
+  assert.deepEqual(ideasOf(dir).map((x) => x.status), ['done', 'done', 'taken']);
+});
+
 test('0.15.5 closeIdeaByChange: только взятые и спланированные; имя архива — с датой или без', () => {
   const dir = projectWithTaken(2); addChange155(dir, 'plain-name'); archive(dir, 'plain-name', 'plain-name'); addChange155(dir, 'dated'); archive(dir, 'dated');
   const p = { ideas: path.join(dir, 'mcfly', 'ideas.yaml') }; const data = loadIdeas(p); const changes = path.join(dir, 'openspec', 'changes');
