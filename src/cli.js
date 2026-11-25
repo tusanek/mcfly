@@ -492,11 +492,13 @@ export async function main(argv) {
       const mcfg = loadConfig(paths(main).config);
       const { commandsTrusted, UNTRUSTED_COMMANDS } = await import('./trust.js');
       if (sub === 'start' && !commandsTrusted(main, mcfg)) { console.error(UNTRUSTED_COMMANDS); return 1; }
-      if (sub === 'stop') { const r = standStop({ logsDir }); log(r.stopped ? `Стенд остановлен (процесс ${r.pid}).` : 'Стенд не был запущен.'); return 0; }
+      // 0.23.4 (F44): стенд свой у каждого каталога работы — stop гасит только стенд этого каталога, соседей не трогает
+      const others = (list) => (list.length ? ` Другие стенды не тронуты: ${list.map((s) => `${s.dir || '?'} (порт ${s.port})`).join(', ')}.` : '');
+      if (sub === 'stop') { const r = standStop({ logsDir, dir: base }); log(`${r.stopped ? `Стенд каталога ${base} остановлен (процесс ${r.pid}).` : `Стенд из каталога ${base} не был запущен.`}${others(r.others)}`); return 0; }
       if (sub !== 'start') { console.error('mcfly stand start [--project <каталог>] | stop'); return 1; }
       const r = await standStart({ cfg: mcfg, dir: base, logsDir });
       if (r.error) { console.error(r.error); return 1; }
-      log(`Стенд: ${r.url} (код из ${base}, журнал ${r.log}). Открывай в Playwright этот адрес; закончил — mcfly stand stop.`);
+      log(`${r.already ? 'Стенд этого каталога уже запущен' : 'Стенд'}: ${r.url} (код из ${base}, журнал ${r.log}). Стенд свой у этого каталога: открывай в Playwright именно этот адрес, у других участников свои порты. Закончил — mcfly stand stop из этого же каталога.`);
       return 0;
     }
     case 'worktree': {
