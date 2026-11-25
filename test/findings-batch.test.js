@@ -123,6 +123,20 @@ test('F44: стенд свой у каждого каталога — свой �
   assert.deepEqual(standList({ logsDir }), []);
 });
 
+test('F46: stand.path — адрес стенда целиком, с параметрами входа; кривой путь — ошибка настройки', async () => {
+  const { DEFAULT_CONFIG, parseConfig } = await import('../src/config.js');
+  const { standStart, standStopAll } = await import('../src/stand.js');
+  const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-stand-'));
+  const port = 20000 + Math.floor(Math.random() * 20000);
+  const cfg = { ...DEFAULT_CONFIG, stand: { ...DEFAULT_CONFIG.stand, command: `exec node -e "require('http').createServer((q,s)=>s.end('ok')).listen(process.env.PORT)"`, port, ready_seconds: 10, path: '/#tgWebAppData=x' } };
+  const r = await standStart({ cfg, dir: logsDir, logsDir });
+  assert.equal(r.url, `http://localhost:${port}/#tgWebAppData=x`, r.error);
+  assert.equal((await standStart({ cfg, dir: logsDir, logsDir })).url, r.url, 'и у уже запущенного');
+  standStopAll({ logsDir });
+  assert.equal(parseConfig('project: x\n').stand.path, '/');
+  for (const bad of ['#tgWebAppData=x', '/a b']) assert.throws(() => parseConfig(`project: x\nstand:\n  path: "${bad}"\n`), /stand\.path/);
+});
+
 test('F44: команда, которая не слушает $PORT, на занятом основном порту — понятная подсказка', async () => {
   const { DEFAULT_CONFIG } = await import('../src/config.js');
   const { standStart, standStopAll } = await import('../src/stand.js');
