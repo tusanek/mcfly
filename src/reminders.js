@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ensureDir, writeJson, pad2, fmtShort, fmtDuration, truncate, withFileLock } from './util.js';
 import { listActions } from './action-config.js';
+import { isUnclearSend } from './telegram.js';
 
 /**
  * Напоминания владельцу (0.8.0): «напомни 19:00 нажать 🧪 Eval промптов» в чате бота → сообщение в этот же чат в срок.
@@ -156,8 +157,10 @@ export async function deliverDueReminders({ p, cfg, now = new Date(), send, log 
     let status = 'sent';
     try { await send(m.text, m.keyboard); sent += 1; } catch (e) {
       const line = String(e?.message || e).split('\n')[0];
-      if (!/Bad Request/i.test(line)) { log(`Напоминание ${r.id} не отправлено: ${line}; повторю на следующем круге.`); break; }
-      log(`Напоминание ${r.id} отклонено Telegram и пропущено: ${line}`); status = 'failed';
+      // F49: Telegram мог принять — не повторяем, чтобы владелец не получил напоминание дважды
+      if (isUnclearSend(e)) log(`Напоминание ${r.id}: исход отправки неясен (${line}) — возможно, дошло; повторно не шлю.`);
+      else if (!/Bad Request/i.test(line)) { log(`Напоминание ${r.id} не отправлено: ${line}; повторю на следующем круге.`); break; }
+      else { log(`Напоминание ${r.id} отклонено Telegram и пропущено: ${line}`); status = 'failed'; }
     }
     // пока отправляли, его могли отменить или отложить — тогда не трогаем
     update(p, (d) => {
