@@ -15,6 +15,8 @@ import { ensureDir } from './util.js';
  */
 const PORTS_TRIED = 20;
 const RESERVE_MS = 120_000;
+/** Адрес для Playwright целиком (0.23.6, F46): порт этого стенда и stand.path — параметры входа, без которых экран не грузится. */
+const standUrl = (cfg, port) => `http://localhost:${port}${cfg.stand.path || '/'}`;
 const key = (dir) => crypto.createHash('sha1').update(path.resolve(dir)).digest('hex').slice(0, 8);
 const files = (logsDir, dir) => ({ pid: path.join(logsDir, `stand-${key(dir)}.pid`), log: path.join(logsDir, `stand-${key(dir)}.log`) });
 /** Время запуска и группа процесса по ps: номер процесса из файла мог достаться чужому — гасим, только если всё совпало. */
@@ -56,7 +58,7 @@ export async function standStart({ cfg, dir, logsDir, sleep = (ms) => new Promis
   ensureDir(logsDir); const f = files(logsDir, dir);
   const old = readRec(f.pid);
   // стенд этого каталога уже работает — отдаём его адрес, не перезапускаем (соседи на своих портах не задеты)
-  if (ours(old)) return { url: `http://localhost:${old.port}/`, pid: old.pid, log: f.log, port: old.port, already: true };
+  if (ours(old)) return { url: standUrl(cfg, old.port), pid: old.pid, log: f.log, port: old.port, already: true };
   const taken = new Set(allRecs(logsDir).filter(({ file, rec }) => file !== f.pid && holds(rec, now())).map(({ rec }) => rec.port));
   let port = 0;
   for (let p = base; p < base + PORTS_TRIED && p < 65536; p += 1) if (!taken.has(p) && !(await portOpen(p))) { port = p; break; }
@@ -68,7 +70,7 @@ export async function standStart({ cfg, dir, logsDir, sleep = (ms) => new Promis
   child.unref();
   fs.writeFileSync(f.pid, JSON.stringify({ pid: child.pid, started: procInfo(child.pid)?.started || '', port, dir }));
   for (let t = 0; t < wait * 4; t += 1) {
-    if (await portOpen(port)) return { url: `http://localhost:${port}/`, pid: child.pid, log: f.log, port };
+    if (await portOpen(port)) return { url: standUrl(cfg, port), pid: child.pid, log: f.log, port };
     if (child.exitCode != null || !procInfo(child.pid)) break;
     await sleep(250);
   }

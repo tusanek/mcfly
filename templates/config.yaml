@@ -94,6 +94,7 @@ worktree:
 # stand:
 #   command: "npm run dev --prefix web -- --port $PORT"
 #   port: 8791
+#   path: "/#tgWebAppData=x"   # адрес экрана после порта — с параметрами входа, если без них экран не грузится (0.23.6)
 
 # Действия владельца кнопками в Telegram (0.6.0) — по желанию; см. README «Действия владельца в Telegram»
 # actions:

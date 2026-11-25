@@ -39,7 +39,8 @@ export const DEFAULT_CONFIG = {
   // dark (0.20.1): false — снимать только светлую тему (экономия)
   samples: { browser: '', dark: true },
   // Стенд для сверки вида (0.22.0): command — запуск локального сервера (порт в $PORT), mcfly stand start|stop
-  stand: { command: '', port: 8791, ready_seconds: 20 },
+  // path (0.23.6, F46) — адрес экрана целиком после порта, с параметрами входа, если они нужны (например /#tgWebAppData=x)
+  stand: { command: '', port: 8791, ready_seconds: 20, path: '/' },
   // Житель (0.23.0): проходит весь продукт как владелец раз в every_runs удачных прогонов; 0 — только по просьбе («проживи» в боте)
   dweller: { every_runs: 0 },
   // Находки для доработки самого mcfly (0.11.0): агенты и сессии регистрируют, владелец одобряет в боте, одобренное — в общий ящик inbox
@@ -119,6 +120,7 @@ export function validate(cfg) {
   if (typeof cfg.stand?.command !== 'string') errors.push('stand.command: команда запуска стенда строкой');
   if (!(Number.isInteger(cfg.stand?.port) && cfg.stand.port > 1023 && cfg.stand.port < 65536)) errors.push('stand.port: номер порта от 1024 до 65535');
   if (!(cfg.stand?.ready_seconds > 0)) errors.push('stand.ready_seconds: должно быть больше 0');
+  if (typeof cfg.stand?.path !== 'string' || !/^\/\S*$/.test(cfg.stand.path)) errors.push('stand.path: адрес экрана после порта, с / и без пробелов, например /#tgWebAppData=x');
   if (typeof cfg.samples?.dark !== 'boolean') errors.push('samples.dark: true или false (false — снимать только светлую тему)');
   if (typeof cfg.samples?.browser !== 'string') errors.push('samples.browser: путь к Chrome или Chromium строкой; пусто — найти самому');
   else if (cfg.samples.browser && !BROWSER_NAME.test(path.basename(cfg.samples.browser))) errors.push(`samples.browser: «${cfg.samples.browser}» — не Chrome и не Chromium (нужен исполняемый файл, например …/Google Chrome.app/Contents/MacOS/Google Chrome)`);

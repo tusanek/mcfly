@@ -499,7 +499,7 @@ export async function main(argv) {
       if (sub !== 'start') { console.error('mcfly stand start [--project <каталог>] | stop'); return 1; }
       const r = await standStart({ cfg: mcfg, dir: base, logsDir });
       if (r.error) { console.error(r.error); return 1; }
-      log(`${r.already ? 'Стенд этого каталога уже запущен' : 'Стенд'}: ${r.url} (код из ${base}, журнал ${r.log}). Стенд свой у этого каталога: открывай в Playwright именно этот адрес, у других участников свои порты. Закончил — mcfly stand stop из этого же каталога.`);
+      log(`${r.already ? 'Стенд этого каталога уже запущен' : 'Стенд'}: ${r.url} (код из ${base}, журнал ${r.log}). Стенд свой у этого каталога: открывай в Playwright именно этот адрес, у других участников свои порты. Закончил — mcfly stand stop из этого же каталога.${(mcfg.stand.path || '/') === '/' ? ' Если экран без параметров входа не грузится — их задаёт владелец в stand.path (mcfly/config.yaml); скажи лиду, адрес из старых журналов не ищи.' : ''}`);
       return 0;
     }
     case 'worktree': {
