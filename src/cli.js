@@ -37,7 +37,8 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   question add --category <c> --text <t> --default <d> [--hours <n>]   (--default обязателен, кроме prod)
   ideas list [--status <статус>]                  список предложений (0.7.0)
   ideas add --title <t> --benefit <t> --source <owner-backlog|owner-note|team|research> --size <S|M|L>
-            [--how <t>] [--ref <t>] [--needs-owner <t>] [--new-arguments <t>]   добавить предложение
+            [--how <t>] [--ref <t>] [--needs-owner <t>] [--new-arguments <t>] [--differs <t>]   добавить предложение;
+            похожее на заведённое (team, research) — отказ, если это другое: --differs "чем отличается"
   ideas set <Iн> proposed|taken|rejected|done [--note <t>]   решение владельца в сессии (в прогоне запрещено)
   ideas done <Iн> --change <имя>                  закрыть взятый пункт по изменению из архива (можно в прогоне)
   ideas first <Iн>                                взятый пункт — первым в очереди на план (в прогоне запрещено)
@@ -82,7 +83,7 @@ export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
     project: { type: 'string' }, mode: { type: 'string' }, changes: { type: 'string' }, 'dry-run': { type: 'boolean' }, light: { type: 'boolean' }, send: { type: 'boolean' }, weekly: { type: 'boolean' }, director: { type: 'string' }, list: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
-    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, retry: { type: 'boolean' }, part: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, followup: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
+    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, retry: { type: 'boolean' }, part: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, differs: { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, followup: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   const [cmd, sub, ...rest] = positionals;
   const givenDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
   // init — в указанном каталоге, shift — сам различает сессию и основное дерево; остальные — в основном дереве проекта
@@ -189,7 +190,7 @@ export async function main(argv) {
       }
       if (sub === 'add') {
         try {
-          const it = addIdea(data, { title: values.title, benefit: values.benefit, how: values.how || '', source: values.source, ref: values.ref || '', size: values.size, needsOwner: values['needs-owner'] || '', newArguments: values['new-arguments'] || '', now, runId: runIdEnv });
+          const it = addIdea(data, { title: values.title, benefit: values.benefit, how: values.how || '', source: values.source, ref: values.ref || '', size: values.size, needsOwner: values['needs-owner'] || '', newArguments: values['new-arguments'] || '', differs: values.differs || '', now, runId: runIdEnv });
           saveIdeas(p, data); log(`${it.id} добавлено в предложения`); return 0;
         } catch (e) { console.error(e.message); return 1; }
       }

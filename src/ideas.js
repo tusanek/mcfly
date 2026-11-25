@@ -44,7 +44,25 @@ export function nextIdeaId(data) {
 const norm = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
 export const findIdea = (data, id) => data.ideas.find((x) => String(x.id).toUpperCase() === String(id).toUpperCase()) || null;
 
-export function addIdea(data, { title, benefit, how = '', source, ref = '', size, needsOwner = '', newArguments = '', now = new Date(), runId = '' }) {
+/**
+ * 0.23.5 (F45): похожие предложения. Точное совпадение названия ловит только повтор слово в слово, а команда пересказывает
+ * тот же пункт другими словами и заводит его заново, хотя он уже взят или сделан. Сравниваем основы значимых слов названия
+ * (первые 5 букв: «отвечает» и «отвечать» — одно), без чисел и служебных слов; похоже — общих основ не меньше 3
+ * и доля общих (2·общие / сумма) не меньше 0,6. Порог подобран на живом списке из 340 предложений: ловит пересказ
+ * сделанного пункта и пары «то же на сегодня / на завтра», почти не задевает просто соседние темы.
+ */
+const STOP = new Set(['что', 'как', 'для', 'при', 'без', 'это', 'или', 'так', 'там', 'тут', 'его', 'она', 'они', 'оно', 'все', 'всё', 'уже', 'ещё', 'еще', 'нет', 'над', 'под', 'про', 'чем', 'где', 'когда', 'если', 'только', 'тоже', 'также', 'после', 'перед', 'вместо', 'один', 'одним', 'одна', 'the', 'and', 'for', 'with']);
+const stems = (s) => new Set(norm(s).split(' ').filter((w) => w.length >= 3 && !/^\d+$/.test(w) && !STOP.has(w)).map((w) => w.slice(0, 5)));
+export function titleSimilar(a, b) {
+  const x = stems(a); const y = stems(b);
+  const common = [...x].filter((w) => y.has(w)).length;
+  return common >= 3 && (2 * common) / (x.size + y.size) >= 0.6;
+}
+/** Похожие пункты (кроме отклонённых): в списке, взятые, спланированные, сделанные, на обсуждении. */
+export const similarIdeas = (data, title) => data.ideas.filter((x) => x.status !== 'rejected' && titleSimilar(x.title, title));
+const AUTO_SOURCES = new Set(['team', 'research']);
+
+export function addIdea(data, { title, benefit, how = '', source, ref = '', size, needsOwner = '', newArguments = '', differs = '', now = new Date(), runId = '' }) {
   if (!String(title || '').trim()) throw new Error('Нужно название предложения (--title)');
   if (!String(benefit || '').trim()) throw new Error('Нужно «что даст» (--benefit)');
   if (!IDEA_SOURCES.includes(source)) throw new Error(`Неизвестный источник "${source}". Допустимо: ${IDEA_SOURCES.join(', ')}`);
@@ -52,10 +70,16 @@ export function addIdea(data, { title, benefit, how = '', source, ref = '', size
   if (source === 'research' && !/^https?:\/\/\S+$/.test(String(ref))) throw new Error('Для research нужна ссылка на источник (--ref http(s)://…)');
   const twin = data.ideas.find((x) => norm(x.title) === norm(title) && !(x.status === 'rejected' && String(newArguments).trim()));
   if (twin) throw new Error(`Такое предложение уже есть: ${twin.id} (${IDEA_STATUS_RU[twin.status] || twin.status})`);
+  // Похожее заводит только команда пересказом — слова владельца (бэклог, заметка, кнопки бота) не останавливаем
+  if (AUTO_SOURCES.has(source) && !String(differs).trim()) {
+    const like = similarIdeas(data, title).slice(0, 3);
+    if (like.length) throw new Error(`Похоже на уже заведённое: ${like.map((x) => `${x.id} «${x.title}» (${IDEA_STATUS_RU[x.status] || x.status})`).join('; ')}. Не заводи его заново. Если это другое — повтори с --differs "чем отличается от ${like[0].id}".`);
+  }
   const idea = {
     id: nextIdeaId(data), title: String(title).trim(), benefit: String(benefit).trim(), how, source, ref, size,
     needs_owner: needsOwner, status: 'proposed', created_at: now.toISOString(), run_id: runId,
     ...(String(newArguments).trim() ? { new_arguments: String(newArguments).trim() } : {}),
+    ...(String(differs).trim() ? { differs: String(differs).trim() } : {}),
   };
   data.ideas.push(idea);
   return idea;

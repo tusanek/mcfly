@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { paths } from '../src/state.js';
-import { loadIdeas, saveIdeas, addIdea, transitionIdea, visibleIdeas, syncDoneIdeas } from '../src/ideas.js';
+import { loadIdeas, saveIdeas, addIdea, transitionIdea, visibleIdeas, syncDoneIdeas, titleSimilar } from '../src/ideas.js';
 import { bareProject } from './helpers.js';
 
 const idea = (over = {}) => ({ title: 'Автозапуск релизов', benefit: 'Документация не отстаёт', source: 'team', size: 'M', ...over });
@@ -29,6 +29,24 @@ test('addIdea: дубль по названию и возврат отклонё
   const again = addIdea(data, idea({ newArguments: 'забыли /release три раза' }));
   assert.equal(again.id, 'I2');
   assert.equal(again.new_arguments, 'забыли /release три раза');
+});
+
+test('F45: пересказ взятого или сделанного пункта командой — отказ с номером; --differs пропускает, владельца не останавливаем', () => {
+  const data = { ideas: [] };
+  const first = addIdea(data, idea({ title: 'Рост: на «рост 1800» бот отвечает только «Рост?» и не говорит, что число не похоже на рост' }));
+  first.status = 'done';
+  const retold = 'Замер: на фразу «рост 1805» бот отвечает одним «Рост?», без строки, что число не похоже на рост';
+  assert.ok(titleSimilar(first.title, retold));
+  assert.throws(() => addIdea(data, idea({ title: retold })), /Похоже на уже заведённое: I1 «Рост[^]*похоже на рост» \(сделано\)[^]*--differs "чем отличается от I1"/);
+  assert.throws(() => addIdea(data, idea({ title: retold, source: 'research', ref: 'https://example.com' })), /Похоже/);
+  const ok = addIdea(data, idea({ title: retold, differs: 'тот был про текст, этот про кнопку' }));
+  assert.equal(ok.differs, 'тот был про текст, этот про кнопку');
+  assert.equal(addIdea(data, idea({ title: retold + ' снова', source: 'owner-note' })).source, 'owner-note', 'слова владельца не останавливаем');
+  // просто соседняя тема — не похоже
+  assert.equal(titleSimilar(first.title, 'Экран «Неделя»: листать на следующие недели'), false);
+  // отклонённое возвращают по --new-arguments, похожесть с ним не мешает
+  const rej = { ideas: [{ ...first, status: 'rejected' }] };
+  assert.equal(addIdea(rej, idea({ title: retold })).status, 'proposed');
 });
 
 test('transitionIdea: бот не отказывает окончательно, команда не берёт, повтор — «уже»', () => {
