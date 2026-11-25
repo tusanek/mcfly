@@ -48,9 +48,9 @@ export function buildContext(p, cfg, { progressLines = 15, handoff = false, now 
   // 0.21.0 (F30, F35): порядок — по приоритету с учётом строк «после <изменение>» в планах
   const ordered = dependencyOrder(work, changes);
   L.push('', `Одобренные изменения с открытыми задачами (${work.length}):`);
-  for (const { change: c, after, blockedBy } of ordered) {
+  for (const { change: c, after, blockedBy, mutual } of ordered) {
     const onBranch = branchProgress(p.projectDir, c.name);
-    const deps = [after.length ? `после ${after.join(', ')}` : '', blockedBy.length ? `НЕ БРАТЬ: план требует ещё не одобренного ${blockedBy.join(', ')}` : ''].filter(Boolean).join('; ');
+    const deps = [after.length ? `после ${after.join(', ')}` : '', mutual.length ? `не параллельно с ${mutual.join(', ')} (планы ссылаются друг на друга, порядок по приоритету)` : '', blockedBy.length ? `НЕ БРАТЬ: план требует ещё не одобренного ${blockedBy.join(', ')}` : ''].filter(Boolean).join('; ');
     L.push(`- ${c.name} (приоритет ${priorityOf(c)}): ${c.tasksDone} сделано / ${c.tasksOpen} открыто${onBranch ? `; на ветке change/${c.name}: ${onBranch.done} сделано / ${onBranch.open} открыто` : ''}${deps ? ` — ${deps}` : ''}`);
   }
   const pend = pendingApprovals(changes);

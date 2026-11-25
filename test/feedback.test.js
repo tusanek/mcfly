@@ -274,3 +274,14 @@ test('0.18.3: после 18:00 и на следующий день сводку 
   }
   assert.deepEqual(started, []);
 });
+
+test('F49: очередь — сообщение с неясным исходом отправки не остаётся в очереди, следующие уходят', async () => {
+  const dir = bareProject(); const p = paths(dir); const logs = []; const now = new Date();
+  enqueueNotice(p, { text: 'один' }, now); enqueueNotice(p, { text: 'два' }, now);
+  let first = true; const sent = [];
+  const send = async (t) => { if (first) { first = false; throw Object.assign(new Error('Telegram sendMessage: HTTP 502 Bad Gateway'), { unclear: true }); } sent.push(t); };
+  assert.equal(await flushNotices(p, send, { now, log: (l) => logs.push(l) }), 1);
+  assert.equal(sent.length, 1); assert.match(sent[0], /два/);
+  assert.ok(logs.some((l) => /исход отправки неясен \(Telegram sendMessage: HTTP 502 Bad Gateway\) — возможно, дошло; повторно не шлю/.test(l)), logs.join('\n'));
+  assert.equal(fs.existsSync(noticesPath(p)), false, 'в очереди ничего не осталось');
+});

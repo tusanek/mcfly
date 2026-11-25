@@ -70,6 +70,29 @@ test('F30/F35: одобренные — по зависимостям из пл�
   assert.deepEqual(order[3], { ...order[3], after: [], blockedBy: [] });
 });
 
+test('F50: «после» — отдельное слово; взаимная ссылка — не очередь по кругу, а «не параллельно», порядок по приоритету', async () => {
+  const { listChanges, approvedWithWork, dependencyOrder } = await import('../src/approvals.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcfly-dep50-'));
+  const mk = (name, prio, proposal) => {
+    const d = path.join(dir, name); fs.mkdirSync(d);
+    fs.writeFileSync(path.join(d, '.openspec.yaml'), `mcfly:\n  approval: approved\n  priority: ${prio}\n`);
+    fs.writeFileSync(path.join(d, 'proposal.md'), proposal); fs.writeFileSync(path.join(d, 'tasks.md'), '- [ ] 1.1 x\n');
+  };
+  mk('undo-draft', 10, 'Общий файл с `stale-hint`: не параллельно — второе начинается от main после влития первого.\n');
+  mk('stale-hint', 9, '- `undo-draft` правит ту же функцию — разработка последовательно, не параллельно.\n');
+  mk('first-a', 20, 'Делается после `first-b`.\n');
+  mk('first-b', 21, 'Делается после `first-a`.\n');
+  const all = listChanges(dir);
+  const order = dependencyOrder(approvedWithWork(all), all);
+  const by = Object.fromEntries(order.map((o) => [o.change.name, o]));
+  assert.deepEqual(by['stale-hint'].after, [], '«последовательно» — не «после»');
+  assert.deepEqual(by['undo-draft'].after, ['stale-hint']);
+  assert.deepEqual([by['first-a'].after, by['first-b'].after], [[], []]);
+  assert.deepEqual([by['first-a'].mutual, by['first-b'].mutual], [['first-b'], ['first-a']]);
+  const names = order.map((o) => o.change.name);
+  assert.ok(names.indexOf('first-a') < names.indexOf('first-b'), 'взаимная — по приоритету');
+});
+
 test('F20: run.allow — узкие правила идут в claude по одному, широкие отклоняются', async () => {
   const { parseConfig } = await import('../src/config.js');
   const { buildClaudeArgs } = await import('../src/claude.js');

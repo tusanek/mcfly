@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chunk, createTelegram, extractMessages, callbackText } from '../src/telegram.js';
+import { chunk, createTelegram, extractMessages, callbackText, isUnclearSend } from '../src/telegram.js';
 import { pullAnswers } from '../src/pull.js';
 import { paths, loadState } from '../src/state.js';
 import { loadQuestions, addQuestion, saveQuestions } from '../src/questions.js';
@@ -127,4 +127,23 @@ test('callbackText: ib, ix, il', () => {
   assert.equal(callbackText('ib:I7'), 'берём I7');
   assert.equal(callbackText('ix:I7'), 'не сейчас I7');
   assert.equal(callbackText('il:2'), 'предложения 2');
+});
+
+test('F49: исход отправки — неясен (нет ответа, обрыв после соединения, 5xx) или точно не ушло (нет соединения, отказ Telegram)', async () => {
+  const fail = (e) => async () => { throw e; };
+  const withCause = (code) => Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error(code), { code }) });
+  const outcome = async (fetchImpl) => { try { await createTelegram({ token: 'T', fetchImpl, timeoutMs: 30 }).sendMessage(1, 'x'); return 'ok'; } catch (e) { return isUnclearSend(e) ? 'unclear' : 'not-sent'; } };
+  const hang = async (url, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
+  assert.equal(await outcome(hang), 'unclear', 'нет ответа за отведённое время');
+  assert.equal(await outcome(fail(withCause('ECONNRESET'))), 'unclear', 'обрыв после отправки');
+  assert.equal(await outcome(fail(new TypeError('fetch failed'))), 'unclear', 'причина неизвестна');
+  assert.equal(await outcome(async () => ({ status: 502, statusText: 'Bad Gateway', json: async () => { throw new SyntaxError('<'); } })), 'unclear');
+  assert.equal(await outcome(async () => ({ status: 500, json: async () => ({ ok: false, error_code: 500, description: 'Internal Server Error' }) })), 'unclear');
+  for (const code of ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'UND_ERR_CONNECT_TIMEOUT']) assert.equal(await outcome(fail(withCause(code))), 'not-sent', code);
+  const refusedAll = Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new AggregateError([Object.assign(new Error('a'), { code: 'ECONNREFUSED' })]), { code: undefined }) });
+  assert.equal(await outcome(fail(refusedAll)), 'not-sent', 'все адреса отказали в соединении');
+  assert.equal(await outcome(async () => ({ status: 400, json: async () => ({ ok: false, error_code: 400, description: 'Bad Request: message is too long' }) })), 'not-sent');
+  assert.equal(await outcome(async () => ({ status: 429, json: async () => ({ ok: false, error_code: 429, description: 'Too Many Requests: retry after 5' }) })), 'not-sent');
+  const e = await createTelegram({ token: 'T', fetchImpl: hang, timeoutMs: 30 }).sendMessage(1, 'x').catch((x) => x);
+  assert.match(e.message, /Telegram sendMessage: нет ответа за 0 с/, 'текст ошибки прежний');
 });

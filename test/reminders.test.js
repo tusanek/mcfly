@@ -131,6 +131,19 @@ test('0.8.0: нет связи — напоминание остаётся и у
   assert.equal(listReminders(p).find((r) => r.text === 'c').status, 'failed');
 });
 
+test('F49: неясный исход отправки — напоминание не повторяется, в журнале строка; следующие идут дальше', async () => {
+  const dir = bareProject(); const p = paths(dir); const logs = [];
+  addReminder(p, { at: at(2026, 11, 6, 19, 0), text: 'a', now: NOW });
+  addReminder(p, { at: at(2026, 11, 6, 19, 0), text: 'b', now: NOW });
+  let first = true; const got = [];
+  const send = async (text) => { if (first) { first = false; throw Object.assign(new Error('Telegram sendMessage: нет ответа за 15 с'), { unclear: true }); } got.push(text); };
+  assert.equal(await deliverDueReminders({ p, cfg, now: at(2026, 11, 6, 19, 1), send, log: (l) => logs.push(l) }), 1);
+  assert.match(logs[0], /R1: исход отправки неясен \(Telegram sendMessage: нет ответа за 15 с\) — возможно, дошло; повторно не шлю/);
+  assert.equal(pendingReminders(p).length, 0);
+  assert.equal(got.length, 1);
+  assert.equal(await deliverDueReminders({ p, cfg, now: at(2026, 11, 6, 19, 2), send }), 0, 'следующий круг R1 не шлёт');
+});
+
 test('0.8.0: «Через час» переносит пришедшее; «отменить» — ожидающее; повторные нажатия понятны', () => {
   const dir = bareProject(); const p = paths(dir);
   addReminder(p, { at: at(2026, 11, 6, 19, 0), text: 'x', now: NOW });

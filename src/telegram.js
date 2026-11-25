@@ -10,6 +10,29 @@ export function chunk(text, max = 4000) {
   if (rest) out.push(rest);
   return out;
 }
+// 0.23.10 (F49): коды, при которых соединение с Telegram не установилось — запрос точно не ушёл, повтор безопасен
+const NOT_CONNECTED = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'ENETDOWN', 'UND_ERR_CONNECT_TIMEOUT', 'CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'SELF_SIGNED_CERT_IN_CHAIN', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'ERR_TLS_CERT_ALTNAME_INVALID']);
+const causeCodes = (e) => { const c = e?.cause; return [c?.code, ...(Array.isArray(c?.errors) ? c.errors.map((x) => x?.code) : [])].filter(Boolean); };
+const unclear = (message) => Object.assign(new Error(message), { unclear: true });
+/**
+ * Исход отправки неясен (F49): Telegram мог сообщение принять — нет ответа за отведённое время, обрыв после соединения, ответ 5xx.
+ * Напоминания и очередь такое сообщение повторно не шлют: лучше строка в журнале, чем дубль у владельца. Без пометки — запрос
+ * точно не ушёл (соединения не было) или Telegram прямо отказал (4xx, в том числе 429).
+ */
+export const isUnclearSend = (e) => e?.unclear === true;
+/** Ошибка fetch → Error для журнала; пометка unclear, если соединение могло состояться. */
+function netError(method, e, ms) {
+  if (e?.name === 'TimeoutError' || e?.name === 'AbortError') return unclear(`Telegram ${method}: нет ответа за ${Math.round(ms / 1000)} с`);
+  const codes = causeCodes(e);
+  if (codes.length && codes.every((c) => NOT_CONNECTED.has(c))) return e;
+  return Object.assign(e instanceof Error ? e : new Error(String(e)), { unclear: true });
+}
+/** Ответ без ok → Error; код 5xx (в том числе страница прокси вместо JSON) — неясный исход. */
+function badResponse(method, res, data) {
+  const code = Number(data?.error_code || res.status) || 0;
+  const text = data ? `Telegram ${method}: ${data.description || res.status}` : `Telegram ${method}: HTTP ${res.status}${res.statusText ? ' ' + res.statusText : ''}`;
+  return code >= 500 ? unclear(text) : new Error(text);
+}
 /**
  * timeoutMs — сколько ждать ответа сверх длинного опроса: getUpdates с timeout N с ждёт N с + timeoutMs, остальные запросы — timeoutMs.
  * Без него зависшее соединение держало бы опрос до таймаута undici (5 минут).
@@ -22,14 +45,11 @@ export function createTelegram({ token, fetchImpl = globalThis.fetch, timeoutMs 
     let res;
     try {
       res = await fetchImpl(`${base}/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(ms) });
-    } catch (e) {
-      if (e?.name === 'TimeoutError' || e?.name === 'AbortError') throw new Error(`Telegram ${method}: нет ответа за ${Math.round(ms / 1000)} с`);
-      throw e;
-    }
+    } catch (e) { throw netError(method, e, ms); }
     let data;
     // 502/504 от прокси приходят HTML-страницей: вместо «Unexpected token <» — код HTTP
-    try { data = await res.json(); } catch { throw new Error(`Telegram ${method}: HTTP ${res.status}${res.statusText ? ' ' + res.statusText : ''}`); }
-    if (!data?.ok) throw new Error(`Telegram ${method}: ${data?.description || res.status}`);
+    try { data = await res.json(); } catch { throw badResponse(method, res, null); }
+    if (!data?.ok) throw badResponse(method, res, data);
     return data.result;
   }
   return {
@@ -62,13 +82,10 @@ export function createTelegram({ token, fetchImpl = globalThis.fetch, timeoutMs 
       for (const [k, v] of Object.entries({ duration, width, height })) if (v) form.set(k, String(v));
       form.set('video', new Blob([fs.readFileSync(file)], { type: 'video/mp4' }), path.basename(file));
       let res;
-      try { res = await fetchImpl(`${base}/sendVideo`, { method: 'POST', body: form, signal: AbortSignal.timeout(uploadTimeoutMs) }); } catch (e) {
-        if (e?.name === 'TimeoutError' || e?.name === 'AbortError') throw new Error(`Telegram sendVideo: нет ответа за ${Math.round(uploadTimeoutMs / 1000)} с`);
-        throw e;
-      }
+      try { res = await fetchImpl(`${base}/sendVideo`, { method: 'POST', body: form, signal: AbortSignal.timeout(uploadTimeoutMs) }); } catch (e) { throw netError('sendVideo', e, uploadTimeoutMs); }
       let data;
-      try { data = await res.json(); } catch { throw new Error(`Telegram sendVideo: HTTP ${res.status}`); }
-      if (!data?.ok) throw new Error(`Telegram sendVideo: ${data?.description || res.status}`);
+      try { data = await res.json(); } catch { throw badResponse('sendVideo', res, null); }
+      if (!data?.ok) throw badResponse('sendVideo', res, data);
       return data.result;
     },
     /**
@@ -84,13 +101,10 @@ export function createTelegram({ token, fetchImpl = globalThis.fetch, timeoutMs 
         list.forEach((f, i) => form.set(`p${i}`, blob(f), path.basename(f)));
       }
       let res;
-      try { res = await fetchImpl(`${base}/${method}`, { method: 'POST', body: form, signal: AbortSignal.timeout(uploadTimeoutMs) }); } catch (e) {
-        if (e?.name === 'TimeoutError' || e?.name === 'AbortError') throw new Error(`Telegram ${method}: нет ответа за ${Math.round(uploadTimeoutMs / 1000)} с`);
-        throw e;
-      }
+      try { res = await fetchImpl(`${base}/${method}`, { method: 'POST', body: form, signal: AbortSignal.timeout(uploadTimeoutMs) }); } catch (e) { throw netError(method, e, uploadTimeoutMs); }
       let data;
-      try { data = await res.json(); } catch { throw new Error(`Telegram ${method}: HTTP ${res.status}`); }
-      if (!data?.ok) throw new Error(`Telegram ${method}: ${data?.description || res.status}`);
+      try { data = await res.json(); } catch { throw badResponse(method, res, null); }
+      if (!data?.ok) throw badResponse(method, res, data);
       return data.result;
     },
     /**

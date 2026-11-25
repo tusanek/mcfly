@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ensureDir, fmtShort } from './util.js';
+import { isUnclearSend } from './telegram.js';
 
 /**
  * Сообщения, которые не ушли в Telegram из-за связи: итог прогона, тревога, подтверждение одобрения.
@@ -41,6 +42,8 @@ export async function flushNotices(p, send, { now = new Date(), log = () => {}, 
     if (now - at > maxAgeHours * 3600_000) { log(`Устаревшее сообщение для Telegram (${fmtShort(at)}) не отправлено: старше ${maxAgeHours} ч.`); continue; }
     try { await send(`🕓 Не дошло вовремя (${fmtShort(at)}):\n${n.text}`, n.keyboard || null, { html: !!n.html }); sent += 1; }
     catch (e) {
+      // F49: Telegram мог принять — из очереди убираем, чтобы не прислать дважды
+      if (isUnclearSend(e)) { log(`Сообщение из очереди (${fmtShort(at)}): исход отправки неясен (${String(e?.message || e).split('\n')[0]}) — возможно, дошло; повторно не шлю.`); continue; }
       // Bad Request (разметка, длина) не пройдёт и потом: не держим им очередь 48 часов, остальные сообщения идут дальше
       if (/Bad Request/i.test(String(e?.message || e))) { log(`Сообщение из очереди отклонено Telegram и пропущено: ${String(e?.message || e).split('\n')[0]}`); continue; }
       rest = items.slice(i); log(`Очередь сообщений Telegram: отправлено ${sent}, осталось ${rest.length} (${String(e?.message || e).split('\n')[0]}).`); break;
