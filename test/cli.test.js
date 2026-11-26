@@ -265,3 +265,13 @@ test('F51: ideas list — несколько состояний через за�
   assert.equal(bad.status, 1); assert.match(bad.stderr, /proposed, taken, planned, done, discuss, rejected/);
 });
 
+test('F52: --help у команды и подкоманды — только её строки справки', () => {
+  const dir = tmpDir();
+  const sub = cli(['ideas', 'add', '--help'], dir).stdout;
+  assert.match(sub, /ideas add --title <t> --benefit <t>/); assert.match(sub, /--differs/);
+  assert.doesNotMatch(sub, /ideas set|approval request|Команды:/);
+  const cmd = cli(['ideas', '--help'], dir).stdout;
+  assert.match(cmd, /ideas list/); assert.match(cmd, /ideas first/); assert.doesNotMatch(cmd, /approval request/);
+  assert.match(cli(['nosuch', '--help'], dir).stdout, /Команды:/, 'неизвестная команда — общий список');
+  assert.match(cli(['--help'], dir).stdout, /Команды:/);
+});

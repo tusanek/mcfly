@@ -23,6 +23,26 @@ import { doctor } from './doctor.js';
 import { MCFLY_ROOT } from './prompt.js';
 import { exists, fmtShort, fmtLocal, readText, writeText, appendText, pad2 } from './util.js';
 
+/**
+ * F52: справка по команде или подкоманде — строки HELP, которые начинаются с неё, вместе с продолжениями (строки с отступом больше двух
+ * пробелов сразу под ними). Ничего не нашлось — общий список.
+ */
+export function helpFor(words) {
+  const lines = HELP.split('\n');
+  for (const n of [words.length, 1]) {
+    const head = words.slice(0, n).join(' ');
+    if (!head) continue;
+    const out = []; let take = false;
+    for (const l of lines) {
+      if (/^  \S/.test(l)) take = l.slice(2) === head || l.slice(2).startsWith(`${head} `) || l.slice(2).startsWith(`${head}|`);
+      else if (!/^   /.test(l)) take = false;
+      if (take) out.push(l);
+    }
+    if (out.length) return [...out, lines.at(-1)].join('\n');
+  }
+  return HELP;
+}
+
 const HELP = `mcfly — комплект ИИ-команды разработки на Claude Code
 
 Команды:
@@ -96,7 +116,7 @@ export async function main(argv) {
   }
   const p = paths(projectDir);
   const log = (...a) => console.log(...a);
-  if (!cmd || values.help) { log(HELP); return 0; }
+  if (!cmd || values.help) { log(cmd ? helpFor(positionals.filter((x) => !x.startsWith('-')).slice(0, 2)) : HELP); return 0; }
   if (cmd === 'init') { init({ projectDir, name: values.name, withTracker: !!values['with-tracker'], log }); return 0; }
   if (cmd === 'context') {
     if (!isMcflyProject(p)) return 0; loadEnv(projectDir);
