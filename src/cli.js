@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { spawnSync } from 'node:child_process';
-import { loadIdeas, saveIdeas, addIdea, findIdea, transitionIdea, closeIdeaByChange, planIdeaPart, markFirst, isArchived, IDEA_STATUS_RU } from './ideas.js';
+import { loadIdeas, saveIdeas, addIdea, findIdea, transitionIdea, closeIdeaByChange, planIdeaPart, markFirst, isArchived, IDEA_STATUS_RU, titleSimilar } from './ideas.js';
 import YAML from 'yaml';
 import { paths, loadState, saveState } from './state.js';
 import { loadConfig, autoDefault, isCategory, MAX_RUN_CHANGES } from './config.js';
@@ -23,6 +23,26 @@ import { doctor } from './doctor.js';
 import { MCFLY_ROOT } from './prompt.js';
 import { exists, fmtShort, fmtLocal, readText, writeText, appendText, pad2 } from './util.js';
 
+/**
+ * F52: справка по команде или подкоманде — строки HELP, которые начинаются с неё, вместе с продолжениями (строки с отступом больше двух
+ * пробелов сразу под ними). Ничего не нашлось — общий список.
+ */
+export function helpFor(words) {
+  const lines = HELP.split('\n');
+  for (const n of [words.length, 1]) {
+    const head = words.slice(0, n).join(' ');
+    if (!head) continue;
+    const out = []; let take = false;
+    for (const l of lines) {
+      if (/^  \S/.test(l)) take = l.slice(2) === head || l.slice(2).startsWith(`${head} `) || l.slice(2).startsWith(`${head}|`);
+      else if (!/^   /.test(l)) take = false;
+      if (take) out.push(l);
+    }
+    if (out.length) return [...out, lines.at(-1)].join('\n');
+  }
+  return HELP;
+}
+
 const HELP = `mcfly — комплект ИИ-команды разработки на Claude Code
 
 Команды:
@@ -35,7 +55,8 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   context                                         контекст состояния для агентов
   status                                          состояние проекта
   question add --category <c> --text <t> --default <d> [--hours <n>]   (--default обязателен, кроме prod)
-  ideas list [--status <статус>]                  список предложений (0.7.0)
+  ideas list [--status <с,…>] [--short] [--like <название>]   список предложений; --status — proposed, taken, planned, done, discuss, rejected
+            (несколько через запятую); --short — только номер, состояние и название; --like — только похожие на название
   ideas add --title <t> --benefit <t> --source <owner-backlog|owner-note|team|research> --size <S|M|L>
             [--how <t>] [--ref <t>] [--needs-owner <t>] [--new-arguments <t>] [--differs <t>]   добавить предложение;
             похожее на заведённое (team, research) — отказ, если это другое: --differs "чем отличается"
@@ -83,7 +104,7 @@ export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options: {
     project: { type: 'string' }, mode: { type: 'string' }, changes: { type: 'string' }, 'dry-run': { type: 'boolean' }, light: { type: 'boolean' }, send: { type: 'boolean' }, weekly: { type: 'boolean' }, director: { type: 'string' }, list: { type: 'boolean' }, name: { type: 'string' }, 'with-tracker': { type: 'boolean' },
     category: { type: 'string' }, text: { type: 'string' }, default: { type: 'string' }, hours: { type: 'string' }, note: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
-    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, retry: { type: 'boolean' }, part: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, differs: { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, followup: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
+    change: { type: 'string' }, file: { type: 'string' }, kind: { type: 'string' }, quiet: { type: 'boolean' }, retry: { type: 'boolean' }, part: { type: 'boolean' }, probe: { type: 'boolean' }, once: { type: 'boolean' }, priority: { type: 'string' }, until: { type: 'string' }, yes: { type: 'boolean' }, idea: { type: 'string' }, title: { type: 'string' }, benefit: { type: 'string' }, how: { type: 'string' }, source: { type: 'string' }, ref: { type: 'string' }, size: { type: 'string' }, 'needs-owner': { type: 'string' }, 'new-arguments': { type: 'string' }, differs: { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' }, followup: { type: 'string' }, ticket: { type: 'string' }, help: { type: 'boolean', short: 'h' }, short: { type: 'boolean' }, like: { type: 'string' } } });
   const [cmd, sub, ...rest] = positionals;
   const givenDir = path.resolve(values.project || process.env.MCFLY_PROJECT_DIR || process.cwd());
   // init — в указанном каталоге, shift — сам различает сессию и основное дерево; остальные — в основном дереве проекта
@@ -95,7 +116,7 @@ export async function main(argv) {
   }
   const p = paths(projectDir);
   const log = (...a) => console.log(...a);
-  if (!cmd || values.help) { log(HELP); return 0; }
+  if (!cmd || values.help) { log(cmd ? helpFor(positionals.filter((x) => !x.startsWith('-')).slice(0, 2)) : HELP); return 0; }
   if (cmd === 'init') { init({ projectDir, name: values.name, withTracker: !!values['with-tracker'], log }); return 0; }
   if (cmd === 'context') {
     if (!isMcflyProject(p)) return 0; loadEnv(projectDir);
@@ -183,7 +204,13 @@ export async function main(argv) {
     case 'ideas': {
       const data = loadIdeas(p); if (data.error) { console.error(data.error); return 1; }
       if (sub === 'list') {
-        for (const x of data.ideas.filter((i) => !values.status || i.status === values.status)) {
+        // F51: несколько состояний, краткий вид и похожие по названию — полный список в сотни пунктов не помещается в вывод
+        const statuses = values.status ? String(values.status).split(',').map((x) => x.trim()).filter(Boolean) : [];
+        const unknown = statuses.filter((x) => !IDEA_STATUS_RU[x]);
+        if (unknown.length) { console.error(`Неизвестное состояние: ${unknown.join(', ')}. Допустимо: ${Object.keys(IDEA_STATUS_RU).join(', ')}`); return 1; }
+        const shown = data.ideas.filter((i) => (!statuses.length || statuses.includes(i.status)) && (!values.like || titleSimilar(values.like, i.title)));
+        for (const x of shown) {
+          if (values.short) { log(`${x.id} [${IDEA_STATUS_RU[x.status] || x.status}] ${x.title}`); continue; }
           log(`${x.id} [${IDEA_STATUS_RU[x.status] || x.status}] ${x.source === 'owner-backlog' || x.source === 'owner-note' ? 'ваш' : 'команда'} · ${x.size} — ${x.title}${x.change ? ` → ${x.change}` : ''}${x.reject_note || x.discuss_note ? ` — причина: ${x.reject_note || x.discuss_note}` : ''}`);
         }
         return 0;

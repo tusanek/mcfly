@@ -248,3 +248,30 @@ test('0.19.0: samples template — кладёт шаблон чата в про�
   assert.equal(again.status, 0); assert.match(again.stdout, /Уже есть: design\/samples\/telegram-chat\.html/);
   assert.equal(fs.readFileSync(file, 'utf8'), 'моя правка');
 });
+
+test('F51: ideas list — несколько состояний через запятую, краткий вид, поиск похожих; неизвестное состояние — отказ', () => {
+  const dir = tmpDir(); cli(['init', '--name', 'demo'], dir);
+  const add = (title) => cli(['ideas', 'add', '--title', title, '--benefit', 'польза', '--source', 'owner-backlog', '--size', 'S'], dir);
+  add('Автозапуск релизов ночью по расписанию'); add('Тёмная тема экрана'); add('Отчёт о прогоне в чат');
+  cli(['ideas', 'set', 'I2', 'taken'], dir); cli(['ideas', 'set', 'I3', 'rejected', '--note', 'не нужно'], dir);
+  const two = cli(['ideas', 'list', '--status', 'taken,rejected'], dir).stdout;
+  assert.match(two, /I2 \[взято\]/); assert.match(two, /I3 \[отклонено\]/); assert.doesNotMatch(two, /I1 /);
+  const short = cli(['ideas', 'list', '--short'], dir).stdout;
+  assert.match(short, /^I1 \[в списке\] Автозапуск релизов ночью по расписанию$/m);
+  assert.doesNotMatch(short, /причина|·/);
+  const like = cli(['ideas', 'list', '--like', 'Ночной автозапуск релизов по расписанию'], dir).stdout;
+  assert.match(like, /I1 /); assert.doesNotMatch(like, /I2 |I3 /);
+  const bad = cli(['ideas', 'list', '--status', 'взято'], dir);
+  assert.equal(bad.status, 1); assert.match(bad.stderr, /proposed, taken, planned, done, discuss, rejected/);
+});
+
+test('F52: --help у команды и подкоманды — только её строки справки', () => {
+  const dir = tmpDir();
+  const sub = cli(['ideas', 'add', '--help'], dir).stdout;
+  assert.match(sub, /ideas add --title <t> --benefit <t>/); assert.match(sub, /--differs/);
+  assert.doesNotMatch(sub, /ideas set|approval request|Команды:/);
+  const cmd = cli(['ideas', '--help'], dir).stdout;
+  assert.match(cmd, /ideas list/); assert.match(cmd, /ideas first/); assert.doesNotMatch(cmd, /approval request/);
+  assert.match(cli(['nosuch', '--help'], dir).stdout, /Команды:/, 'неизвестная команда — общий список');
+  assert.match(cli(['--help'], dir).stdout, /Команды:/);
+});
