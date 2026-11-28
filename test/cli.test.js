@@ -265,6 +265,20 @@ test('F51: ideas list — несколько состояний через за�
   assert.equal(bad.status, 1); assert.match(bad.stderr, /proposed, taken, planned, done, discuss, rejected/);
 });
 
+test('F53, F57, F61: ideas list --like ищет по словам запроса — короткий запрос, часть названия, точное название', () => {
+  const dir = tmpDir(); cli(['init', '--name', 'demo'], dir);
+  const add = (title) => cli(['ideas', 'add', '--title', title, '--benefit', 'польза', '--source', 'owner-backlog', '--size', 'S'], dir);
+  add('Пауза повторов на отпуск или болезнь, чтобы серия не сбрасывалась'); add('Средний сон за неделю на экране замеров');
+  add('Сон с 23 до 7: часы без минут'); add('Тёмная тема экрана');
+  const like = (q) => cli(['ideas', 'list', '--like', q, '--short'], dir).stdout;
+  const sleep = like('сон');
+  assert.match(sleep, /I2 /); assert.match(sleep, /I3 /); assert.doesNotMatch(sleep, /I1 |I4 /);
+  assert.match(like('Пауза повторов на отпуск или болезнь'), /^I1 /m);
+  assert.match(like('сон 23-7 часы без минут'), /^I3 /, 'больше общих слов — выше');
+  assert.match(like('средний сон неделя'), /I2 /);
+  assert.equal(like('совсем другое про погоду'), '');
+});
+
 test('F52: --help у команды и подкоманды — только её строки справки', () => {
   const dir = tmpDir();
   const sub = cli(['ideas', 'add', '--help'], dir).stdout;

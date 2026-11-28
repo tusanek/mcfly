@@ -58,6 +58,22 @@ export function titleSimilar(a, b) {
   const common = [...x].filter((w) => y.has(w)).length;
   return common >= 3 && (2 * common) / (x.size + y.size) >= 0.6;
 }
+/**
+ * 0.23.13 (F53, F57, F61): поиск для `ideas list --like`. Сравнение titleSimilar рассчитано на два полных названия и не находит
+ * ни короткий запрос («сон» — одно слово), ни часть длинного названия. Здесь пункт подходит, если в его названии есть не меньше
+ * половины основ запроса (одно слово — оно само), запрос входит в название как есть или названия похожи по titleSimilar.
+ * Возвращает число общих основ (0 — не подходит) для сортировки: больше общих — выше.
+ */
+export function titleMatch(query, title) {
+  const q = stems(query); const t = stems(title);
+  const common = [...q].filter((w) => t.has(w)).length;
+  const nq = norm(query);
+  if (q.size && common >= Math.ceil(q.size / 2)) return common;
+  if ((nq && norm(title).includes(nq)) || titleSimilar(query, title)) return Math.max(common, 1);
+  return 0;
+}
+/** Пункты, подходящие под запрос --like: больше общих слов — раньше, при равенстве — порядок списка. */
+export const ideasLike = (ideas, query) => ideas.map((x) => [x, titleMatch(query, x.title)]).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([x]) => x);
 /** Похожие пункты (кроме отклонённых): в списке, взятые, спланированные, сделанные, на обсуждении. */
 export const similarIdeas = (data, title) => data.ideas.filter((x) => x.status !== 'rejected' && titleSimilar(x.title, title));
 const AUTO_SOURCES = new Set(['team', 'research']);
