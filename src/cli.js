@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { spawnSync } from 'node:child_process';
-import { loadIdeas, saveIdeas, addIdea, findIdea, transitionIdea, closeIdeaByChange, planIdeaPart, markFirst, isArchived, IDEA_STATUS_RU, titleSimilar } from './ideas.js';
+import { loadIdeas, saveIdeas, addIdea, findIdea, transitionIdea, closeIdeaByChange, planIdeaPart, markFirst, isArchived, IDEA_STATUS_RU, ideasLike } from './ideas.js';
 import YAML from 'yaml';
 import { paths, loadState, saveState } from './state.js';
 import { loadConfig, autoDefault, isCategory, MAX_RUN_CHANGES } from './config.js';
@@ -56,7 +56,7 @@ const HELP = `mcfly — комплект ИИ-команды разработк�
   status                                          состояние проекта
   question add --category <c> --text <t> --default <d> [--hours <n>]   (--default обязателен, кроме prod)
   ideas list [--status <с,…>] [--short] [--like <название>]   список предложений; --status — proposed, taken, planned, done, discuss, rejected
-            (несколько через запятую); --short — только номер, состояние и название; --like — только похожие на название
+            (несколько через запятую); --short — только номер, состояние и название; --like — пункты со словами запроса (больше общих — выше)
   ideas add --title <t> --benefit <t> --source <owner-backlog|owner-note|team|research> --size <S|M|L>
             [--how <t>] [--ref <t>] [--needs-owner <t>] [--new-arguments <t>] [--differs <t>]   добавить предложение;
             похожее на заведённое (team, research) — отказ, если это другое: --differs "чем отличается"
@@ -208,7 +208,9 @@ export async function main(argv) {
         const statuses = values.status ? String(values.status).split(',').map((x) => x.trim()).filter(Boolean) : [];
         const unknown = statuses.filter((x) => !IDEA_STATUS_RU[x]);
         if (unknown.length) { console.error(`Неизвестное состояние: ${unknown.join(', ')}. Допустимо: ${Object.keys(IDEA_STATUS_RU).join(', ')}`); return 1; }
-        const shown = data.ideas.filter((i) => (!statuses.length || statuses.includes(i.status)) && (!values.like || titleSimilar(values.like, i.title)));
+        const byStatus = data.ideas.filter((i) => !statuses.length || statuses.includes(i.status));
+        // 0.23.13 (F53, F57, F61): --like — по словам запроса, а не сравнением двух полных названий
+        const shown = values.like ? ideasLike(byStatus, values.like) : byStatus;
         for (const x of shown) {
           if (values.short) { log(`${x.id} [${IDEA_STATUS_RU[x.status] || x.status}] ${x.title}`); continue; }
           log(`${x.id} [${IDEA_STATUS_RU[x.status] || x.status}] ${x.source === 'owner-backlog' || x.source === 'owner-note' ? 'ваш' : 'команда'} · ${x.size} — ${x.title}${x.change ? ` → ${x.change}` : ''}${x.reject_note || x.discuss_note ? ` — причина: ${x.reject_note || x.discuss_note}` : ''}`);
